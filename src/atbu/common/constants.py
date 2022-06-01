@@ -1,0 +1,163 @@
+# Copyright 2022 Ashley R. Thomas
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+r"""ATBU constants.
+"""
+from typing import Literal
+
+
+ATBU_MAJOR_VERSION = 0
+ATBU_MINOR_VERSION = 1
+
+ATBU_VERSION_STRING = f"{ATBU_MAJOR_VERSION}.{ATBU_MINOR_VERSION:02}"
+
+AT_PREFIX = "at"
+AT_PREFIX_U = "AT"
+ATBU_ACRONYM = f"{AT_PREFIX}bu"
+ATBU_ACRONUM_U = f"{AT_PREFIX_U}BU"
+
+ATBU_PROGRAM_NAME = ATBU_ACRONYM
+
+ATBU_PERSISTENT_INFO_EXTENSION = f".{ATBU_ACRONYM}"
+ATBU_PERSISTENT_INFO_DB_EXTENSION = f".{ATBU_ACRONYM}db"
+ATBU_SKIP_EXTENSIONS = [
+    ATBU_PERSISTENT_INFO_EXTENSION,
+    ATBU_PERSISTENT_INFO_DB_EXTENSION,
+]
+ATBU_DEFAULT_PERSISTENT_DB_FILENAME = (
+    f"c4198ead-0b50-4f0e-b52b-685b64e7b9f0{ATBU_PERSISTENT_INFO_DB_EXTENSION}"
+)
+ATBU_PERSISTENT_INFO_VERSION = 2
+ATBU_PERSISTENT_INFO_VERSION_STRING = f"{ATBU_PERSISTENT_INFO_VERSION}"
+ATBU_PERSIST_TYPE_PER_DIR = "per-dir"
+ATBU_PERSIST_TYPE_PER_FILE = "per-file"
+ATBU_PERSIST_TYPE_PER_BOTH = "per-both"
+ATBU_PERSIST_TYPES = [ATBU_PERSIST_TYPE_PER_DIR, ATBU_PERSIST_TYPE_PER_FILE]
+ATBU_PERSIST_TYPE_HINT = Literal["per-dir", "per-file"]
+ATBU_PERSIST_TYPE_CHAR_TO_STR = {
+    "d": ATBU_PERSIST_TYPE_PER_DIR,
+    "f": ATBU_PERSIST_TYPE_PER_FILE,
+    "b": ATBU_PERSIST_TYPE_PER_BOTH,
+}
+
+ATBU_FILE_BACKUP_EXTENSION = f".{AT_PREFIX}bak"
+ATBU_FILE_BACKUP_EXTENSION_ENCRYPTED = f".{AT_PREFIX}bake"
+
+ATBU_BACKUP_TYPE_FULL = "full"
+ATBU_BACKUP_TYPE_INCREMENTAL = "incremental"
+ATBU_BACKUP_TYPE_INCREMENTAL_PLUS_SHORT_CMD_OPT = "ip"
+ATBU_BACKUP_TYPE_INCREMENTAL_PLUS = "incremental-plus"
+ATBU_BACKUP_TYPE_ALL = [
+    ATBU_BACKUP_TYPE_FULL,
+    ATBU_BACKUP_TYPE_INCREMENTAL,
+    ATBU_BACKUP_TYPE_INCREMENTAL_PLUS,
+]
+
+ATBU_BACKUP_DEDUPLICATION_TYPE_DIGEST = "digest"
+ATBU_BACKUP_DEDUPLICATION_TYPE_DIGEST_EXT = "digest-ext"
+
+ATBU_CONFIG_NAME = f"{ATBU_ACRONUM_U} Configuration"
+
+ATBU_CONFIG_FILE_MAJOR_VERSION = 0
+ATBU_CONFIG_FILE_MINOR_VERSION = 1
+ATBU_CONFIG_FILE_VERSION_STRING = (
+    f"{ATBU_CONFIG_FILE_MAJOR_VERSION}.{ATBU_CONFIG_FILE_MINOR_VERSION:02}"
+)
+
+ATBU_DEFAULT_CONFIG_DIR_NAME = f".{ATBU_ACRONYM}"
+ATBU_DEFAULT_CONFIG_FILE_NAME = f"{ATBU_ACRONYM}-config.json"
+ATBU_DEFAULT_BACKUP_INFO_SUBDIR = f"{ATBU_ACRONYM}-backup-info"
+
+CONFIG_SECTION_GENERAL = "general"
+CONFIG_VALUE_NAME_BACKUP_INFO_DIR = "backup-info-dir"
+CONFIG_VALUE_NAME_CONFIG_NAME = "name"
+CONFIG_VALUE_NAME_VERSION = "version"
+
+CONFIG_SECTION_STORAGE_DEFINITIONS = "storage-definitions"
+CONFIG_SECTION_STORAGE_DEFINITION_SPECIFIER_PREFIX = "storage-def"
+CONFIG_VALUE_NAME_INTERFACE_TYPE = "interface"
+CONFIG_VALUE_NAME_PROVIDER = "provider"
+CONFIG_VALUE_NAME_CONTAINER = "container"
+CONFIG_SECTION_DRIVER = "driver"
+CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY = "key"
+CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET = "secret"
+CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT = "project"
+CONFIG_SECTION_KEYRING_MAPPING = "keyring-mapping"
+CONFIG_SECTION_KEYRING_MAPPING_ENCRYPTION_KEY = "encryption-key"
+CONFIG_VALUE_NAME_KEYRING_SERVICE = "service"
+CONFIG_VALUE_NAME_KEYRING_USERNAME = "username"
+CONFIG_SECTION_ENCRYPTION = "encryption"
+CONFIG_VALUE_NAME_ENCRYPTION_KEY = "key"
+CONFIG_VALUE_NAME_STORAGE_PERSISTED_IV = "storage-persisted-IV"
+CONFIG_STORAGE_PERSISTED_IV_DEFAULT_VALUE = True
+CONFIG_VALUE_NAME_STORAGE_PERSISTED_BACKUP_INFO = "storage-persisted-backup-info"
+CONFIG_STORAGE_PERSISTED_BACKUP_INFO_DEFAULT_VALUE = True
+CONFIG_KEY_VALUE_KEYRING_INDIRECTION = "keyring"
+CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION = f"{ATBU_ACRONUM_U}-backup-enc-key"
+CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD = f"{ATBU_ACRONUM_U}-storage-password"
+
+CONFIG_INTERFACE_TYPE_LIBCLOUD = "libcloud"
+CONFIG_INTERFACE_TYPE_GOOGLE = "google"
+CONFIG_INTERFACE_TYPE_FILESYSTEM = "filesystem"
+CONFIG_INTERFACE_HINT = Literal["libcloud", "google", "filesystem"]
+
+CONFIG_PASSWORD_TYPE = "password_type"
+# CONFIG_CREDENTIAL_TYPE will be one of...
+CONFIG_PASSWORD_TYPE_ACTUAL = "actual"
+CONFIG_PASSWORD_TYPE_FILENAME = "filename"
+CONFIG_PASSWORD_TYPE_ENVVAR = "envvar"
+
+CRED_OPERATION_SET_PASSWORD = "set-password"
+CRED_OPERATION_SET_PASSWORD_TO_FILENAME = "set-password-filename"
+CRED_OPERATION_SET_PASSWORD_TO_ENVVAR = "set-password-envvar"
+CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY = "set-password-private-key"
+CRED_OPERATION_HINT = Literal[
+    "set-password",
+    "set-password-filename",
+    "set-password-envvar",
+    "set-password-private-key",
+]
+
+CRED_KEY_TYPE_STORAGE = "storage-secret"
+CRED_KEY_TYPE_ENCRYPTION = "encryption-key"
+CRED_KEY_TYPE_HINT = Literal["storage-secret", "encryption-key"]
+
+PASSWORD_TYPE_CHAR_TO_TYPE = {
+    i[0]: i
+    for i in [
+        CONFIG_PASSWORD_TYPE_ACTUAL,
+        CONFIG_PASSWORD_TYPE_FILENAME,
+        CONFIG_PASSWORD_TYPE_ENVVAR,
+    ]
+}
+
+ALLOWED_KEY_BIT_LENGTHS = [128, 192, 256]
+DEFAULT_KEY_BIT_LENGTH = 256
+# On 2021 16-core / 32-thread die, 1 million takes about .5 seconds.
+# Obviously a little longer on 2017 mobile device but still acceptable
+# given the relative infrequent need for password setup.
+PBKDF2_WORK_FACTOR = 1000000
+
+# BASE64_PREFIX_ORIGINAL_IS_BYTES = 0x0B
+# BASE64_PREFIX_ORIGINAL_IS_STR = 0x05
+
+verbosity_level = 0
+
+
+def set_verbosity_level(level):
+    global verbosity_level
+    verbosity_level = int(level)
+
+
+def get_verbosity_level() -> int:
+    return verbosity_level
