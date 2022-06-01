@@ -21,7 +21,7 @@ import setuptools
 
 setuptools.setup(
     name="atbu-pkg",
-    version="0.0.7",
+    version="0.0.9",
     author="Ashley R. Thomas",
     author_email="ashley.r.thomas.701@gmail.com",
     description= (
@@ -39,7 +39,9 @@ plus a little utility with useful digest-based directory file diff'ing.
 
 Install: `pip install atbu-pkg`
 
-For details/docs, see github: https://github.com/AshleyT3/atbu
+GitHub: https://github.com/AshleyT3/atbu
+
+Documentation: https://atbu.readthedocs.io/en/latest/
 """,
     long_description_content_type="text/markdown",
     url="https://github.com/AshleyT3/atbu",

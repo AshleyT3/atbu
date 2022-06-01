@@ -4,6 +4,10 @@
 
 TL;DR: |PROJNAMELONG| is a Python-based local/cloud backup/restore with optional deduplication and bitrot detection, plus a little utility with useful digest-based directory file diff'ing. Click to go to Setup, then read desired walkthroughs. Software is alpha.
 
+Documentation: https://atbu.readthedocs.io/en/latest/
+
+The following is included at the documentation link above.
+
 .. contents:: **Contents**
     :depth: 3
 
