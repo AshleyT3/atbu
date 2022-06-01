@@ -2,7 +2,7 @@
 .. |PROJNAME| replace:: ATBU
 .. |PKGNAME| replace:: atbu-pkg
 
-TL;DR: |PROJNAMELONG| is a Python-based local/cloud backup/restore with optional deduplication and bitrot detection, plus a little utility with useful digest-based directory file diff'ing. Click to go to Setup, then read desired walkthroughs. Software is alpha.
+TL;DR: |PROJNAMELONG| is a local/cloud backup/restore command-line utility with optional deduplication and bitrot detection, plus a little utility with useful digest-based directory file diff'ing. Click to go to Setup, then read desired walkthroughs. Software is alpha.
 
 Documentation: https://atbu.readthedocs.io/en/latest/
 
