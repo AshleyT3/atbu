@@ -14,12 +14,14 @@
 
 import setuptools
 
-with open("README.rst", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+# Redirect from long_description to github README.rst since
+# PyPi chokes on this particular README.rst.
+# with open("README.rst", "r", encoding="utf-8") as fh:
+#    long_description = fh.read()
 
 setuptools.setup(
     name="atbu-pkg",
-    version="0.0.1",
+    version="0.0.7",
     author="Ashley R. Thomas",
     author_email="ashley.r.thomas.701@gmail.com",
     description= (
@@ -30,7 +32,15 @@ setuptools.setup(
     entry_points = {
         'console_scripts': ['atbu=atbu.common.command_line:main']
     },
-    long_description=long_description,
+    long_description="""
+ATBU Backup & Persistent File Information is a local/cloud backup/restore
+command-line utility with optional deduplication and bitrot detection,
+plus a little utility with useful digest-based directory file diff'ing.
+
+Install: `pip install atbu-pkg`
+
+For details/docs, see github: https://github.com/AshleyT3/atbu
+""",
     long_description_content_type="text/markdown",
     url="https://github.com/AshleyT3/atbu",
     project_urls={
