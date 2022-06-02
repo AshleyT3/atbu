@@ -672,8 +672,7 @@ def induce_simulated_bitrot(
         while attempts_remaining > 0:
             attempts_remaining -= 1
             fn = randint(0, len(file_list) - 1)
-            sr: os.stat_result = os.stat(file_list[fn])
-            if sr.st_size == 0:
+            if os.path.getsize(file_list[fn]) == 0:
                 continue
             if fn not in winners:
                 break
@@ -750,7 +749,11 @@ def duplicate_files(
         attempts_remaining = 100000
         while attempts_remaining > 0:
             bn = randint(0, len(files_duplicated) - 1)
-            if bn not in br_winners:
+            path_to_br = files_duplicated[bn][1]
+            if (
+                bn not in br_winners
+                and os.path.getsize(path_to_br) != 0
+            ):
                 break
             attempts_remaining -= 1
         if attempts_remaining <= 0:
@@ -758,13 +761,11 @@ def duplicate_files(
                 f"Cannot find another duplicate to simulate bitrot."
             )
         br_winners.add(bn)
-        dup_to_br = files_duplicated[bn]
-        path_to_br = dup_to_br[1]
         simulate_bitrot(
             lucky_path=str(path_to_br),
             lucky_position=None,
         )
-        files_duplicated[bn] = (*dup_to_br, "bitrot")
+        files_duplicated[bn] = (*files_duplicated[bn], "bitrot")
     return files_duplicated
 
 
