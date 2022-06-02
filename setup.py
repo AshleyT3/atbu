@@ -66,6 +66,7 @@ Documentation: https://atbu.readthedocs.io/en/latest/
         "google-auth >= 2.6.5",
         "google-cloud-storage >= 2.3.0",
         "google-resumable-media >= 2.3.2",
-        "tabulate >= 0.8.9"
+        "tabulate >= 0.8.9",
+        "Send2Trash >= 1.8.0",
     ]
 )

@@ -96,13 +96,6 @@ from .common_helpers import (
 TEST_BACKUP_NAME = "atbu-backup-5b497bb3-c9ef-48a9-af7b-2327fc17fb65"
 TEST_CONTAINER_BASE_NAME = "atbu-bucket"
 
-# ENTER ENTER to accept both defaults.
-STDIN_RESP_ENABLE_ENC_PWD_NOT_REQ = f"{os.linesep}{os.linesep}".encode()
-# Enter Y for yes (i.e., confirm storage def deletion)
-STDIN_RESP_ENTER_Y_YES = f"y{os.linesep}".encode()
-STDIN_RESP_ENTER_N_NO = f"n{os.linesep}".encode()
-STDIN_RESP_ENTER_FOR_DEFAULT = f"{os.linesep}".encode()
-
 # import pdb; pdb.set_trace()
 # import pdb; pdb.set_trace()
 
@@ -155,6 +148,9 @@ def create_storage_definition_json(
     if project_id is not None:
         driver_arg += f",project={project_id}"
 
+    # ENTER ENTER to accept both defaults.
+    stdin_resp_enable_enc_pwd_not_req = f"{os.linesep}{os.linesep}".encode()
+
     rr = run_atbu(
         pytester,
         tmp_path,
@@ -165,7 +161,7 @@ def create_storage_definition_json(
         provider,
         f"{TEST_CONTAINER_BASE_NAME}*",
         driver_arg,
-        stdin=STDIN_RESP_ENABLE_ENC_PWD_NOT_REQ,
+        stdin=stdin_resp_enable_enc_pwd_not_req,
         log_base_name="create-storage-def-json",
     )
     assert rr.ret == ExitCode.OK
@@ -222,13 +218,16 @@ def delete_storage_definition_json(
 ):
     delete_container(storage_def_name=TEST_BACKUP_NAME)
 
+    # Enter Y for yes (i.e., confirm storage def deletion)
+    stdin_resp_enter_y_for_yes = f"y{os.linesep}".encode()
+
     rr = run_atbu(
         pytester,
         tmp_path,
         "creds",
         "delete-storage-def",
         TEST_BACKUP_NAME,
-        stdin=STDIN_RESP_ENTER_Y_YES,
+        stdin=stdin_resp_enter_y_for_yes,
         log_base_name="delete-storage-def",
     )
     assert rr.ret == ExitCode.OK
