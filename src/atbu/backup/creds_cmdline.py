@@ -623,6 +623,7 @@ def handle_creds(args):
             storage_def_name=storage_def_name, backup_file_path=backup_file_path
         )
     elif args.subcmd == "import":
+        switch_to_non_queued_logging()
         # TODO: Handle args.create_config
         backup_file_path = args.filename
         if not backup_file_path:

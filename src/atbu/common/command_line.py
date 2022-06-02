@@ -125,13 +125,13 @@ def create_argparse():
     #     "--show-secrets", action="store_true", default=False, help=argparse.SUPPRESS
     # )
 
-    # Uncomment to allow --debug-server (for use with VS Code pydebug)
-    # parser.add_argument(
-    #     "--debug-server",
-    #     help=argparse.SUPPRESS, #"Activate the debug server to listen on specified port, wait for a client connect."
-    #     type=int,
-    #     required=False,
-    # )
+    #Uncomment to allow --debug-server (for use with VS Code pydebug)
+    parser.add_argument(
+        "--debug-server",
+        help=argparse.SUPPRESS, #"Activate the debug server to listen on specified port, wait for a client connect."
+        type=int,
+        required=False,
+    )
 
     #
     # Common to all parser
