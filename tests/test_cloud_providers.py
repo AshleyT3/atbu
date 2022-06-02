@@ -218,8 +218,9 @@ def delete_storage_definition_json(
 ):
     delete_container(storage_def_name=TEST_BACKUP_NAME)
 
-    # Enter Y for yes (i.e., confirm storage def deletion)
-    stdin_resp_enter_y_for_yes = f"y{os.linesep}".encode()
+    # Enter Y for yes to confirm storage def deletion.
+    # Enter Y for yes to confirm deletion of backup information.
+    stdin_resp_enter_y_for_yes = f"y{os.linesep}y{os.linesep}".encode()
 
     rr = run_atbu(
         pytester,
@@ -245,18 +246,27 @@ def delete_storage_definition_json(
 
 
 @pytest.fixture(autouse=True)
-def cleanup_keyring():
+def cleanup_keyring(pytester: Pytester):
     yield
+
+    try:
+        delete_all_containers()
+    except Exception:
+        pass
+
     try:
         keyring.delete_password(
             service_name=TEST_BACKUP_NAME,
             username=CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD,
         )
+    except Exception:
+        pass
+
+    try:
         keyring.delete_password(
             service_name=TEST_BACKUP_NAME,
             username=CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION,
         )
-        delete_all_containers()
     except Exception:
         pass
 
