@@ -179,6 +179,12 @@ def stop_global_queue_listener():
 
 
 def switch_to_non_queued_logging():
+    """Switch to non-queued logging which is also logging
+    without latency which is useful for certain commands that
+    have the potential to interact with the user at the
+    command-line, where logging latency can be problematic
+    with interleaved with non-logging I/O.
+    """
     try:
         handlers = stop_global_queue_listener()
     except Exception:
