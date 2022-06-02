@@ -125,13 +125,13 @@ def create_argparse():
     #     "--show-secrets", action="store_true", default=False, help=argparse.SUPPRESS
     # )
 
-    #Uncomment to allow --debug-server (for use with VS Code pydebug)
-    parser.add_argument(
-        "--debug-server",
-        help=argparse.SUPPRESS, #"Activate the debug server to listen on specified port, wait for a client connect."
-        type=int,
-        required=False,
-    )
+    # Uncomment to allow --debug-server (for use with VS Code pydebug)
+    # parser.add_argument(
+    #     "--debug-server",
+    #     help=argparse.SUPPRESS, #"Activate the debug server to listen on specified port, wait for a client connect."
+    #     type=int,
+    #     required=False,
+    # )
 
     #
     # Common to all parser
@@ -582,6 +582,16 @@ fail to properly backup your locally stored backup information (which includes t
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Delete without a confirmation prompt.",
+    )
+    cred_delete_storage_def_parser.add_argument(
+        "--delete-backup-info", "--dbi",
+        action=argparse.BooleanOptionalAction,
+        help="""If you specify --no-delete-backup-info (--no-dbi), backup information files
+will not be deleted. By default, a storage definition's backup informatiion
+files are deleted along with the storage definition itself. If this option
+is used without --force, prompting for deleting backup information files
+will be skipped (i.e., user only prompted once re storage defintiion).
+""",
     )
 
     #

@@ -91,8 +91,9 @@ def handle_restore_backup_info(
     sd = StorageDefinition.storage_def_from_dict(
         storage_def_name=storage_def_name, storage_def_dict=storage_def_dict
     )
-    existing_backup_info_pat = backup_info_dir / f"{storage_def_name}*"
-    existing_backup_info = glob.glob(pathname=str(existing_backup_info_pat))
+    existing_backup_info = atbu_cfg.get_backup_info_file_paths(
+        storage_def_name=storage_def_name
+    )
     if prompt_if_exists and len(existing_backup_info) > 0:
         print(f"Found existing local backup info for {storage_def_name}:")
         for ebi in existing_backup_info:
@@ -169,8 +170,12 @@ listed above. If you are uncertain, you may want to backup those files before pr
     newest_backup_info_wo_stamp = remove_timestamp_from_backupinfo_filename(
         filename=newest_backup_info
     )
-    logging.info(f"Copying {newest_backup_info} to {newest_backup_info_wo_stamp}...")
+    logging.info(f"Copying the most recent backup information...")
+    logging.info(f"  {newest_backup_info}")
+    logging.info(f"...to...")
+    logging.info(f"  {newest_backup_info_wo_stamp}")
     copy2(src=newest_backup_info, dst=newest_backup_info_wo_stamp)
+    logging.info(f"Most recent backup information restored.")
 
 
 def handle_recover(args):

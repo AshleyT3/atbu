@@ -18,6 +18,7 @@ from enum import Enum
 from io import SEEK_END, SEEK_SET
 import os
 from pathlib import Path
+import platform
 import random
 from shutil import copy2
 from typing import Union
@@ -34,6 +35,11 @@ class AutoNameEnum(Enum):
 def is_platform_path_case_sensitive():
     return os.path.normcase("A") == "A"
 
+def get_trash_bin_name():
+    if platform.system() == "Windows":
+        return "Recycle Bin"
+    else:
+        return "Trash"
 
 def get_file_max_pos(fd):
     cur_pos = fd.tell()

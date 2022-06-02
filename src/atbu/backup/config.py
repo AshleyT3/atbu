@@ -16,6 +16,7 @@ r"""ATBU Configuration-related classes/functions.
 """
 import base64
 import fnmatch
+import glob
 import logging
 import os
 from pathlib import Path
@@ -506,6 +507,13 @@ configuration, you can choose to have one created for you.
         g[CONFIG_VALUE_NAME_BACKUP_INFO_DIR] = str(backup_info_dir)
         self.save_config_file()
         return backup_info_dir
+
+    def get_backup_info_file_paths(
+        self,
+        storage_def_name: str,
+    ) -> list[str]:
+        pattern = self.get_backup_info_dir() / f"{storage_def_name}*"
+        return glob.glob(pathname=str(pattern))
 
     def resolve_storage_location(
         self,

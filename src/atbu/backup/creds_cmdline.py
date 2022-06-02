@@ -19,8 +19,9 @@ import os
 import logging
 import re
 from typing import Union
+from send2trash import send2trash
 
-from ..common.util_helpers import prompt_YN
+from ..common.util_helpers import get_trash_bin_name, prompt_YN
 from ..common.mp_global import switch_to_non_queued_logging
 from ..common.constants import *
 from .config import (
@@ -532,24 +533,65 @@ def handle_create_storage_definition(
 
 
 def handle_delete_storage_definition(
-    storage_def_name: str, skip_confirmation_prompt: bool = False
+    storage_def_name: str,
+    skip_confirmation_prompt: bool,
+    delete_backup_info: bool,
 ):
+    """Delete a storage definition.
+
+        Args:
+            storage_def_name: The storage definition name.
+            skip_confirmation_prompt: If True, then no
+                prompting will occur, definition will be
+                deleted.
+            delete_backup_info: If True, the backup information
+                will also be deleted, if False the backup
+                information will not be deleted. If None,
+                and skip_confirmation_prompt==False, the
+                user will be prompted about backup information,
+                otherwise in the case of not prompting, the
+                backup information will not be deleted. The
+                goal is to be cautious about deleting backup
+                informoation despite it being recoverable from
+                a good backup. Essentially, the user must be
+                explicitly one way or another about including
+                backup information in the deletion process.
+    """
     switch_to_non_queued_logging()
+    bin_name = get_trash_bin_name()
     atbu_cfg = AtbuConfig.access_default_config()
     if not atbu_cfg.is_storage_def_exists(storage_def_name=storage_def_name):
         print(f"The storage definition '{storage_def_name}' does not exist.")
         return
 
+    existing_backup_info = atbu_cfg.get_backup_info_file_paths(
+        storage_def_name=storage_def_name
+    )
+
     if not skip_confirmation_prompt:
         print(
-            f"""
-    *** WARNING *** WARNING *** WARNING *** WARNING *** WARNING *** WARNING
-    The storage definition '{storage_def_name}' exists.
-    If this is an encrypted backup where the private key is not backed up,
-    you will lose access to all data in this backup if you delete this
-    configuration.
-    """
+            f"""*** WARNING *** WARNING *** WARNING *** WARNING *** WARNING *** WARNING
+The storage definition '{storage_def_name}' exists.
+If this is an encrypted backup where the private key is not backed up,
+you *will* *lose* *access* to all data in this backup if you delete this
+configuration.
+"""
         )
+        if (
+            delete_backup_info is not None      # If user was explicit
+            and delete_backup_info              # and user said Yes to deleting BI
+            and len(existing_backup_info) > 0   # and there is BI to delete
+        ):
+            print()
+            print(
+                f"""If you delete this storage definition, the following backup information
+will also be deleted:
+"""
+            )
+            print()
+            for bip in existing_backup_info:
+                print(f"    {bip}")
+            print()
         a = prompt_YN(
             prompt_msg=f"You are about to delete a backup storage definition.",
             prompt_question=f"Are you certain you want to delete '{storage_def_name}' ",
@@ -558,10 +600,62 @@ def handle_delete_storage_definition(
         if a != "y":
             print("The storage definition will not be deleted.")
             return
-    atbu_cfg.delete_storage_def(storage_def_name=storage_def_name)
-    atbu_cfg.save_config_file()
-    print("The storage definition was deleted.")
+        if (
+            delete_backup_info is None          # user was not explicit
+            and len(existing_backup_info) > 0   # there is BI to delete
+        ):
+            print()
+            print(
+                f"This storage definition also has backup information as follows:"
+            )
+            print()
+            for bip in existing_backup_info:
+                print(f"    {bip}")
+            print()
+            print(
+                f"""If you are planning to immediately re-import this same configuration,
+or you otherwise need this backup information, you should not delete it.
 
+While this backup information is typically recoverable from a non-corrupt
+backup, it is generally a good idea to err on the side of caution and back
+it up if you are uncertain.
+
+If you choose 'y' below to delete the above files, they will no longer be
+available. This app will attempt to send the files to the {bin_name},
+so you may be able to recover them from there if needed.
+
+If you choose *not* to delete these files along with the storage definition,
+and you later attempt import/recovery of a storage definition of the same name,
+the lingering presence of these older files may interfere or be out of sync with
+that newly imported configuration.
+                """
+            )
+            a = prompt_YN(
+                prompt_msg=f"Choose whether to also delete the above backup information files (a=abort).",
+                prompt_question=f"Delete backup information files along with '{storage_def_name}' ",
+                default_enter_ans="a",
+                choices={"y": "[Y/n/a]", "n": "[y/N/a]", "a": "[y/n/A]"},
+            )
+            if a == "a":
+                print("The storage definition will not be deleted.")
+                return
+            delete_backup_info = a == 'y'
+    logging.info(f"Deleting storage definition '{storage_def_name}'...")
+    atbu_cfg.delete_storage_def(storage_def_name=storage_def_name)
+    logging.info(f"Saving configuration file {atbu_cfg.path}...")
+    atbu_cfg.save_config_file()
+    if delete_backup_info:
+        logging.info("Deleting backup information...")
+        for bip in existing_backup_info:
+            logging.info(f"    Sending file to {bin_name}: {bip}")
+            send2trash(bip)
+    elif len(existing_backup_info) > 0:
+        logging.info(f"Skipping deletion of the following backup information...")
+        for bip in existing_backup_info:
+            logging.info(f"    {bip}")
+    else:
+        logging.info(f"There is no backup information for '{storage_def_name}'.")
+    logging.info(f"The storage definition '{storage_def_name}' was deleted.")
 
 def handle_creds(args):
     logging.debug(f"handle_creds")
@@ -603,7 +697,9 @@ def handle_creds(args):
         )
     elif args.subcmd == "delete-storage-def":
         handle_delete_storage_definition(
-            storage_def_name=storage_def_name, skip_confirmation_prompt=args.force
+            storage_def_name=storage_def_name,
+            skip_confirmation_prompt=args.force,
+            delete_backup_info=args.delete_backup_info,
         )
     elif args.subcmd == "export":
         backup_file_path = args.filename
