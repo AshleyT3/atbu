@@ -20,13 +20,19 @@ Intro - READ THIS FIRST!
 * **Backup/Restore:** Cloud and local backup/restore/verify, including deduplication capabilities, bitrot detection, and more.
 * **Persistent file information:** A relatively simple but useful utility to diff/compare directories to gain insight into undesired file duplication, missing expected redundancy, and bitrot detection.
 
-**IMPORTANT: READ THIS**
+**IMPORTANT:**
 
-* I created this tool given my own personal needs.
-* Beyond my own ad-hoc usage, for open source use by others, it should be considered "alpha" as of May 2022.
+* For open source use by others beyond my own ad-hoc usage, this tool should be considered "alpha" as of May 2022.
 * With regards to backup/restore, given |PROJNAME|'s alpha nature, please do not use it as your primary/only backup/restore tool. Have redundancy elsewhere. Your test-driving is welcome, just be reasonably cautious.
 * The walkthroughs outline the most tested/common scenarios.
 * This is my own personal utility being shared via open source. I need more time actually using it to speak more confidently about it, to eventually remove these precautionary bullet points.
+
+For those viewing the source code:
+
+* I created this tool given my own personal needs.
+* This is my first significant Python coding in more than 10 years.
+* I had to come back up to speed on many aspects of the language in short order so forgive anything which may not be written in the most appropriate Pythonic way. (Feedback welcome!)
+* It really was an ad-hoc tool for my own usage at the start... but then seemed like a good opportunity to try out the whole github/OSS thing from a creator standpoint.
 
 Highlights
 ----------
