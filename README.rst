@@ -21,6 +21,7 @@ Intro - READ THIS FIRST!
 * **Persistent file information:** A relatively simple but useful utility to diff/compare directories to gain insight into undesired file duplication, missing expected redundancy, and bitrot detection.
 
 **IMPORTANT: READ THIS**
+
 * I created this tool given my own personal needs.
 * Beyond my own ad-hoc usage, for open source use by others, it should be considered "alpha" as of May 2022.
 * With regards to backup/restore, given |PROJNAME|'s alpha nature, please do not use it as your primary/only backup/restore tool. Have redundancy elsewhere. Your test-driving is welcome, just be reasonably cautious.
