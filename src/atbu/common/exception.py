@@ -13,13 +13,23 @@
 # limitations under the License.
 r"""ATBU Exceptions.
 """
+from dataclasses import dataclass
 import sys
 import traceback
+from typing import Literal
 
+ANOMALY_KINDS = Literal["exception", "cancelled", "unexpected state"]
+ANOMALY_KIND_EXCEPTION = "exception"
+ANOMALY_KIND_CANCELLED = "cancelled"
+ANOMALY_KIND_UNEXPECTED_STATE = "unexpected state"
+
+@dataclass
+class Anomaly:
+    kind: ANOMALY_KINDS
+    exception: Exception = None
+    message: str = None
 
 class AtbuException(Exception):
-    message = None  # TODO: remove this
-
     def __init__(self, message: str, cause=None):
         super().__init__(message)
         self.message = message
@@ -400,6 +410,10 @@ class InvalidBase64StringError(AtbuException):
         self._cause = cause
         super().__init__(message=message, cause=cause)
 
+class PipelineResultIsNotPipelineWorkItem(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
 
 def exc_to_string(ex: Exception):
     return f"ex={ex} details: {traceback.format_exception(ex, ex, ex.__traceback__)}"

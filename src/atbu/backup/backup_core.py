@@ -19,6 +19,7 @@ r"""Core backup classes/functions.
 
 from asyncio import ALL_COMPLETED
 from dataclasses import dataclass
+from operator import truediv
 import os
 from datetime import datetime, timezone
 import time
@@ -33,7 +34,6 @@ from concurrent.futures import (
     FIRST_COMPLETED,
     Future,
     ThreadPoolExecutor,
-    ProcessPoolExecutor,
 )
 import queue
 import json
@@ -58,7 +58,12 @@ from ..common.mp_global import (
     get_process_pool_exec_init_args,
     ProcessThreadContextMixin,
 )
-from ..common.queued_worker import QueuedSubprocessWorkManager
+from ..common.subprocess_pipeline import (
+    SubprocessPipeline,
+    PipelineStage,
+    ThreadPipelineStage,
+    PipelineWorkItem,
+)
 from ..common.hasher import (
     GlobalHasherDefinitions,
     Hasher,
@@ -100,6 +105,9 @@ BACKUP_INFO_STORAGE_OBJECT_NAME_SALT = "object_name_hash_salt"
 BACKUP_INFO_BACKUP_TYPE_NAME = "backup_type"
 BACKUP_INFO_ALL_SECTION_NAME = "all"
 
+BACKUP_OPERATION_NAME_BACKUP = "Backup"
+BACKUP_OPERATION_NAME_RESTORE = "Restore"
+BACKUP_OPERATION_NAME_VERIFY = "Verify"
 
 class StorageDefinition:
     def __init__(
@@ -290,6 +298,8 @@ class BackupFileInformation(FileInformation):
             raise BackupFileInformationError(
                 f"The discovery path cannot be found: disc_path={self.discovery_path} path={self.path}"
             )
+        if os.path.normcase(self.path) == self.nc_discovery_path:
+            return self.path
         return self.path[len(self.discovery_path) + 1 :]
 
     @property
@@ -1722,23 +1732,11 @@ class BackupResultsManager:
                 copy2(src=self.backup_info_file, dst=sbid)
                 self.backup_info_db.save_to_file(dest_backup_info_dir=sbid)
 
-
-ANOMALY_KINDS = Literal["exception", "cancelled", "unexpected state"]
-
-ANOMALY_KIND_EXCEPTION = "exception"
-ANOMALY_KIND_CANCELLED = "cancelled"
-ANOMALY_KIND_UNEXPECTED_STATE = "unexpected state"
-
-
 @dataclass
-class Anomaly:
-    kind: ANOMALY_KINDS
+class BackupAnomaly(Anomaly):
     file_info: BackupFileInformation = None
-    exception: Exception = None
-    message: str = None
 
-
-def get_anomalies_report(anomalies: list[Anomaly]) -> list[str]:
+def get_anomalies_report(anomalies: list[BackupAnomaly]) -> list[str]:
     report_lines = []
     max_kind = 0
     max_exception_name = 0
@@ -1787,7 +1785,7 @@ def get_anomalies_report(anomalies: list[Anomaly]) -> list[str]:
     return report_lines
 
 
-def log_anomalies_report(anomalies: list[Anomaly]):
+def log_anomalies_report(anomalies: list[BackupAnomaly]):
     if len(anomalies) == 0:
         return
     logging.error(f"*******************************************")
@@ -1799,7 +1797,7 @@ def log_anomalies_report(anomalies: list[Anomaly]):
 
 def file_operation_future_result(
     f: Future,
-    anomalies: list[Anomaly],
+    anomalies: list[BackupAnomaly],
     the_operation: str,
 ):
     """Evaluate one future result which will return a BackupFileInformation
@@ -1832,7 +1830,7 @@ def file_operation_future_result(
         )
         logging.error(msg)
         anomalies.append(
-            Anomaly(kind=ANOMALY_KIND_EXCEPTION, exception=f.exception(), message=msg)
+            BackupAnomaly(kind=ANOMALY_KIND_EXCEPTION, exception=f.exception(), message=msg)
         )
         return None
 
@@ -1846,16 +1844,16 @@ def file_operation_future_result(
             f"Got unexpected Future Cancellation without file information."
         )
         logging.error(msg)
-        anomalies.append(Anomaly(kind=ANOMALY_KIND_CANCELLED, message=msg))
+        anomalies.append(BackupAnomaly(kind=ANOMALY_KIND_CANCELLED, message=msg))
         return None
 
-    r = f.result()
-    if isinstance(r, tuple) and len(r) == 2 and isinstance(r[0], BackupFileInformation):
+    wi: BackupPipelineWorkItem = f.result()
+    if isinstance(wi.file_info, BackupFileInformation):
         #
         # The most expected kind of result, a 2 element tuple (BackupFileInformation,Exception | None)
         #
-        file_info: BackupFileInformation = r[0]
-        if file_info.is_successful and file_info.exception is None and r[1] is None:
+        file_info: BackupFileInformation = wi.file_info
+        if file_info.is_successful and file_info.exception is None and wi.exception is None:
             #
             # Most typical and successful case:
             # The BackupFileInformation is marked successful.
@@ -1864,6 +1862,16 @@ def file_operation_future_result(
             #
             logging.info(f"{the_operation} succeeded: {file_info.path_for_logging}")
             return file_info
+
+        if (
+            wi.operation_name == BACKUP_OPERATION_NAME_BACKUP
+            and not wi.is_qualified_for_operation
+            and file_info.is_unchanged_since_last
+            and file_info.exception is None
+            and wi.exception is None
+        ):
+            logging.info(f"{the_operation} not needed, unchanged: {file_info.path_for_logging}")
+            return None
 
         if file_info.exception:
             #
@@ -1877,7 +1885,7 @@ def file_operation_future_result(
             )
             logging.error(msg)
             anomalies.append(
-                Anomaly(
+                BackupAnomaly(
                     kind=ANOMALY_KIND_EXCEPTION,
                     file_info=file_info,
                     exception=file_info.exception,
@@ -1886,14 +1894,13 @@ def file_operation_future_result(
             )
             return file_info
 
-        if isinstance(r[1], Exception):
+        if isinstance(wi.exception, Exception):
             #
-            # Non-typical... the second tuple was an exception yet the
-            # BackupFileInformation exception was not set. Something
-            # caused a caught exception which did not update the
-            # BackupFileInformation instance. (bug)
+            # Non-typical... an exception with BackupFileInformation
+            # exception was not set. Something caused a caught exception
+            # which did not update the BackupFileInformation instance. (bug)
             #
-            ex = r[1]
+            ex = wi.exception
             msg = (
                 f"{the_operation} failed: "
                 f"Did not expect Future.exception() to return exception. "
@@ -1901,7 +1908,7 @@ def file_operation_future_result(
             )
             logging.error(msg)
             anomalies.append(
-                Anomaly(
+                BackupAnomaly(
                     kind=ANOMALY_KIND_EXCEPTION,
                     file_info=file_info,
                     exception=ex,
@@ -1920,7 +1927,7 @@ def file_operation_future_result(
         )
         logging.error(msg)
         anomalies.append(
-            Anomaly(
+            BackupAnomaly(
                 kind=ANOMALY_KIND_UNEXPECTED_STATE,
                 file_info=file_info,
                 message=msg,
@@ -1929,17 +1936,17 @@ def file_operation_future_result(
         return file_info
 
     msg = (
-        f"{the_operation} failed: " f"The result is not expected: type={type(r)} r={r}"
+        f"{the_operation} failed: " f"The work item did not have the expected file info."
     )
     logging.error(msg)
-    anomalies.append(Anomaly(kind=ANOMALY_KIND_UNEXPECTED_STATE, message=msg))
+    anomalies.append(BackupAnomaly(kind=ANOMALY_KIND_UNEXPECTED_STATE, message=msg))
     return None
 
 
 def file_operation_futures_to_results(
     fs: set,
     fi_list: list[BackupFileInformation],
-    anomalies: list[Anomaly],
+    anomalies: list[BackupAnomaly],
     the_operation: str,
 ) -> list[BackupFileInformation]:
     """Check all futures in fs, add any resulting file_info to the fi_list,
@@ -1962,6 +1969,55 @@ def file_operation_futures_to_results(
             fi_list.append(fi)
 
     return fi_list
+
+class BackupPipelineWorkItem(PipelineWorkItem):
+    def __init__(
+        self,
+        operation_name: str,
+        file_info: BackupFileInformation,
+        is_qualified_for_operation: bool = False,
+        operation_runner: object = None,
+    ) -> None:
+        super().__init__(self)
+        self.operation_name = operation_name
+        self.is_qualified_for_operation = is_qualified_for_operation
+        self.file_info = file_info
+        self.operation_runner = operation_runner
+
+class HasherPipelineStage(PipelineStage):
+    def __init__(self) -> None:
+        super().__init__()
+    def is_for_stage(self, pwi: BackupPipelineWorkItem) -> bool:
+        return True
+    def perform_stage_work(
+        self,
+        pwi: BackupPipelineWorkItem,
+        **kwargs,
+    ):
+        max_attempts = 5
+        try:
+            pwi.file_info.refresh_digests(max_attempts=max_attempts)
+            return pwi
+        except FileChangedWhileCalculatingHash as ex:
+            logging.error(
+                f"After {max_attempts} attempts, cannot hash the file, file changed while hashing: {exc_to_string(ex)}"
+            )
+            raise
+
+def is_qualified_for_operation(wi: BackupPipelineWorkItem):
+    return wi.is_qualified_for_operation
+
+def run_operation_stage(wi: BackupPipelineWorkItem):
+    if wi.operation_runner is None:
+        raise InvalidStateError(
+            f"The operation runner is None."
+        )
+    # In case BackupFile sets any attributes to
+    # values that cannot be picked, set it to None.
+    operation_runner = wi.operation_runner
+    wi.operation_runner = None
+    operation_runner.run()
+    return wi
 
 
 class Backup:
@@ -2006,58 +2062,35 @@ class Backup:
         self._hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
         self._mp_manager = BackupSyncManager()
         self._mp_manager.start()
-        self._process_exec = ProcessPoolExecutor(
-            max_workers=Backup.MAX_SIMULTANEOUS_FILES,
-            initializer=get_process_pool_exec_init_func(),
-            initargs=get_process_pool_exec_init_args(),
-        )
         self._object_name_hash_salt = os.urandom(32)
         self._object_name_reservations = BackupNameReservations(self._mp_manager)
-        self.anomalies: list[Anomaly] = []
+        self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
-        self._hasherq = QueuedSubprocessWorkManager()
+        self._subprocess_pipeline = SubprocessPipeline(
+            stages=[
+                HasherPipelineStage(),
+                ThreadPipelineStage(
+                    fn_determiner=lambda pwi: True,
+                    fn_worker=self._post_hasher_evaluation,
+                ),
+                PipelineStage(
+                    fn_determiner=is_qualified_for_operation,
+                    fn_worker=run_operation_stage,
+                )
+            ],
+            process_initfunc=get_process_pool_exec_init_func(),
+            process_initargs=get_process_pool_exec_init_args(),
+        )
         self._is_used = False
 
     @property
     def storage_def(self) -> StorageDefinition:
         return self._storage_def
 
-    def _schedule_backup_file_process(self, file_info: BackupFileInformation):
-        """Schedule the file_info for backup, return a Future for the backup work."""
-        future: Future = self._process_exec.submit(
-            BackupFile.run,
-            BackupFile(
-                file_info=file_info,
-                storage_def=self.storage_def,
-                object_name_hash_salt=self._object_name_hash_salt,
-                object_name_reservations=self._object_name_reservations,
-                perform_cleartext_hashing=False,
-            ),
-        )
-        return future
-
-    @staticmethod
-    def _queue_hasher_func(file_info: BackupFileInformation):
-        """Hashing worker will attempt to successfully hash the file_info
-        as part of pre-backup efforts.
-        """
-        max_attempts = 5
-        try:
-            file_info.refresh_digests(max_attempts=max_attempts)
-            return (file_info, None)
-        except FileChangedWhileCalculatingHash as ex:
-            logging.error(
-                f"After {max_attempts} attempts, cannot hash the file, file changed while hashing: {exc_to_string(ex)}"
-            )
-            return (
-                file_info,
-                ex,
-            )
-
     def _handle_sneaky_corruption_detection(
         self,
         file_info: BackupFileInformation,
-    ):
+    ) -> None:
         bh = self._backup_history
         # Check for potential sneaky corruption.
         (
@@ -2083,7 +2116,7 @@ class Backup:
             if self._sneaky_corruption_detection:
                 logging.warning(msg)
                 self.anomalies.append(
-                    Anomaly(
+                    BackupAnomaly(
                         kind=ANOMALY_KIND_UNEXPECTED_STATE,
                         file_info=file_info,
                         message=msg,
@@ -2095,7 +2128,7 @@ class Backup:
     def _is_file_for_backup(
         self,
         file_info: BackupFileInformation,
-    ):
+    ) -> bool:
         """This method is called after hashing, at the point in time
         when incremental plus deduplication evaluation can take place.
         If incremental plus is not in effect, this function returns
@@ -2176,7 +2209,7 @@ class Backup:
             )
             logging.error(msg)
             self.anomalies.append(
-                Anomaly(
+                BackupAnomaly(
                     kind=ANOMALY_KIND_UNEXPECTED_STATE,
                     file_info=file_info,
                     message=msg,
@@ -2212,7 +2245,7 @@ class Backup:
             )
             logging.warning(msg)
             self.anomalies.append(
-                Anomaly(
+                BackupAnomaly(
                     kind=ANOMALY_KIND_UNEXPECTED_STATE,
                     file_info=file_info,
                     message=msg,
@@ -2233,7 +2266,7 @@ class Backup:
             )
             logging.warning(msg)
             self.anomalies.append(
-                Anomaly(
+                BackupAnomaly(
                     kind=ANOMALY_KIND_UNEXPECTED_STATE,
                     file_info=file_info,
                     message=msg,
@@ -2254,7 +2287,7 @@ class Backup:
         )
         logging.error(msg)
         self.anomalies.append(
-            Anomaly(
+            BackupAnomaly(
                 kind=ANOMALY_KIND_UNEXPECTED_STATE,
                 file_info=file_info,
                 message=msg,
@@ -2265,37 +2298,11 @@ class Backup:
         #
         return True
 
-    def _handle_queued_hasher_result(self, result: tuple, force_backup: bool = False):
+
+    def _post_hasher_evaluation(self, wi: BackupPipelineWorkItem):
         """Handle a hashing result."""
-        if not isinstance(result, tuple) or len(result) < 2:
-            msg = f"Hashing worker result in unexpected format: type={type(result)} value={result}"
-            logging.error(msg)
-            self.anomalies.append(
-                Anomaly(kind=ANOMALY_KIND_UNEXPECTED_STATE, message=msg)
-            )
-            return None
 
-        file_info: BackupFileInformation = result[0]
-        exception: Exception = result[1]
-        if not isinstance(file_info, BackupFileInformation):
-            msg = (
-                f"Expected BackupFileInformation as first type from hashing "
-                f"worker result tuple, but got {type(file_info)} instead. ex={exception}"
-            )
-            logging.error(msg)
-            self.anomalies.append(
-                Anomaly(kind=ANOMALY_KIND_UNEXPECTED_STATE, message=msg)
-            )
-            return None
-
-        if exception is not None:
-            logging.error(
-                f"An error occurred during the hashing worker function: "
-                f"path={file_info.path} ex={exception}"
-            )
-            file_info.is_successful = False
-            file_info.exception = exception
-            return None
+        file_info: BackupFileInformation = wi.file_info
 
         # See if date/time and size have not changed despite
         # digest indicating changes. If yes, report as either
@@ -2303,60 +2310,29 @@ class Backup:
         # or not user specified --no-detect-bitrot.
         self._handle_sneaky_corruption_detection(file_info=file_info)
 
-        if not force_backup and not self._is_file_for_backup(file_info=file_info):
-            #
-            # Do not backup this file.
-            #
-            return None
+        # If decision to backup not already made...
+        if not wi.is_qualified_for_operation:
+            # ...decide whether to backup or not.
+            wi.is_qualified_for_operation = self._is_file_for_backup(file_info=file_info)
 
-        #
-        # Schedule backup.
-        #
-        future: Future = self._schedule_backup_file_process(file_info=file_info)
-        return future
-
-    def _check_hasher_queue_results(
-        self, max_results_to_handle: int = None, block: bool = True
-    ):
-        if max_results_to_handle is not None and (
-            not isinstance(max_results_to_handle, int) or max_results_to_handle <= 0
-        ):
-            raise ValueError(
-                f"Expected max_results_to_handle to be either None or a positive integer."
+        if wi.is_qualified_for_operation:
+            wi.operation_runner = BackupFile(
+                file_info=file_info,
+                storage_def=self.storage_def,
+                object_name_hash_salt=self._object_name_hash_salt,
+                object_name_reservations=self._object_name_reservations,
+                perform_cleartext_hashing=False,
             )
-        results_handled = []
-        while self._hasherq.are_results_pending and (
-            max_results_to_handle is None or max_results_to_handle > 0
-        ):
-            if max_results_to_handle is not None:
-                max_results_to_handle -= 1
-            is_result_ready = self._hasherq.is_result_ready
-            try:
-                result = self._hasherq.get_result(block=block)
-                f = self._handle_queued_hasher_result(result)
-                if isinstance(f, Future):
-                    results_handled.append(f)
-            except queue.Empty:
-                if is_result_ready:
-                    msg = f"Unexpected Empty exception after q.is_result_ready reports True."
-                    logging.error(msg)
-                    self.anomalies.append(
-                        Anomaly(kind=ANOMALY_KIND_UNEXPECTED_STATE, message=msg)
-                    )
-            except Exception:
-                logging.error(
-                    f"Unexpected exception while calling q.get_resuts. {cur_exc_to_string()}"
-                )
-                raise
-        return results_handled
+
+        return wi
+
 
     def _backup_files(self):
         logging.info(f"Starting backup '{self._results_mgr.specific_backup_name}'...")
         if self._is_used:
             raise AlreadyUsedError(f"This instance has already been used.")
         self._is_used = True
-        pending_backups = set()
-        self._hasherq.start()
+        pending_backups = set[Future]()
         try:
             logging.info(f"Scheduling hashing jobs...")
             for file_info in self._source_files:
@@ -2397,24 +2373,21 @@ class Backup:
                         logging.info(
                             f"Scheduling backup of file never backed up before: {file_info.path}"
                         )
-                self._hasherq.put_work(Backup._queue_hasher_func, file_info)
-                newly_scheduled_file_backups = set(
-                    self._check_hasher_queue_results(
-                        max_results_to_handle=1, block=False
+                pending_backup_fut = self._subprocess_pipeline.submit(
+                    work_item=BackupPipelineWorkItem(
+                        operation_name=BACKUP_OPERATION_NAME_BACKUP,
+                        file_info=file_info,
                     )
                 )
-                pending_backups.update(newly_scheduled_file_backups)
+                pending_backups.add(pending_backup_fut)
                 self._results_mgr.extend_temp_results(
                     file_operation_futures_to_results(
                         fs=pending_backups,
                         fi_list=[],
                         anomalies=self.anomalies,
-                        the_operation="Backup",
+                        the_operation=BACKUP_OPERATION_NAME_BACKUP,
                     )
                 )
-            logging.info(f"Waiting for completion of remaining hashing jobs...")
-            newly_scheduled_file_backups = self._check_hasher_queue_results()
-            pending_backups.update(newly_scheduled_file_backups)
 
             logging.info(f"Wait backup file operations to complete...")
             while len(pending_backups) > 0:
@@ -2426,7 +2399,7 @@ class Backup:
                         fs=done,
                         fi_list=list(),
                         anomalies=self.anomalies,
-                        the_operation="Backup",
+                        the_operation=BACKUP_OPERATION_NAME_BACKUP,
                     )
                 )
 
@@ -2459,14 +2432,18 @@ class Backup:
                 )
                 fi_backup_info.storage_object_name = db_storage_basename
 
-                self._hasherq.put_work(Backup._queue_hasher_func, fi_backup_info)
-                result = self._hasherq.get_result(block=True)
-                f = self._handle_queued_hasher_result(result=result, force_backup=True)
-                if not f:
+                f = self._subprocess_pipeline.submit(
+                    BackupPipelineWorkItem(
+                        operation_name=BACKUP_OPERATION_NAME_BACKUP,
+                        file_info=fi_backup_info,
+                        is_qualified_for_operation=True,
+                    )
+                )
+                if f is None:
                     msg = f"Failed to schedule backup of the backup info file."
                     logging.error(msg)
                     self.anomalies.append(
-                        Anomaly(
+                        BackupAnomaly(
                             kind=ANOMALY_KIND_UNEXPECTED_STATE,
                             file_info=fi_backup_info,
                             message=msg,
@@ -2481,7 +2458,7 @@ class Backup:
                     )
                     logging.error(msg)
                     self.anomalies.append(
-                        Anomaly(
+                        BackupAnomaly(
                             kind=ANOMALY_KIND_UNEXPECTED_STATE,
                             file_info=fi_backup_info,
                             message=msg,
@@ -2495,7 +2472,7 @@ class Backup:
                     )
                     logging.error(msg)
                     self.anomalies.append(
-                        Anomaly(
+                        BackupAnomaly(
                             kind=ANOMALY_KIND_EXCEPTION,
                             file_info=fi_backup_info,
                             exception=f.exception(),
@@ -2515,7 +2492,8 @@ class Backup:
             )
             raise
         finally:
-            self._hasherq.stop()
+            self._subprocess_pipeline.shutdown()
+            self.anomalies.extend(self._subprocess_pipeline.anomalies)
 
     def is_completely_successful(self):
         return len(self.anomalies) == 0
@@ -2568,8 +2546,8 @@ class StorageFileRetriever(ProcessThreadContextMixin):
         self, file_info: BackupFileInformation, storage_def: StorageDefinition
     ):
         super().__init__()
-        self._file_info = file_info
-        if self._file_info.is_unchanged_since_last:
+        self.file_info = file_info
+        if self.file_info.is_unchanged_since_last:
             self._backing_fi = file_info.backing_fi
         else:
             self._backing_fi = file_info
@@ -2595,7 +2573,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
 
     @property
     def path_for_logging(self) -> str:
-        return self._file_info.path_without_discovery_path
+        return self.file_info.path_without_discovery_path
 
     @property
     def cleartext_digest(self) -> str:
@@ -2677,9 +2655,9 @@ class StorageFileRetriever(ProcessThreadContextMixin):
         if self._is_first_chunk:
             # If using encryption, header is extracted here.
             encrypted_chunk = self.extract_header(chunk=encrypted_chunk)
-        if self._file_info.populate_from_header:
-            if self._file_info.encryption_IV is None and self._header_IV is not None:
-                self._file_info.encryption_IV = self._header_IV
+        if self.file_info.populate_from_header:
+            if self.file_info.encryption_IV is None and self._header_IV is not None:
+                self.file_info.encryption_IV = self._header_IV
         if not self._dec:
             iv_to_use = self._backing_fi.encryption_IV
             if iv_to_use is None:
@@ -2731,15 +2709,15 @@ class StorageFileRetriever(ProcessThreadContextMixin):
             except Exception as ex:
                 raise PreambleParsingError(
                     f"StorageFileRetriever: Error parsing preemable: "
-                    f"path={self._file_info.path_without_root} {exc_to_string(ex)}"
+                    f"path={self.file_info.path_without_root} {exc_to_string(ex)}"
                 ).with_traceback(ex.__traceback__) from ex
             # Remove preamble from decrypted_chunk.
             decrypted_chunk = decrypted_chunk[preamble_with_padding_size:]
-            if self._file_info.populate_from_header:
-                self._file_info.primary_digest = self.preamble_digest
-                self._file_info.size_in_bytes = self.preamble_size_in_bytes
-                self._file_info.modified_time_posix = self.preamble_modified_time_posix
-                self._file_info.accessed_time_posix = self.preamble_accessed_time_posix
+            if self.file_info.populate_from_header:
+                self.file_info.primary_digest = self.preamble_digest
+                self.file_info.size_in_bytes = self.preamble_size_in_bytes
+                self.file_info.modified_time_posix = self.preamble_modified_time_posix
+                self.file_info.accessed_time_posix = self.preamble_accessed_time_posix
 
         # Update cleartext hash with file plaintext data.
         if not self._hasher_cleartext:
@@ -2772,10 +2750,10 @@ class StorageFileRetriever(ProcessThreadContextMixin):
 
     def run(self):
         try:
-            self._file_info.is_successful = False
-            self._file_info.exception = None
+            self.file_info.is_successful = False
+            self.file_info.exception = None
             total_size_in_bytes = self._backing_fi.size_in_bytes
-            self._file_info.is_backup_encrypted = self._storage_def.is_encryption_used
+            self.file_info.is_backup_encrypted = self._storage_def.is_encryption_used
             logging.debug(
                 f"StorageFileRetriever: {self.get_exec_context_log_stamp_str()} path={self._backing_fi.path_without_root}"
             )
@@ -2812,7 +2790,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
                             self._dec is not None and self._dec.is_finalized
                         ):
                             raise AlreadyFinalizedError(
-                                f"StorageFileRetriever: More data but decryption already finalized: {self._file_info.path_without_root}"
+                                f"StorageFileRetriever: More data but decryption already finalized: {self.file_info.path_without_root}"
                             )
 
                         if total_size_in_bytes == 0:
@@ -2894,31 +2872,31 @@ class StorageFileRetriever(ProcessThreadContextMixin):
                         StorageFileRetriever.RETRY_MAX_DELAY_SECONDS,
                     )
                     logging.warning(f"Retrying operation now...")
-            self._file_info.is_successful = True
-            if self._file_info.populate_from_header:
+            self.file_info.is_successful = True
+            if self.file_info.populate_from_header:
                 if self._storage_def.is_encryption_used:
                     # Usually, populate_from_header is used when local info has been lost or
                     # has become unavailable. There is therefore no backup ciphertext hash.
                     # There is an encrypted cleartext hash, generally protected to whatever
                     # extent the encryption is secure.
-                    self._file_info.ciphertext_hash_during_backup = (
+                    self.file_info.ciphertext_hash_during_backup = (
                         self.ciphertext_digest
                     )
             self.download_completed()
-            return (self._file_info, None)
+            return (self.file_info, None)
         except Exception as ex:  # pylint: disable=broad-except
-            self._file_info.exception = ex
-            self._file_info.is_successful = False
+            self.file_info.exception = ex
+            self.file_info.is_successful = False
             logging.error(
                 f"StorageFileRetriever: FAILURE: {self.get_exec_context_log_stamp_str()} "
-                f"path={self._file_info.path_without_root} {exc_to_string(ex)}"
+                f"path={self.file_info.path_without_root} {exc_to_string(ex)}"
             )
             self.download_failed()
-            return (self._file_info, ex)
+            return (self.file_info, ex)
         finally:
             self.final_cleanup()
             logging.debug(
-                f"{self.our_thread_name}: Completed: is_successful={self._file_info.is_successful} {self._file_info.path_without_root}"
+                f"{self.our_thread_name}: Completed: is_successful={self.file_info.is_successful} {self.file_info.path_without_root}"
             )
 
     def perform_common_checks(

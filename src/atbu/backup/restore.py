@@ -14,7 +14,7 @@
 r"""Restore files.
 """
 from concurrent import futures
-from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future
 import glob
 import os
 import logging
@@ -36,12 +36,16 @@ from .config import (
 )
 from .storage_interface.base import DEFAULT_MAX_SIMULTANEOUS_FILE_BACKUPS
 from .backup_core import (
+    BACKUP_OPERATION_NAME_RESTORE,
+    BackupAnomaly,
+    log_anomalies_report,
     StorageDefinition,
     BackupFileInformation,
     StorageFileRetriever,
     file_operation_futures_to_results,
-    Anomaly,
-    log_anomalies_report,
+    BackupPipelineWorkItem,
+    is_qualified_for_operation,
+    run_operation_stage,
 )
 from .backup_selections import (
     ensure_glob_pattern_for_dir,
@@ -53,7 +57,10 @@ from ..common.mp_global import (
     get_process_pool_exec_init_func,
     get_process_pool_exec_init_args,
 )
-
+from ..common.subprocess_pipeline import (
+    SubprocessPipeline,
+    PipelineStage,
+)
 
 class RestoreFile(StorageFileRetriever):
     def __init__(
@@ -66,7 +73,7 @@ class RestoreFile(StorageFileRetriever):
         super().__init__(file_info=file_info, storage_def=storage_def)
         self.dest_root_location = Path(dest_root_location)
         self.allow_overwrite = allow_overwrite
-        self.dest_path = self.dest_root_location / self._file_info.restore_path
+        self.dest_path = self.dest_root_location / self.file_info.restore_path
         self.dest_path_str = str(self.dest_path)
         self.dest_path_existed_beforehand: bool = (
             None  # For sanity check against allow_overwrite.
@@ -75,10 +82,10 @@ class RestoreFile(StorageFileRetriever):
         self.hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
 
     def get_download_iterator(self) -> tuple[Iterator[bytes], tuple[Exception]]:
-        if not self._file_info.is_decrypt_operation:
+        if not self.file_info.is_decrypt_operation:
             return super().get_download_iterator()
         iterator = ChunkSizeFileReader(
-            path=self._file_info.path,
+            path=self.file_info.path,
             chunk_size=self._storage_def.download_chunk_size,
             user_func=None,
         )
@@ -100,7 +107,7 @@ class RestoreFile(StorageFileRetriever):
             raise RestoreFilePathAlreadyExistsError(
                 f"The restore file destination path already exists and allow_overwrite={self.allow_overwrite}: {str(self.dest_path)}"
             )
-        if self._file_info.is_decrypt_operation:
+        if self.file_info.is_decrypt_operation:
             self.dest_path = self.dest_root_location / self.preamble_path_without_root
             self.dest_path_str = str(self.dest_path)
         self.dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,15 +160,15 @@ class RestoreFile(StorageFileRetriever):
         os.utime(
             path=self.dest_path_str,
             times=(
-                self._file_info.accessed_time_posix,
-                self._file_info.modified_time_posix,
+                self.file_info.accessed_time_posix,
+                self.file_info.modified_time_posix,
             ),
         )
 
         self.perform_common_checks(
             log_msg_prefix_str="RestoreFile",
             local_file_path_str=self.dest_path_str,
-            orig_file_info=self._file_info,
+            orig_file_info=self.file_info,
         )
 
     def download_failed(self):
@@ -201,14 +208,18 @@ class Restore:
         self.dest_root_location = dest_root_location
         self._allow_overwrite = allow_overwrite
         self._auto_path_mapping = auto_path_mapping
-        self._hasher_defs = HasherDefinitions()
-        self._process_exec = ProcessPoolExecutor(
-            max_workers=Restore.MAX_SIMULTANEOUS_FILES,
-            initializer=get_process_pool_exec_init_func(),
-            initargs=get_process_pool_exec_init_args(),
+        self._subprocess_pipeline = SubprocessPipeline(
+            stages=[
+                PipelineStage(
+                    fn_determiner=is_qualified_for_operation,
+                    fn_worker=run_operation_stage,
+                )
+            ],
+            process_initfunc=get_process_pool_exec_init_func(),
+            process_initargs=get_process_pool_exec_init_args(),
         )
+        self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
-        self.anomalies: list[Anomaly] = []
         self._is_used = False
 
     @property
@@ -218,19 +229,6 @@ class Restore:
     @property
     def is_failed(self):
         return len(self.anomalies) > 0
-
-    def _schedule_restore_file_process(self, file_info: BackupFileInformation):
-        """Schedule the file_info for restore, return a Future for the backup work."""
-        future: Future = self._process_exec.submit(
-            RestoreFile.run,
-            RestoreFile(
-                file_info=file_info,
-                dest_root_location=self.dest_root_location,
-                allow_overwrite=self._allow_overwrite,
-                storage_def=self.storage_def,
-            ),
-        )
-        return future
 
     def _restore_files(self):
         if self._is_used:
@@ -254,7 +252,20 @@ class Restore:
                         f"backing={file_info.backing_fi is not None}"
                     )
                 logging.debug(f"")
-                future = self._schedule_restore_file_process(file_info=file_info)
+                restore_file = RestoreFile(
+                    file_info=file_info,
+                    dest_root_location=self.dest_root_location,
+                    allow_overwrite=self._allow_overwrite,
+                    storage_def=self.storage_def,
+                )
+                future = self._subprocess_pipeline.submit(
+                    work_item=BackupPipelineWorkItem(
+                        operation_name=BACKUP_OPERATION_NAME_RESTORE,
+                        file_info=file_info,
+                        is_qualified_for_operation=True,
+                        operation_runner=restore_file,
+                    )
+                )
                 pending_restores.add(future)
         except Exception as ex:
             logging.error(
@@ -269,15 +280,17 @@ class Restore:
                 )
                 num_completed = len(done)
                 fi_complete = []
-                new_anomalies: list[Anomaly] = []
+                new_anomalies: list[BackupAnomaly] = []
                 file_operation_futures_to_results(
                     fs=done,
                     fi_list=fi_complete,
                     anomalies=new_anomalies,
-                    the_operation="Restore",
+                    the_operation=BACKUP_OPERATION_NAME_RESTORE,
                 )
                 self.success_count += num_completed - len(new_anomalies)
                 self.anomalies.extend(new_anomalies)
+                self.anomalies.extend(self._subprocess_pipeline.anomalies)
+            self._subprocess_pipeline.shutdown()
 
     def _get_unique_discovery_paths(self):
         # Create a list with unique discovery paths of the entire set of selected files.
@@ -310,7 +323,7 @@ class Restore:
             sel_disc_paths_parts = list(map(re_split_sep.split, sel_disc_paths))
             min_part_count = min(
                 map(
-                    lambda pa: len(pa), sel_disc_paths_parts
+                    lambda pa: len(pa), sel_disc_paths_parts # pylint: disable=unnecessary-lambda
                 )  # pylint: disable=unnecessary-lambda
             )  # pylint: disable=unnecessary-lambda
             part_ele_idx = 0

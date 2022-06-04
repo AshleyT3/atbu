@@ -16,7 +16,7 @@ r"""Recover-related command line handlers.
 
 from concurrent.futures import Future
 from concurrent import futures
-from concurrent.futures import ALL_COMPLETED, ProcessPoolExecutor
+from concurrent.futures import ALL_COMPLETED
 from datetime import datetime
 import glob
 import os
@@ -36,15 +36,26 @@ from .config import (
 )
 from .restore import RestoreFile
 from .backup_core import (
+    BACKUP_OPERATION_NAME_RESTORE,
     ANOMALY_KIND_UNEXPECTED_STATE,
     BACKUP_INFO_EXTENSION,
     BACKUP_INFO_TIME_STAMP_FORMAT,
-    Anomaly,
+    BackupAnomaly,
     BackupFileInformation,
     StorageDefinition,
     file_operation_future_result,
+    BackupPipelineWorkItem,
+    is_qualified_for_operation,
+    run_operation_stage,
 )
-
+from ..common.mp_global import (
+    get_process_pool_exec_init_func,
+    get_process_pool_exec_init_args,
+)
+from ..common.subprocess_pipeline import (
+    SubprocessPipeline,
+    PipelineStage,
+)
 
 def sort_backup_info_filename_list(filename_list: list[str]):
     re_match_time_stamp = re.compile(rf"(.*)-(\d{{8}}-\d{{6}}){BACKUP_INFO_EXTENSION}")
@@ -116,7 +127,7 @@ listed above. If you are uncertain, you may want to backup those files before pr
     logging.info(f"Restoring backup information...")
     interface = sd.create_storage_interface()
     c = interface.get_container(container_name=sd.container_name)
-    restore_fi_list: list[RestoreFile] = []
+    restore_file_list: list[RestoreFile] = []
     backup_info_objects = c.list_objects(prefix=sd.storage_def_name)
     for bio in backup_info_objects:
         print("Building file information for storage objects...")
@@ -133,32 +144,54 @@ listed above. If you are uncertain, you may want to backup those files before pr
             allow_overwrite=True,
             storage_def=sd,
         )
-        restore_fi_list.append(restore_file_bi)
-    anomalies: list[Anomaly] = []
-    ppe = ProcessPoolExecutor()
-    fut_list: list[Future] = []
-    for r_fi in restore_fi_list:
-        fut_list.append(ppe.submit(r_fi.run))
-    done, not_done = futures.wait(set(fut_list), return_when=ALL_COMPLETED)
-    if len(done) != len(fut_list):
-        msg = (
-            f"Expected len(fut_list) restores to be completed but got {len(done)} instead. "
-            f"Processing whatever is done but you should resolves this issue for proper recovery. "
-            f"done={len(done)} not_done={len(not_done)}"
-        )
-        logging.error(msg)
-        anomalies.append(
-            Anomaly(
-                kind=ANOMALY_KIND_UNEXPECTED_STATE,
-                message=msg,
+        restore_file_list.append(restore_file_bi)
+    anomalies: list[BackupAnomaly] = []
+    sp = SubprocessPipeline(
+        stages=[
+            PipelineStage(
+                fn_determiner=is_qualified_for_operation,
+                fn_worker=run_operation_stage,
             )
-        )
-    for f in done:
-        fi = file_operation_future_result(
-            f=f, anomalies=anomalies, the_operation="Recover backup info"
-        )
-        if fi is not None and fi.is_successful:
-            logging.info(f"Successfully restored {fi.path}")
+        ],
+        process_initfunc=get_process_pool_exec_init_func(),
+        process_initargs=get_process_pool_exec_init_args(),
+    )
+    try:
+        fut_list: list[Future] = []
+        for restore_file in restore_file_list:
+            future = sp.submit(
+                work_item=BackupPipelineWorkItem(
+                    operation_name=BACKUP_OPERATION_NAME_RESTORE,
+                    file_info=restore_file.file_info,
+                    is_qualified_for_operation=True,
+                    operation_runner=restore_file,
+                )
+            )
+            fut_list.append(future)
+        done, not_done = futures.wait(set(fut_list), return_when=ALL_COMPLETED)
+        if len(done) != len(fut_list):
+            msg = (
+                f"Expected len(fut_list) restores to be completed but got {len(done)} instead. "
+                f"Processing whatever is done but you should resolves this issue for proper recovery. "
+                f"done={len(done)} not_done={len(not_done)}"
+            )
+            logging.error(msg)
+            anomalies.append(
+                BackupAnomaly(
+                    kind=ANOMALY_KIND_UNEXPECTED_STATE,
+                    message=msg,
+                )
+            )
+        for f in done:
+            fi = file_operation_future_result(
+                f=f, anomalies=anomalies, the_operation="Recover backup info"
+            )
+            if fi is not None and fi.is_successful:
+                logging.info(f"Successfully restored {fi.path}")
+    finally:
+        sp.shutdown()
+        if sp is not None:
+            anomalies.extend(sp.anomalies)
     existing_backup_info_pat = (
         backup_info_dir / f"{storage_def_name}*{BACKUP_INFO_EXTENSION}"
     )

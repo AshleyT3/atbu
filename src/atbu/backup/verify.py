@@ -17,7 +17,7 @@ import io
 import logging
 from pathlib import Path
 from concurrent import futures
-from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED
 
 from ..common.exception import (
     CompareBytesMistmatchError,
@@ -28,18 +28,18 @@ from ..common.exception import (
     AlreadyUsedError,
 )
 from ..common.hasher import DEFAULT_HASH_ALGORITHM, HasherDefinitions
-from ..common.mp_global import (
-    get_process_pool_exec_init_func,
-    get_process_pool_exec_init_args,
-)
 from .backup_core import (
+    BACKUP_OPERATION_NAME_VERIFY,
     DEFAULT_MAX_SIMULTANEOUS_FILE_BACKUPS,
-    Anomaly,
+    BackupAnomaly,
     log_anomalies_report,
     StorageDefinition,
     BackupFileInformation,
     StorageFileRetriever,
     file_operation_futures_to_results,
+    BackupPipelineWorkItem,    
+    is_qualified_for_operation,
+    run_operation_stage,
 )
 from .backup_selections import (
     SpecificBackupSelection,
@@ -47,7 +47,14 @@ from .backup_selections import (
     user_specifiers_to_selections,
     verify_specific_backup_selection_list,
 )
-
+from ..common.mp_global import (
+    get_process_pool_exec_init_func,
+    get_process_pool_exec_init_args,
+)
+from ..common.subprocess_pipeline import (
+    SubprocessPipeline,
+    PipelineStage,
+)
 
 class VerifyFile(StorageFileRetriever):
     def __init__(
@@ -73,13 +80,13 @@ class VerifyFile(StorageFileRetriever):
                 self.local_compare_root_location = Path(local_compare_root_location)
                 self.local_compare_path = (
                     self.local_compare_root_location
-                    / self._file_info.path_without_discovery_path
+                    / self.file_info.path_without_discovery_path
                 )
                 self.local_compare_path_str = str(self.local_compare_path)
             else:
                 # Original backup path.
-                self.local_compare_path = Path(self._file_info.path)
-                self.local_compare_path_str = self._file_info.path
+                self.local_compare_path = Path(self.file_info.path)
+                self.local_compare_path_str = self.file_info.path
         self.local_compare_file: io.FileIO = None
         self.total_compare_bytes: int = 0
         self.hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
@@ -105,7 +112,7 @@ class VerifyFile(StorageFileRetriever):
             self.local_compare_file = None
 
     def report_progress(self, percent: int):
-        logging.info(f"{percent: >3}% completed of {self._file_info.path_without_root}")
+        logging.info(f"{percent: >3}% completed of {self.file_info.path_without_root}")
 
     def process_decrypted_chunk(self, decrypted_chunk: bytes):
         if not self.is_perform_local_compare:
@@ -135,16 +142,16 @@ class VerifyFile(StorageFileRetriever):
         self.perform_common_checks(
             log_msg_prefix_str="VerifyFile",
             local_file_path_str=self.path_for_logging,
-            orig_file_info=self._file_info,
+            orig_file_info=self.file_info,
         )
 
         if (
             self.is_perform_local_compare
-            and self.total_compare_bytes != self._file_info.size_in_bytes
+            and self.total_compare_bytes != self.file_info.size_in_bytes
         ):
             raise CompareBytesMistmatchError(
                 f"VerifyFile: Bytes compared with local file are mismatched to file size: "
-                f"compare_bytes={self.total_compare_bytes} local_bytes={self._file_info.size_in_bytes}"
+                f"compare_bytes={self.total_compare_bytes} local_bytes={self.file_info.size_in_bytes}"
             )
 
     def final_cleanup(self):
@@ -173,12 +180,17 @@ class Verify:
         self.selected_files: list[BackupFileInformation] = None
         self.local_compare = local_compare
         self.local_compare_root_location = local_compare_root_location
-        self._process_exec = ProcessPoolExecutor(
-            max_workers=Verify.MAX_SIMULTANEOUS_FILES,
-            initializer=get_process_pool_exec_init_func(),
-            initargs=get_process_pool_exec_init_args(),
+        self._subprocess_pipeline = SubprocessPipeline(
+            stages=[
+                PipelineStage(
+                    fn_determiner=is_qualified_for_operation,
+                    fn_worker=run_operation_stage,
+                )
+            ],
+            process_initfunc=get_process_pool_exec_init_func(),
+            process_initargs=get_process_pool_exec_init_args(),
         )
-        self.anomalies: list[Anomaly] = []
+        self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
         self._is_used = False
 
@@ -189,19 +201,6 @@ class Verify:
     @property
     def is_failed(self):
         return len(self.anomalies) > 0
-
-    def _schedule_verify_file_process(self, file_info: BackupFileInformation):
-        """Schedule the file_info for verify, return a Future."""
-        future: Future = self._process_exec.submit(
-            VerifyFile.run,
-            VerifyFile(
-                storage_def=self.storage_def,
-                file_info=file_info,
-                is_perform_local_compare=self.local_compare,
-                local_compare_root_location=self.local_compare_root_location,
-            ),
-        )
-        return future
 
     def _verify_files(self):
         if self._is_used:
@@ -225,7 +224,20 @@ class Verify:
                         f"backing={file_info.backing_fi is not None}"
                     )
                 logging.debug(f"")
-                future = self._schedule_verify_file_process(file_info=file_info)
+                verify_file = VerifyFile(
+                    storage_def=self.storage_def,
+                    file_info=file_info,
+                    is_perform_local_compare=self.local_compare,
+                    local_compare_root_location=self.local_compare_root_location,
+                )
+                future = self._subprocess_pipeline.submit(
+                    work_item=BackupPipelineWorkItem(
+                        operation_name=BACKUP_OPERATION_NAME_VERIFY,
+                        file_info=file_info,
+                        is_qualified_for_operation=True,
+                        operation_runner=verify_file,
+                    )
+                )
                 pending_verifications.add(future)
         except Exception as ex:
             logging.error(
@@ -240,7 +252,7 @@ class Verify:
                 )
                 num_completed = len(done)
                 fi_complete = []
-                new_anomalies: list[Anomaly] = []
+                new_anomalies: list[BackupAnomaly] = []
                 file_operation_futures_to_results(
                     fs=done,
                     fi_list=fi_complete,
@@ -249,6 +261,8 @@ class Verify:
                 )
                 self.success_count += num_completed - len(new_anomalies)
                 self.anomalies.extend(new_anomalies)
+                self.anomalies.extend(self._subprocess_pipeline.anomalies)
+            self._subprocess_pipeline.shutdown()
 
     def verify_files(self):
         self.selected_files = get_all_specific_backup_file_info(
