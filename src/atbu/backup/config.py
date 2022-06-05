@@ -15,6 +15,7 @@ r"""ATBU Configuration-related classes/functions.
 - AtbuConfig is the primary class.
 """
 import base64
+from bz2 import compress
 import fnmatch
 import glob
 import logging
@@ -591,8 +592,13 @@ configuration, you can choose to have one created for you.
         )
         return storage_def
 
-    def get_storage_def_dict(self, storage_def_name) -> dict:
-        return self.get_storage_defs_section().get(storage_def_name)
+    def get_storage_def_dict(self, storage_def_name, must_exist: bool=False) -> dict:
+        storage_def_dict = self.get_storage_defs_section().get(storage_def_name)
+        if must_exist and storage_def_dict is None:
+            raise StorageDefinitionNotFoundError(
+                f"The storage definition '{storage_def_name}' not found."
+            )
+        return storage_def_dict
 
     def get_only_storage_def_dict(self) -> dict:
         storage_def_section: dict = self.get_storage_defs_section()
@@ -603,6 +609,31 @@ configuration, you can choose to have one created for you.
 
     def is_storage_def_exists(self, storage_def_name) -> bool:
         return self.get_storage_def_dict(storage_def_name=storage_def_name) is not None
+
+    def get_storage_def_compression_section(self, storage_def_name) -> dict:
+        storage_def_dict = self.get_storage_def_dict(
+            storage_def_name=storage_def_name,
+            must_exist=True,
+        )
+        return storage_def_dict.get(CONFIG_SECTION_COMPRESSION)
+
+    def get_compression_settings_deep_copy(self, storage_def_name) -> dict:
+        compression_sect = self.get_storage_def_compression_section(
+            storage_def_name=storage_def_name,
+        )
+        if compression_sect is not None:
+            compression_sect = copy.deepcopy(compression_sect)
+        else:
+            compression_sect = {}
+        if not isinstance(compression_sect, dict):
+            raise ConfigSectionNotFound(
+                f"For '{storage_def_name}' compression section, "
+                f"expected dict but got {type(compression_sect)}"
+            )
+        for k, v in ATBU_BACKUP_COMPRESSION_DEFAULTS.items():
+            if k not in compression_sect:
+                compression_sect[k] = v
+        return compression_sect
 
     def rename_storage_def(self, old_name, new_name):
         """Rename an existing storage def in this configuration."""

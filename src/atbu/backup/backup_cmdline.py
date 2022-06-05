@@ -16,6 +16,8 @@ r"""Backup-related command line handlers.
 import os
 from pathlib import Path
 import logging
+import shutil
+import tempfile
 from typing import Union
 
 from ..common.constants import *
@@ -275,19 +277,24 @@ def handle_backup(args):
         logging.info(f"No files found, nothing to backup.")
         return
 
-    logging.info(f"Backup destination: {dest_location}")
+    compression_settings = atbu_cfg_to_use.get_compression_settings_deep_copy(
+        storage_def_name=storage_def_name,
+    )
+    if args.compression is not None:
+        compression_settings[CONFIG_VALUE_NAME_COMPRESSION_LEVEL] = args.compression
 
-    backup = Backup(
+    logging.info(f"Backup destination: {dest_location}")
+    with Backup(
         backup_type=backup_type,
         deduplication_option=deduplication_option,
+        compression_settings=compression_settings,
         sneaky_corruption_detection=sneaky_corruption_detection,
         primary_backup_info_dir=backup_info_dirs[0],
         secondary_backup_info_dirs=backup_info_dirs[1:],
         source_file_info_list=file_info_list,
         storage_def=storage_def,
-    )
-
-    backup.backup_files()
+    ) as backup:
+        backup.backup_files()
 
     if backup.is_completely_successful():
         logging.info(f"Success, no errors detected.")

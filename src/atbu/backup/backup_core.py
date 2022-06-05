@@ -19,9 +19,13 @@ r"""Core backup classes/functions.
 
 from asyncio import ALL_COMPLETED
 from dataclasses import dataclass
-from operator import truediv
+import gzip
+import io
 import os
 from datetime import datetime, timezone
+import re
+import shutil
+import tempfile
 import time
 from shutil import copy2
 import logging
@@ -58,16 +62,15 @@ from ..common.mp_global import (
     get_process_pool_exec_init_args,
     ProcessThreadContextMixin,
 )
-from ..common.subprocess_pipeline import (
-    SubprocessPipeline,
-    PipelineStage,
+from ..common.mp_pipeline import (
+    MultiprocessingPipeline,
+    SubprocessPipelineStage,
     ThreadPipelineStage,
     PipelineWorkItem,
 )
 from ..common.hasher import (
     GlobalHasherDefinitions,
     Hasher,
-    HasherDefinitions,
     DEFAULT_HASH_ALGORITHM,
 )
 from ..common.aes_cbc import (
@@ -265,6 +268,8 @@ class BackupFileInformation(FileInformation):
         self._restore_path_override = None  # Not persisted
         self.populate_from_header: bool = False  # Not persisted
         self.is_decrypt_operation: bool = False  # Not persisted
+        self.is_compressed: bool = False # Not peristed
+        self.compressed_file_path: str = None # Not persisted
 
     @property
     def path_for_logging(self):
@@ -1002,7 +1007,6 @@ class BackupStorageWriter(ProcessThreadContextMixin):
         self.object_name = force_object_name
         self.queue_iterator = queue_iterator
         self.storage_def = storage_def
-        self.hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
         self.object_name_hash_salt = object_name_hash_salt
         self.object_name_reservations = object_name_reservations
 
@@ -1042,7 +1046,7 @@ class BackupStorageWriter(ProcessThreadContextMixin):
                         _, path_without_drive_letter = os.path.splitdrive(
                             self.source_path
                         )
-                        hasher: Hasher = self.hasher_defs.create_hasher()
+                        hasher: Hasher = GlobalHasherDefinitions().create_hasher()
                         hasher.update_all(self.object_name_hash_salt)
                         hasher.update_all(path_without_drive_letter.encode())
                         source_path_hash = hasher.get_primary_hexdigest()
@@ -1148,8 +1152,13 @@ class BackupStorageWriter(ProcessThreadContextMixin):
 
 
 _PREAMBLE_HASHAGLO_MACRO = "{hashalgo}"
+_PREAMBLE_FIELD_COMPRESSION = "z"
 _PREAMBLE_FIELDS = [
     ("v", lambda fi: "1"),
+    (
+        _PREAMBLE_FIELD_COMPRESSION,
+        lambda fi: BACKUP_COMPRESSION_TYPE if fi.compressed_file_path is not None else BACKUP_COMPRESSION_NONE
+    ),
     (_PREAMBLE_HASHAGLO_MACRO, lambda fi: fi.primary_digest),
     ("size", lambda fi: fi.size_in_bytes),
     ("modified", lambda fi: fi.modified_time_posix),
@@ -1180,6 +1189,8 @@ def parse_backup_file_preamble(preamble) -> tuple[dict, int]:
             ",", _NUM_PREAMBLE_FIELDS - 1
         )
     )
+    if preamble_dict.get(_PREAMBLE_FIELD_COMPRESSION) is None:
+        preamble_dict[_PREAMBLE_FIELD_COMPRESSION] = BACKUP_COMPRESSION_NONE
     return preamble_dict, total_size_with_padding
 
 
@@ -1300,7 +1311,6 @@ class BackupFile(ProcessThreadContextMixin):
         self.storage_def = storage_def
         self.backup_queue_iterator = None
         self.writer_future = None
-        self.hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
         self.object_name_hash_salt = object_name_hash_salt
         self.object_name_reservations = object_name_reservations
         self.perform_cleartext_hashing = perform_cleartext_hashing
@@ -1308,11 +1318,19 @@ class BackupFile(ProcessThreadContextMixin):
     def run(self):
         try:
             path = self.file_info.path
+            path_to_backup = path
+            if self.file_info.compressed_file_path is not None:
+                path_to_backup = self.file_info.compressed_file_path
             total_size_in_bytes = self.file_info.size_in_bytes
             last_percent_reported = None
-            logging.debug(
-                f"BackupFile: {self.get_exec_context_log_stamp_str()} path={path}"
-            )
+            if path == path_to_backup:
+                logging.debug(
+                    f"BackupFile: {self.get_exec_context_log_stamp_str()} path={path}"
+                )
+            else:
+                logging.debug(
+                    f"BackupFile: {self.get_exec_context_log_stamp_str()} path={path} compressed={path_to_backup}"
+                )
             self.thread_exec = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="BackupStorageWriter"
             )
@@ -1348,10 +1366,10 @@ class BackupFile(ProcessThreadContextMixin):
             if self.storage_def.is_encryption_used:
                 enc: AesCbcPaddingEncryptor = self.storage_def.create_encryptor()
                 self.file_info.encryption_IV = enc.IV
-                hasher_ciphertext = self.hasher_defs.create_hasher()
+                hasher_ciphertext = GlobalHasherDefinitions().create_hasher()
             hasher_cleartext = None
             if self.perform_cleartext_hashing:
-                hasher_cleartext = self.hasher_defs.create_hasher()
+                hasher_cleartext = GlobalHasherDefinitions().create_hasher()
             total_bytes_read_from_file = 0
 
             def perform_hashing_callback(what, data):
@@ -1370,7 +1388,7 @@ class BackupFile(ProcessThreadContextMixin):
 
             with open_chunk_reader(
                 chunk_size=upload_chunk_size,
-                path=path,
+                path=path_to_backup,
                 encryptor=enc,
                 user_func=perform_hashing_callback,
             ) as chunk_reader:
@@ -1865,7 +1883,7 @@ def file_operation_future_result(
 
         if (
             wi.operation_name == BACKUP_OPERATION_NAME_BACKUP
-            and not wi.is_qualified_for_operation
+            and not wi.is_qualified
             and file_info.is_unchanged_since_last
             and file_info.exception is None
             and wi.exception is None
@@ -1975,16 +1993,16 @@ class BackupPipelineWorkItem(PipelineWorkItem):
         self,
         operation_name: str,
         file_info: BackupFileInformation,
-        is_qualified_for_operation: bool = False,
+        is_qualified: bool = False,
         operation_runner: object = None,
     ) -> None:
         super().__init__(self)
         self.operation_name = operation_name
-        self.is_qualified_for_operation = is_qualified_for_operation
+        self.is_qualified = is_qualified
         self.file_info = file_info
         self.operation_runner = operation_runner
 
-class HasherPipelineStage(PipelineStage):
+class HasherPipelineStage(SubprocessPipelineStage):
     def __init__(self) -> None:
         super().__init__()
     def is_for_stage(self, pwi: BackupPipelineWorkItem) -> bool:
@@ -2004,8 +2022,120 @@ class HasherPipelineStage(PipelineStage):
             )
             raise
 
+class CompressionPipelineStage(SubprocessPipelineStage):
+    def __init__(
+        self,
+        compression_settings: dict,
+        backup_temp_dir: str,
+        ext_to_abort_count_dict: dict,
+        ext_to_ratio: dict,
+        shared_lock: multiprocessing.Lock,
+        fn_determiner: Callable[[PipelineWorkItem], bool] = None,
+        fn_worker: Callable[..., PipelineWorkItem] = None,
+        **stage_kwargs
+    ) -> None:
+        super().__init__(fn_determiner, fn_worker, **stage_kwargs)
+        self.compression_settings = compression_settings
+        self.backup_temp_dir = backup_temp_dir
+        self.compression_level = self.compression_settings[CONFIG_VALUE_NAME_COMPRESSION_LEVEL]
+        self.is_compression_active = self.compression_level != BACKUP_COMPRESSION_NONE
+        self.no_compress_pat = os.path.normcase(self.compression_settings[CONFIG_VALUE_NAME_NO_COMPRESS_PATTERN])
+        self.compress_min_file_size = int(self.compression_settings[CONFIG_VALUE_NAME_COMPRESS_MIN_FILE_SIZE])
+        self.compress_min_compress_ratio = float(self.compression_settings[CONFIG_VALUE_NAME_MIN_COMPRESS_RATIO])
+        self.compress_max_ftype_attempts = int(self.compression_settings[CONFIG_VALUE_NAME_MAX_FTYPE_ATTEMPTS])
+        self.ext_to_min_ratio_abort_count = ext_to_abort_count_dict # dict[str,int]()
+        self.ext_to_ratio = ext_to_ratio # dict[str,float]()
+        self.shared_lock = shared_lock
+    def is_for_stage(self, pwi: BackupPipelineWorkItem) -> bool:
+        return self.compression_level != BACKUP_COMPRESSION_NONE
+    def perform_stage_work(
+        self,
+        pwi: BackupPipelineWorkItem,
+        **kwargs,
+    ):
+        fi = pwi.file_info
+        if re.match(self.no_compress_pat, fi.nc_path) is not None:
+            return pwi
+        nc_ext = os.path.normcase(fi.ext)
+        if len(nc_ext) > 0:
+            with self.shared_lock:
+                abort_count = self.ext_to_min_ratio_abort_count.get(nc_ext)
+            if abort_count is not None and abort_count >= self.compress_max_ftype_attempts:
+                logging.debug(
+                    f"Skipping compression for extension, more than {self.compress_max_ftype_attempts} poor compression results: "
+                    f"path={fi.path}"
+                )
+                return pwi
+        if fi.size_in_bytes < self.compress_min_file_size:
+            logging.debug(
+                f"Skipping compression for file less than {self.compress_min_file_size} bytes: "
+                f"path={fi.path}"
+            )
+            return pwi
+        compression_size = None
+        temp_file_fd, temp_file_path = tempfile.mkstemp(prefix="atbu_z_", dir=self.backup_temp_dir, text=False)
+        logging.debug(
+            f"Compressing: orig_size={fi.size_in_bytes} path={fi.path} --> dest={temp_file_path}"
+        )
+        read_size = 1024*1024*25
+        with (
+            open(
+                file=fi.path,
+                mode="rb"
+            ) as input_file,
+
+            gzip.GzipFile(
+                mode="wb",
+                fileobj=io.FileIO(file=temp_file_fd, mode="wb", closefd=True),
+            ) as output_gzip_file
+        ):
+            while True:
+                b = input_file.read(read_size)
+                if len(b) == 0:
+                    break
+                output_gzip_file.write(b)
+        fi.compressed_file_path = temp_file_path
+        compression_size = os.path.getsize(fi.compressed_file_path)
+        compression_ratio = compression_size / fi.size_in_bytes
+        is_compression_abort = compression_ratio > self.compress_min_compress_ratio
+        with self.shared_lock:
+            compression_ratio_avg = self.ext_to_ratio.get(nc_ext)
+            if compression_ratio_avg is None:
+                compression_ratio_avg = compression_ratio
+            else:
+                compression_ratio_avg = (compression_ratio_avg + compression_ratio) / 2
+            self.ext_to_ratio[nc_ext] = compression_ratio_avg
+            if is_compression_abort:
+                if len(nc_ext) > 0:
+                    abort_count = self.ext_to_min_ratio_abort_count.get(nc_ext)
+                    if abort_count is None:
+                        abort_count = 0
+                    abort_count += 1
+                    self.ext_to_min_ratio_abort_count[nc_ext] = abort_count
+                else:
+                    abort_count = -1 # No extension, not tracked, still abort, logged below.
+        if is_compression_abort:
+            logging.debug(
+                f"Aborting use of inefficient compression: "
+                f"ext={nc_ext} ext_count={abort_count} "
+                f"orig_size={fi.size_in_bytes} "
+                f"comp_size={compression_size} "
+                f"ratio={compression_ratio} "
+                f"path={fi.path}"
+            )
+            try:
+                if os.path.isfile(fi.compressed_file_path):
+                    os.remove(path=fi.compressed_file_path)
+            except Exception as ex:
+                logging.error(
+                    f"Unexpected error trying to remove compressed file: "
+                    f"{fi.compressed_file_path} {exc_to_string(ex)}"
+                )
+            fi.compressed_file_path = None
+        return pwi
+
 def is_qualified_for_operation(wi: BackupPipelineWorkItem):
-    return wi.is_qualified_for_operation
+    return wi.is_qualified
 
 def run_operation_stage(wi: BackupPipelineWorkItem):
     if wi.operation_runner is None:
@@ -2028,6 +2158,7 @@ class Backup:
         self,
         backup_type: str,
         deduplication_option: str,
+        compression_settings: dict,
         sneaky_corruption_detection: bool,
         primary_backup_info_dir: str,
         secondary_backup_info_dirs: list[str],
@@ -2042,6 +2173,8 @@ class Backup:
             raise ValueError(f"Invalid backup type '{backup_type}'.")
         self._backup_type = backup_type
         self._deduplication_option = deduplication_option
+        self._compression_settings = compression_settings
+        self._temp_dir = tempfile.mkdtemp(prefix="atbu_bktmp_")
         self._sneaky_corruption_detection = sneaky_corruption_detection
         self._source_files = source_file_info_list
         self._object_name_hash_salt = os.urandom(32)
@@ -2059,29 +2192,79 @@ class Backup:
         )
         self._unchanged_skipped_files: list[BackupFileInformation] = list()
         self._storage_def = storage_def
-        self._hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
         self._mp_manager = BackupSyncManager()
         self._mp_manager.start()
         self._object_name_hash_salt = os.urandom(32)
         self._object_name_reservations = BackupNameReservations(self._mp_manager)
         self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
-        self._subprocess_pipeline = SubprocessPipeline(
-            stages=[
-                HasherPipelineStage(),
-                ThreadPipelineStage(
-                    fn_determiner=lambda pwi: True,
-                    fn_worker=self._post_hasher_evaluation,
-                ),
-                PipelineStage(
-                    fn_determiner=is_qualified_for_operation,
-                    fn_worker=run_operation_stage,
-                )
-            ],
+        self._subprocess_pipeline = MultiprocessingPipeline(
             process_initfunc=get_process_pool_exec_init_func(),
             process_initargs=get_process_pool_exec_init_args(),
         )
+        self._subprocess_pipeline.add_stage(
+            stage=HasherPipelineStage()
+        )
+        self._subprocess_pipeline.add_stage(
+            ThreadPipelineStage(
+                fn_determiner=lambda pwi: True,
+                fn_worker=self._post_hasher_evaluation,
+            )
+        )
+        compression_level = self._compression_settings[CONFIG_VALUE_NAME_COMPRESSION_LEVEL]
+        self._compression_stage = None
+        if compression_level != BACKUP_COMPRESSION_NONE:
+            self._compression_stage = CompressionPipelineStage(
+                compression_settings=self._compression_settings,
+                backup_temp_dir=self._temp_dir,
+                ext_to_abort_count_dict=multiprocessing.Manager().dict(),
+                ext_to_ratio=multiprocessing.Manager().dict(),
+                shared_lock=multiprocessing.Manager().Lock() # pylint: disable=no-member
+            )
+            self._subprocess_pipeline.add_stage(
+                stage=self._compression_stage,
+            )
+        self._subprocess_pipeline.add_stage(
+            SubprocessPipelineStage(
+                fn_determiner=is_qualified_for_operation,
+                fn_worker=run_operation_stage,
+            )
+        )
         self._is_used = False
+
+    def shutdown(self):
+        if self._results_mgr:
+            self._results_mgr.stop()
+        if self._subprocess_pipeline is not None:
+            self._subprocess_pipeline.shutdown()
+        try:
+            def on_error(_, path, exc_info):
+                value = ""
+                if (
+                    exc_info is not None
+                    and len(exc_info) >= 3
+                    and exc_info[2] is not None
+                ):
+                    value = f" ({exc_info[2]})"
+                logging.warning(f"Failed to delete temp file: {path}{value}")
+
+            if (
+                self._temp_dir is not None
+                and len(self._temp_dir) > 0
+                and os.path.isdir(self._temp_dir)
+            ):
+                shutil.rmtree(path=self._temp_dir, ignore_errors=False, onerror=on_error)
+        except Exception as ex:
+            logging.error(
+                f"Unhandled exception while cleaning up the backup temp folder: {self._temp_dir} ex={ex}"
+            )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.shutdown()
+        return False
 
     @property
     def storage_def(self) -> StorageDefinition:
@@ -2311,11 +2494,11 @@ class Backup:
         self._handle_sneaky_corruption_detection(file_info=file_info)
 
         # If decision to backup not already made...
-        if not wi.is_qualified_for_operation:
+        if not wi.is_qualified:
             # ...decide whether to backup or not.
-            wi.is_qualified_for_operation = self._is_file_for_backup(file_info=file_info)
+            wi.is_qualified = self._is_file_for_backup(file_info=file_info)
 
-        if wi.is_qualified_for_operation:
+        if wi.is_qualified:
             wi.operation_runner = BackupFile(
                 file_info=file_info,
                 storage_def=self.storage_def,
@@ -2436,7 +2619,7 @@ class Backup:
                     BackupPipelineWorkItem(
                         operation_name=BACKUP_OPERATION_NAME_BACKUP,
                         file_info=fi_backup_info,
-                        is_qualified_for_operation=True,
+                        is_qualified=True,
                     )
                 )
                 if f is None:
@@ -2504,6 +2687,25 @@ class Backup:
         finally:
             self._results_mgr.stop()  # TODO: Remove this if the other is kept.
         logging.info(f"All backup file operations have completed.")
+        if (
+            self._compression_stage is not None
+            and self._compression_stage.ext_to_ratio is not None
+        ):
+            logging.info(f"")
+            logging.info(
+                f"Extension compression ratio report (lower is better):"
+            )
+            ext_to_ratio = self._compression_stage.ext_to_ratio
+            if len(ext_to_ratio) == 0:
+                logging.info(f"  - No extension-to-ratio info captured -")
+            else:
+                for k, v in sorted(ext_to_ratio.items(), key=lambda t: t[1]):
+                    if len(k) == 0:
+                        k = "(no extension)"
+                    logging.info(
+                        f"{' ' + k + ' ':.<45} {(v*100):.1f}%"
+                    )
+                logging.info(f"")
         if len(self.anomalies) == 0:
             logging.info(f"***************")
             logging.info(f"*** SUCCESS ***")
@@ -2552,8 +2754,8 @@ class StorageFileRetriever(ProcessThreadContextMixin):
         else:
             self._backing_fi = file_info
         self._storage_def = storage_def
-        self._hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
         self.preamble_dict: dict = None
+        self.preamble_compression: str = None
         self.preamble_digest: str = None
         self.preamble_size_in_bytes: int = None
         self.preamble_modified_time_posix: float = None
@@ -2562,6 +2764,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
         self._dec: AesCbcPaddingDecryptor = None
         self._hasher_ciphertext: Hasher = None
         self._hasher_cleartext: Hasher = None
+        self._cleartext_digest: str = None
         self._is_first_chunk = True
         self._is_last_chunk = False
         self.total_cleartext_bytes = 0
@@ -2577,11 +2780,14 @@ class StorageFileRetriever(ProcessThreadContextMixin):
 
     @property
     def cleartext_digest(self) -> str:
-        if not self._hasher_cleartext:
+        if self._cleartext_digest is None:
             raise InvalidStateError(
-                f"StorageFileRetriever: Expected hasher self.hasher_cleartext to be available."
+                f"StorageFileRetriever: self._cleartext_digest is not set."
             )
-        return self._hasher_cleartext.get_primary_hexdigest()
+        return self._cleartext_digest
+
+    def disable_cleartext_hashing(self):
+        self._hasher_cleartext = None
 
     @property
     def ciphertext_digest(self) -> str:
@@ -2590,6 +2796,14 @@ class StorageFileRetriever(ProcessThreadContextMixin):
                 f"StorageFileRetriever: Expected hasher self.hasher_ciphertext to be available."
             )
         return self._hasher_ciphertext.get_primary_hexdigest()
+
+    @property
+    def is_compressed(self) -> bool:
+        if self.preamble_compression is None:
+            raise StateNotYetKnownError(
+                f"Compression/non-compression state cannot be known until after preamble processing."
+            )
+        return self.preamble_compression == BACKUP_COMPRESSION_TYPE
 
     def get_download_iterator(self) -> tuple[Iterator[bytes], tuple[Exception]]:
         """Returns an iterator from which to download chunks, and
@@ -2706,6 +2920,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
                 self.preamble_accessed_time_posix = float(
                     self.preamble_dict["accessed"]
                 )
+                self.preamble_compression = self.preamble_dict[_PREAMBLE_FIELD_COMPRESSION]
             except Exception as ex:
                 raise PreambleParsingError(
                     f"StorageFileRetriever: Error parsing preemable: "
@@ -2719,12 +2934,10 @@ class StorageFileRetriever(ProcessThreadContextMixin):
                 self.file_info.modified_time_posix = self.preamble_modified_time_posix
                 self.file_info.accessed_time_posix = self.preamble_accessed_time_posix
 
-        # Update cleartext hash with file plaintext data.
-        if not self._hasher_cleartext:
-            raise InvalidStateError(
-                f"StorageFileRetriever: Expected hasher self.hasher_cleartext to be available."
-            )
-        self._hasher_cleartext.update_all(decrypted_chunk)
+        if self._hasher_cleartext is not None:
+            # Update cleartext hash with file plaintext data.
+            self._hasher_cleartext.update_all(decrypted_chunk)
+
         self.total_cleartext_bytes += len(decrypted_chunk)
 
         return decrypted_chunk
@@ -2760,8 +2973,8 @@ class StorageFileRetriever(ProcessThreadContextMixin):
             self._dec = None
             self._hasher_ciphertext = None
             if self._storage_def.is_encryption_used:
-                self._hasher_ciphertext = self._hasher_defs.create_hasher()
-            self._hasher_cleartext = self._hasher_defs.create_hasher()
+                self._hasher_ciphertext = GlobalHasherDefinitions().create_hasher()
+            self._hasher_cleartext = GlobalHasherDefinitions().create_hasher()
             is_prepare_called = False
             retry_delay = StorageFileRetriever.RETRY_DEFAULT_DELAY_SECONDS
             download_iter: Iterator[bytes] = None
@@ -2882,6 +3095,8 @@ class StorageFileRetriever(ProcessThreadContextMixin):
                     self.file_info.ciphertext_hash_during_backup = (
                         self.ciphertext_digest
                     )
+            if self._hasher_cleartext is not None:
+                self._cleartext_digest = self._hasher_cleartext.get_primary_hexdigest()
             self.download_completed()
             return (self.file_info, None)
         except Exception as ex:  # pylint: disable=broad-except
@@ -2907,7 +3122,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
     ):
         logging.info(f"{log_msg_prefix_str}: Completed for {local_file_path_str}")
         logging.info(f"{'  Total bytes ':.<45} {self.total_cleartext_bytes}")
-        if self._hasher_cleartext:
+        if self._cleartext_digest is not None:
             logging.info(f"{'  SHA256 download ':.<45} {self.cleartext_digest}")
         backing_fi_digest_indicator = ""
         if orig_file_info.is_backing_fi_digest:

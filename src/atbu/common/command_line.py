@@ -36,6 +36,10 @@ from .mp_global import (
     remove_created_logging_handlers,
     remove_root_stream_handlers,
 )
+from ..backup.backup_core import (
+    BACKUP_COMPRESSION_CHOICES,
+    BACKUP_COMPRESSION_DEFAULT,
+)
 from ..backup.backup_cmdline import handle_backup
 from ..backup.restore import handle_restore, handle_decrypt
 from ..backup.verify import handle_verify
@@ -126,12 +130,12 @@ def create_argparse():
     # )
 
     # Uncomment to allow --debug-server (for use with VS Code pydebug)
-    # parser.add_argument(
-    #     "--debug-server",
-    #     help=argparse.SUPPRESS, #"Activate the debug server to listen on specified port, wait for a client connect."
-    #     type=int,
-    #     required=False,
-    # )
+    parser.add_argument(
+        "--debug-server",
+        help=argparse.SUPPRESS, #"Activate the debug server to listen on specified port, wait for a client connect."
+        type=int,
+        required=False,
+    )
 
     #
     # Common to all parser
@@ -304,13 +308,19 @@ the file will not be included in the backup.
         "--dbr",
         "--detect-sneaky-corruption",
         "--dsc",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=f"""Enabled by default, reports potential bitrot (aka "sneaky corruption") as an error.
 Requires use of --incremental-plus (--ip). Use --no-detect-bitrot (--no-dbr) to
 squelch reporting as an error (still reported informationally). Bitrot or so-called
 sneaky corruption is detected when a file's date/time and size have remained the
 same since the last backup, but the digests are different.""",
-        action=argparse.BooleanOptionalAction,
-        default=True,
+    )
+    parser_backup.add_argument(
+        "-z", "--compression",
+        choices=BACKUP_COMPRESSION_CHOICES,
+        help=f"""Set the backup compression level. The default is '{BACKUP_COMPRESSION_DEFAULT}'.
+""",
     )
     parser_backup.set_defaults(func=handle_backup)
 

@@ -14,12 +14,16 @@
 r"""Restore files.
 """
 from concurrent import futures
-from concurrent.futures import FIRST_COMPLETED, Future
+from concurrent.futures import FIRST_COMPLETED
 import glob
+import gzip
+import io
 import os
 import logging
 from pathlib import Path
 import re
+import shutil
+import tempfile
 from typing import Iterator
 
 from ..common.constants import (
@@ -27,7 +31,9 @@ from ..common.constants import (
     ATBU_FILE_BACKUP_EXTENSION_ENCRYPTED,
 )
 from ..common.exception import *
-from ..common.hasher import DEFAULT_HASH_ALGORITHM, HasherDefinitions
+from ..common.hasher import (
+    GlobalHasherDefinitions,
+)
 from .chunk_reader import ChunkSizeFileReader
 from .config import (
     AtbuConfig,
@@ -57,9 +63,9 @@ from ..common.mp_global import (
     get_process_pool_exec_init_func,
     get_process_pool_exec_init_args,
 )
-from ..common.subprocess_pipeline import (
-    SubprocessPipeline,
-    PipelineStage,
+from ..common.mp_pipeline import (
+    MultiprocessingPipeline,
+    SubprocessPipelineStage,
 )
 
 class RestoreFile(StorageFileRetriever):
@@ -69,17 +75,17 @@ class RestoreFile(StorageFileRetriever):
         dest_root_location: str,
         allow_overwrite: bool,
         storage_def: StorageDefinition,
+        temp_dir: str,
     ):
         super().__init__(file_info=file_info, storage_def=storage_def)
-        self.dest_root_location = Path(dest_root_location)
-        self.allow_overwrite = allow_overwrite
-        self.dest_path = self.dest_root_location / self.file_info.restore_path
-        self.dest_path_str = str(self.dest_path)
-        self.dest_path_existed_beforehand: bool = (
-            None  # For sanity check against allow_overwrite.
-        )
-        self.dest_file = None
-        self.hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
+        self._temp_dir = temp_dir
+        self._dest_root_location = Path(dest_root_location)
+        self._allow_overwrite = allow_overwrite
+        self._dest_path = self._dest_root_location / self.file_info.restore_path
+        self._dest_path_final = self._dest_path
+        self._dest_path_str = str(self._dest_path)
+        self._dest_path_existed: bool = None  # For sanity check against allow_overwrite.
+        self._dest_file = None
 
     def get_download_iterator(self) -> tuple[Iterator[bytes], tuple[Exception]]:
         if not self.file_info.is_decrypt_operation:
@@ -97,21 +103,60 @@ class RestoreFile(StorageFileRetriever):
         )
 
     def prepare_destination(self):
-        if self.dest_path_existed_beforehand is None:
-            # This is the existence state before any of our efforts.
-            self.dest_path_existed_beforehand = self.dest_path.exists()
-        # Given attempt_failed_cleanup cleans up any file created by
-        # our efforts, the following should always pass first, even
-        # on a retry attempt.
-        if self.dest_path.exists() and not self.allow_overwrite:
-            raise RestoreFilePathAlreadyExistsError(
-                f"The restore file destination path already exists and allow_overwrite={self.allow_overwrite}: {str(self.dest_path)}"
-            )
+
         if self.file_info.is_decrypt_operation:
-            self.dest_path = self.dest_root_location / self.preamble_path_without_root
-            self.dest_path_str = str(self.dest_path)
-        self.dest_path.parent.mkdir(parents=True, exist_ok=True)
-        self.dest_file = open(self.dest_path_str, "wb")
+            self._dest_path = self._dest_root_location / self.preamble_path_without_root
+            self._dest_path_final = self._dest_path
+            self._dest_path_str = str(self._dest_path)
+
+        if self.is_compressed:
+            #
+            # Decomrpession case: decompress to temp file.
+            #
+            dest_file_fd, self._dest_path = tempfile.mkstemp(prefix="atbu_z_", dir=self._temp_dir, text=False)
+            self._dest_path = Path(self._dest_path)
+            self._dest_file = io.FileIO(file=dest_file_fd, mode="wb", closefd=True)
+            # The _dest_path never existed prevously in this case,
+            # all cleanup on failure is welcome.
+            self._dest_path_existed = False
+            # Disable default cleartext hashing because completion code will
+            # perform a cleartext hashing on the final decompressed file.
+            self.disable_cleartext_hashing()
+            return
+
+        #
+        # This path is the non-decompression case:
+        #   _dest_path == _dest_path_final.
+        #
+
+        #
+        # Sample the existence of the destination path before any
+        # file operation are performed. For a case where the code
+        # further below raises an exception due to an existing file
+        # and overwrite not allowed, we do not want any cleanup code
+        # touching what would be some file that existed prior to
+        # any of our efforts.
+        #
+        if self._dest_path_existed is None:
+            # This is the existence state before this instance's
+            # restore efforts.
+            self._dest_path_existed = self._dest_path.exists()
+
+        #
+        # Do not allow restore if destination path already exists and
+        # overwrite is not allowed.
+        #
+        if self._dest_path.exists() and not self._allow_overwrite:
+            # In case it's unclear, regarding retries:
+            # The 'attempt_failed_cleanup' method cleans up self._dest_path
+            # on failure, so the following should pass, even on a retry attempt,
+            # assuming there was no file there prior to this restore.
+            raise RestoreFilePathAlreadyExistsError(
+                f"The restore file destination path already exists and "
+                f"allow_overwrite={self._allow_overwrite}: {str(self._dest_path)}"
+            )
+        self._dest_path.parent.mkdir(parents=True, exist_ok=True)
+        self._dest_file = open(str(self._dest_path), "wb")
 
     def attempt_failed_cleanup(self):
         """Called after failed attempt. State at this point
@@ -119,46 +164,91 @@ class RestoreFile(StorageFileRetriever):
         exist to begin with. Either way, cleanup for next
         retry attempt.
         """
-        if self.dest_file:
-            self.dest_file.close()
-            self.dest_file = None
-        if self.dest_path_existed_beforehand is None:
+        if self._dest_file:
+            self._dest_file.close()
+            self._dest_file = None
+        if self._dest_path_existed is None:
             # Must be set by prepare.
             raise InvalidStateError(
-                f"The self.dest_path_existed_beforehand flag "
+                f"The self.dest_path_existed flag "
                 f"should not be None at this point."
             )
-        if self.dest_path.exists() and (
-            self.allow_overwrite or not self.dest_path_existed_beforehand
+
+        # Only allow cleanup of _dest_path if overwrite was
+        # allowed with an existing file, or if no existing
+        # file was present regardless of whether or not
+        # overwrite was allowed (because in this latter
+        # case no file existed beforehand).
+        if self._dest_path.exists() and (
+            self._allow_overwrite or not self._dest_path_existed
         ):
             logging.info(
                 f"Deleting file as part of retry prep: "
-                f"allow_overwrite={self.allow_overwrite} "
-                f"dest_path_existed_beforehand={self.dest_path_existed_beforehand} "
-                f"path={self.dest_path_str}"
+                f"allow_overwrite={self._allow_overwrite} "
+                f"dest_path_existed={self._dest_path_existed} "
+                f"path={self._dest_path_str}"
             )
             # Delete file after a failed attempt only if either overwrite
             # is allowed or the file was not there to begin with.
-            os.unlink(path=self.dest_path_str)
+            os.unlink(path=self._dest_path_str)
 
     def report_progress(self, percent: int):
-        logging.info(f"{percent: >3}% completed of {self.dest_path_str}")
+        logging.info(f"{percent: >3}% completed of {self._dest_path_str}")
 
     def process_decrypted_chunk(self, decrypted_chunk: bytes):
-        if not self.dest_file:
+        if not self._dest_file:
             raise InvalidStateError(
                 f"RestoreFile: Expected self.dest_file to be set/open."
             )
-        self.dest_file.write(decrypted_chunk)
+        self._dest_file.write(decrypted_chunk)
 
     def download_completed(self):
 
-        if self.dest_file:
-            self.dest_file.close()
-            self.dest_file = None
+        if self._dest_file:
+            self._dest_file.close()
+            self._dest_file = None
+
+        if self._dest_path != self._dest_path_final:
+            if (
+                self._dest_path_final.exists()
+                and not self._allow_overwrite
+            ):
+                # Given earlier checks, this point should never be reached.
+                raise RestoreFilePathAlreadyExistsError(
+                    f"The restore final file destination path already exists "
+                    f"and allow_overwrite={self._allow_overwrite}: "
+                    f"{str(self._dest_path_final)}"
+                )
+
+            if not self.is_compressed:
+                raise InvalidStateError(
+                    f"Differing download/final dest paths is only expected "
+                    f"for the decompression case. dest_path={self._dest_path} "
+                    f"final_dest_path={self._dest_path_final}"
+                )
+
+            logging.debug(
+                f"Decompressing to {self._dest_path_final}"
+            )
+            self._dest_path_final.parent.mkdir(parents=True, exist_ok=True)
+            with (
+                gzip.GzipFile(filename=self._dest_path, mode="rb") as input_file_gz,
+                open(self._dest_path_final, mode="wb") as output_file
+            ):
+                hasher = GlobalHasherDefinitions().create_hasher()
+                while True:
+                    b = input_file_gz.read(1024*1024*25)
+                    if len(b) == 0:
+                        break
+                    hasher.update_all(b)
+                    output_file.write(b)
+                self._cleartext_digest = hasher.get_primary_hexdigest()
+
+            self.total_cleartext_bytes = os.path.getsize(self._dest_path_final)
+            os.remove(self._dest_path)
 
         os.utime(
-            path=self.dest_path_str,
+            path=self._dest_path_str,
             times=(
                 self.file_info.accessed_time_posix,
                 self.file_info.modified_time_posix,
@@ -167,23 +257,23 @@ class RestoreFile(StorageFileRetriever):
 
         self.perform_common_checks(
             log_msg_prefix_str="RestoreFile",
-            local_file_path_str=self.dest_path_str,
+            local_file_path_str=self._dest_path_str,
             orig_file_info=self.file_info,
         )
 
     def download_failed(self):
-        if self.dest_file:
-            self.dest_file.close()
-            self.dest_file = None
+        if self._dest_file:
+            self._dest_file.close()
+            self._dest_file = None
             try:
-                os.unlink(path=self.dest_path_str)
+                os.unlink(path=self._dest_path_str)
             except FileNotFoundError:
                 pass
 
     def final_cleanup(self):
-        if self.dest_file:
-            self.dest_file.close()
-            self.dest_file = None
+        if self._dest_file:
+            self._dest_file.close()
+            self._dest_file = None
 
 
 class Restore:
@@ -204,13 +294,14 @@ class Restore:
             raise InvalidStateError(
                 f"RestoreFile requires sbs_list to have at least one SpecificBackupSelection instance."
             )
+        self._temp_dir = tempfile.mkdtemp(prefix="atbu_resttmp_")
         self._selected_files: list[BackupFileInformation] = selections
         self.dest_root_location = dest_root_location
         self._allow_overwrite = allow_overwrite
         self._auto_path_mapping = auto_path_mapping
-        self._subprocess_pipeline = SubprocessPipeline(
+        self._subprocess_pipeline = MultiprocessingPipeline(
             stages=[
-                PipelineStage(
+                SubprocessPipelineStage(
                     fn_determiner=is_qualified_for_operation,
                     fn_worker=run_operation_stage,
                 )
@@ -221,6 +312,38 @@ class Restore:
         self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
         self._is_used = False
+
+    def shutdown(self):
+        if self._subprocess_pipeline is not None:
+            self._subprocess_pipeline.shutdown()
+        try:
+            def on_error(_, path, exc_info):
+                value = ""
+                if (
+                    exc_info is not None
+                    and len(exc_info) >= 3
+                    and exc_info[2] is not None
+                ):
+                    value = f" ({exc_info[2]})"
+                logging.warning(f"Failed to delete temp file: {path}{value}")
+
+            if (
+                self._temp_dir is not None
+                and len(self._temp_dir) > 0
+                and os.path.isdir(self._temp_dir)
+            ):
+                shutil.rmtree(path=self._temp_dir, ignore_errors=False, onerror=on_error)
+        except Exception as ex:
+            logging.error(
+                f"Unhandled exception while cleaning up the restore temp folder: {self._temp_dir} ex={ex}"
+            )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.shutdown()
+        return False
 
     @property
     def storage_def(self) -> StorageDefinition:
@@ -257,12 +380,13 @@ class Restore:
                     dest_root_location=self.dest_root_location,
                     allow_overwrite=self._allow_overwrite,
                     storage_def=self.storage_def,
+                    temp_dir=self._temp_dir,
                 )
                 future = self._subprocess_pipeline.submit(
                     work_item=BackupPipelineWorkItem(
                         operation_name=BACKUP_OPERATION_NAME_RESTORE,
                         file_info=file_info,
-                        is_qualified_for_operation=True,
+                        is_qualified=True,
                         operation_runner=restore_file,
                     )
                 )
@@ -366,14 +490,14 @@ def restore_from_storage(
     allow_overwrite: bool,
     auto_path_mapping: bool,
 ) -> bool:
-    restore = Restore(
+    with Restore(
         storage_def=storage_def,
         selections=selections,
         dest_root_location=dest_root_location,
         allow_overwrite=allow_overwrite,
         auto_path_mapping=auto_path_mapping,
-    )
-    restore.restore_files()
+    ) as restore:
+        restore.restore_files()
     return not restore.is_failed
 
 

@@ -23,11 +23,12 @@ from uuid import uuid4
 import logging
 from pytest import LogCaptureFixture, CaptureFixture, fail, raises
 
-from atbu.common.subprocess_pipeline import (
-    SubprocessPipeline,
+from atbu.common.mp_pipeline import (
+    MultiprocessingPipeline,
     PipelineStage,
-    PipelineWorkItem,
+    SubprocessPipelineStage,
     ThreadPipelineStage,
+    PipelineWorkItem,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -67,17 +68,17 @@ def always_yes(wi: PipelineWorkItem):
     return True
 
 def test_subprocess_pipeline_basic(tmp_path: Path):
-    sp = SubprocessPipeline(
+    sp = MultiprocessingPipeline(
         stages=[
-            PipelineStage(
+            SubprocessPipelineStage(
                 fn_determiner=always_yes,
                 fn_worker=int_stage0,
             ),
-            PipelineStage(
+            SubprocessPipelineStage(
                 fn_determiner=always_yes,
                 fn_worker=int_stage1,
             ),
-            PipelineStage(
+            SubprocessPipelineStage(
                 fn_determiner=always_yes,
                 fn_worker=int_stage2,
             )
@@ -108,7 +109,7 @@ class LargePipelineWorkItem(PipelineWorkItem):
         self.pid = os.getpid()
 
 
-class LargePipelineStage(PipelineStage):
+class LargePipelineStage(SubprocessPipelineStage):
     def __init__(self) -> None:
         super().__init__()
     def is_for_stage(self, pwi: LargePipelineWorkItem) -> bool:
@@ -125,7 +126,7 @@ class LargePipelineStage(PipelineStage):
 
 def test_subprocess_pipeline_large(tmp_path: Path):
     stages = 100
-    sp = SubprocessPipeline()
+    sp = MultiprocessingPipeline()
     for i in range(stages):
         sp.add_stage(
             stage=LargePipelineStage()
@@ -148,6 +149,7 @@ def test_subprocess_pipeline_large(tmp_path: Path):
 class MixedPipelineSubprocessStage(PipelineStage):
     def __init__(self) -> None:
         super().__init__()
+    @property
     def is_subprocess(self):
         return True
     def is_for_stage(self, pwi: LargePipelineWorkItem) -> bool:
@@ -170,7 +172,7 @@ def perform_thread_stage_work(
     return pwi
 
 def test_subprocess_pipeline_large_mixed(tmp_path: Path):
-    sp = SubprocessPipeline()
+    sp = MultiprocessingPipeline()
     for _ in range(10):
         sp.add_stage(
             stage=MixedPipelineSubprocessStage()

@@ -23,12 +23,15 @@ import os
 import logging
 import re
 from shutil import copy2
+import tempfile
 
 from ..common.exception import (
+    ANOMALY_KIND_EXCEPTION,
     BackupInformationFileTimestampNotFound,
     BackupInformationRecoveryFailed,
     InvalidCommandLineArgument,
     StorageDefinitionNotFoundError,
+    exc_to_string,
 )
 from ..common.util_helpers import prompt_YN
 from .config import (
@@ -52,9 +55,9 @@ from ..common.mp_global import (
     get_process_pool_exec_init_func,
     get_process_pool_exec_init_args,
 )
-from ..common.subprocess_pipeline import (
-    SubprocessPipeline,
-    PipelineStage,
+from ..common.mp_pipeline import (
+    MultiprocessingPipeline,
+    SubprocessPipelineStage,
 )
 
 def sort_backup_info_filename_list(filename_list: list[str]):
@@ -124,73 +127,90 @@ listed above. If you are uncertain, you may want to backup those files before pr
             print("The local backup information will not be overwritten.")
             print("The recovery will be aborted.")
             return
-    logging.info(f"Restoring backup information...")
-    interface = sd.create_storage_interface()
-    c = interface.get_container(container_name=sd.container_name)
-    restore_file_list: list[RestoreFile] = []
-    backup_info_objects = c.list_objects(prefix=sd.storage_def_name)
-    for bio in backup_info_objects:
-        print("Building file information for storage objects...")
-        print(f"    {bio.name}")
-        fi_bi = BackupFileInformation(path=str(backup_info_dir / bio.name))
-        fi_bi.implicit_refresh_allowed = False
-        fi_bi.populate_from_header = True
-        fi_bi.size_in_bytes = bio.size  # Use storage size until header read.
-        fi_bi.restore_path_override = str(backup_info_dir / bio.name)
-        fi_bi.storage_object_name = str(bio.name)
-        restore_file_bi = RestoreFile(
-            file_info=fi_bi,
-            dest_root_location=str(backup_info_dir),
-            allow_overwrite=True,
-            storage_def=sd,
-        )
-        restore_file_list.append(restore_file_bi)
-    anomalies: list[BackupAnomaly] = []
-    sp = SubprocessPipeline(
-        stages=[
-            PipelineStage(
-                fn_determiner=is_qualified_for_operation,
-                fn_worker=run_operation_stage,
-            )
-        ],
-        process_initfunc=get_process_pool_exec_init_func(),
-        process_initargs=get_process_pool_exec_init_args(),
-    )
+
+    sp: MultiprocessingPipeline = None
     try:
-        fut_list: list[Future] = []
-        for restore_file in restore_file_list:
-            future = sp.submit(
-                work_item=BackupPipelineWorkItem(
-                    operation_name=BACKUP_OPERATION_NAME_RESTORE,
-                    file_info=restore_file.file_info,
-                    is_qualified_for_operation=True,
-                    operation_runner=restore_file,
+        with tempfile.TemporaryDirectory(prefix="atbu_rectmp_") as temp_dir:
+            logging.info(f"Restoring backup information...")
+            interface = sd.create_storage_interface()
+            c = interface.get_container(container_name=sd.container_name)
+            restore_file_list: list[RestoreFile] = []
+            backup_info_objects = c.list_objects(prefix=sd.storage_def_name)
+            for bio in backup_info_objects:
+                print("Building file information for storage objects...")
+                print(f"    {bio.name}")
+                fi_bi = BackupFileInformation(path=str(backup_info_dir / bio.name))
+                fi_bi.implicit_refresh_allowed = False
+                fi_bi.populate_from_header = True
+                fi_bi.size_in_bytes = bio.size  # Use storage size until header read.
+                fi_bi.restore_path_override = str(backup_info_dir / bio.name)
+                fi_bi.storage_object_name = str(bio.name)
+                restore_file_bi = RestoreFile(
+                    file_info=fi_bi,
+                    dest_root_location=str(backup_info_dir),
+                    allow_overwrite=True,
+                    storage_def=sd,
+                    temp_dir=temp_dir,
                 )
+                restore_file_list.append(restore_file_bi)
+            anomalies: list[BackupAnomaly] = []
+            sp = MultiprocessingPipeline(
+                stages=[
+                    SubprocessPipelineStage(
+                        fn_determiner=is_qualified_for_operation,
+                        fn_worker=run_operation_stage,
+                    )
+                ],
+                process_initfunc=get_process_pool_exec_init_func(),
+                process_initargs=get_process_pool_exec_init_args(),
             )
-            fut_list.append(future)
-        done, not_done = futures.wait(set(fut_list), return_when=ALL_COMPLETED)
-        if len(done) != len(fut_list):
-            msg = (
-                f"Expected len(fut_list) restores to be completed but got {len(done)} instead. "
-                f"Processing whatever is done but you should resolves this issue for proper recovery. "
-                f"done={len(done)} not_done={len(not_done)}"
-            )
-            logging.error(msg)
-            anomalies.append(
-                BackupAnomaly(
-                    kind=ANOMALY_KIND_UNEXPECTED_STATE,
-                    message=msg,
+
+            fut_list: list[Future] = []
+            for restore_file in restore_file_list:
+                future = sp.submit(
+                    work_item=BackupPipelineWorkItem(
+                        operation_name=BACKUP_OPERATION_NAME_RESTORE,
+                        file_info=restore_file.file_info,
+                        is_qualified=True,
+                        operation_runner=restore_file,
+                    )
                 )
+                fut_list.append(future)
+            done, not_done = futures.wait(set(fut_list), return_when=ALL_COMPLETED)
+            if len(done) != len(fut_list):
+                msg = (
+                    f"Expected len(fut_list) restores to be completed but got {len(done)} instead. "
+                    f"Processing whatever is done but you should resolves this issue for proper recovery. "
+                    f"done={len(done)} not_done={len(not_done)}"
+                )
+                logging.error(msg)
+                anomalies.append(
+                    BackupAnomaly(
+                        kind=ANOMALY_KIND_UNEXPECTED_STATE,
+                        message=msg,
+                    )
+                )
+            for f in done:
+                fi = file_operation_future_result(
+                    f=f, anomalies=anomalies, the_operation="Recover backup info"
+                )
+                if fi is not None and fi.is_successful:
+                    logging.info(f"Successfully restored {fi.path}")
+    except Exception as ex:
+        msg = (
+            f"Unhandled exception: {exc_to_string(ex)}"
+        )
+        logging.error(msg)
+        anomalies.append(
+            BackupAnomaly(
+                kind=ANOMALY_KIND_EXCEPTION,
+                exception=ex,
+                message=msg,
             )
-        for f in done:
-            fi = file_operation_future_result(
-                f=f, anomalies=anomalies, the_operation="Recover backup info"
-            )
-            if fi is not None and fi.is_successful:
-                logging.info(f"Successfully restored {fi.path}")
+        )
     finally:
-        sp.shutdown()
         if sp is not None:
+            sp.shutdown()
             anomalies.extend(sp.anomalies)
     existing_backup_info_pat = (
         backup_info_dir / f"{storage_def_name}*{BACKUP_INFO_EXTENSION}"

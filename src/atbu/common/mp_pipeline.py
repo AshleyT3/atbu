@@ -11,11 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-r"""SubprocessPipeline.
+r"""MultiprocessingPipeline.
 """
 
-import os
-import logging
+from abc import abstractmethod
 import multiprocessing
 import concurrent.futures
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, ProcessPoolExecutor
@@ -46,8 +45,14 @@ class PipelineStage:
         self.fn_worker = fn_worker
         self.stage_kwargs = stage_kwargs
 
+    @property
+    @abstractmethod
     def is_subprocess(self):
-        return True
+        raise NotImplementedError(
+            f"is_subprocess is not implemented. "
+            f"You probably want to use either "
+            f"SubprocessPipelineStage or ThreadPipelineStage"
+        )
 
     def is_for_stage(self, pwi: PipelineWorkItem) -> bool:
         if self.fn_determiner is None:
@@ -69,12 +74,19 @@ class PipelineStage:
         return result
 
 
+class SubprocessPipelineStage(PipelineStage):
+    @property
+    def is_subprocess(self):
+        return True
+
+
 class ThreadPipelineStage(PipelineStage):
+    @property
     def is_subprocess(self):
         return False
 
 
-class SubprocessPipeline:
+class MultiprocessingPipeline:
     def __init__(
         self,
         stages: list[PipelineStage]=None,
@@ -117,7 +129,7 @@ class SubprocessPipeline:
         if self._pl_worker_future is not None:
             return
         self._pl_worker_future = self._thread_exec.submit(
-            SubprocessPipeline._pl_worker, self
+            MultiprocessingPipeline._pl_worker, self
         )
 
     def shutdown(self):
@@ -233,7 +245,7 @@ class SubprocessPipeline:
                     kwargs = next_stage.stage_kwargs
                     if wi.user_kwargs is not None:
                         kwargs = kwargs | wi.user_kwargs
-                    if next_stage.is_subprocess():
+                    if next_stage.is_subprocess:
                         fut = self._process_exec.submit(
                             next_stage.perform_stage_work,
                             wi,

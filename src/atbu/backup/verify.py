@@ -13,11 +13,15 @@
 # limitations under the License.
 r"""Verify backups.
 """
+import gzip
 import io
 import logging
+import os
 from pathlib import Path
 from concurrent import futures
 from concurrent.futures import FIRST_COMPLETED
+import shutil
+import tempfile
 
 from ..common.exception import (
     CompareBytesMistmatchError,
@@ -27,7 +31,9 @@ from ..common.exception import (
     exc_to_string,
     AlreadyUsedError,
 )
-from ..common.hasher import DEFAULT_HASH_ALGORITHM, HasherDefinitions
+from ..common.hasher import (
+    GlobalHasherDefinitions,
+)
 from .backup_core import (
     BACKUP_OPERATION_NAME_VERIFY,
     DEFAULT_MAX_SIMULTANEOUS_FILE_BACKUPS,
@@ -51,9 +57,9 @@ from ..common.mp_global import (
     get_process_pool_exec_init_func,
     get_process_pool_exec_init_args,
 )
-from ..common.subprocess_pipeline import (
-    SubprocessPipeline,
-    PipelineStage,
+from ..common.mp_pipeline import (
+    MultiprocessingPipeline,
+    SubprocessPipelineStage,
 )
 
 class VerifyFile(StorageFileRetriever):
@@ -61,8 +67,9 @@ class VerifyFile(StorageFileRetriever):
         self,
         storage_def: StorageDefinition,
         file_info: BackupFileInformation,
-        is_perform_local_compare: bool = False,
-        local_compare_root_location: str = None,
+        is_perform_local_compare: bool,
+        local_compare_root_location: str,
+        temp_dir: str,
     ):
         super().__init__(file_info=file_info, storage_def=storage_def)
         #
@@ -70,6 +77,7 @@ class VerifyFile(StorageFileRetriever):
         # Local compare against orig location: local_compare=True local_compare_root_location=None
         # Local compare against specified location: local_compare=True local_compare_root_location=<specified_location>
         #
+        self._temp_dir = temp_dir
         self.is_perform_local_compare = is_perform_local_compare
         self.local_compare_root_location = None
         self.local_compare_path = None
@@ -89,7 +97,8 @@ class VerifyFile(StorageFileRetriever):
                 self.local_compare_path_str = self.file_info.path
         self.local_compare_file: io.FileIO = None
         self.total_compare_bytes: int = 0
-        self.hasher_defs = HasherDefinitions([DEFAULT_HASH_ALGORITHM])
+        self._temp_dest_path: Path = None
+        self._temp_dest_file: io.FileIO = None
 
     @property
     def path_for_logging(self) -> str:
@@ -98,13 +107,25 @@ class VerifyFile(StorageFileRetriever):
         return super().path_for_logging
 
     def prepare_destination(self):
-        if not self.is_perform_local_compare:
+        if self.is_perform_local_compare:
+            if not self.local_compare_path.exists():
+                raise VerifyFilePathNotFoundError(
+                    f"The verify file destination path was not found: {str(self.local_compare_path)}"
+                )
+            self.local_compare_file = open(self.local_compare_path_str, "rb")
+
+        if self.is_compressed:
+            #
+            # Decomrpession case: decompress to temp file.
+            #
+            dest_file_fd, self._temp_dest_path = tempfile.mkstemp(prefix="atbu_z_", dir=self._temp_dir, text=False)
+            self._temp_dest_path = Path(self._temp_dest_path)
+            self._temp_dest_file = io.FileIO(file=dest_file_fd, mode="wb", closefd=True)
+            # Disable default cleartext hashing because completion code will
+            # perform a cleartext hashing on the final decompressed file.
+            self.disable_cleartext_hashing()
             return
-        if not self.local_compare_path.exists():
-            raise VerifyFilePathNotFoundError(
-                f"The verify file destination path was not found: {str(self.local_compare_path)}"
-            )
-        self.local_compare_file = open(self.local_compare_path_str, "rb")
+
 
     def attempt_failed_cleanup(self):
         if self.local_compare_file:
@@ -115,6 +136,9 @@ class VerifyFile(StorageFileRetriever):
         logging.info(f"{percent: >3}% completed of {self.file_info.path_without_root}")
 
     def process_decrypted_chunk(self, decrypted_chunk: bytes):
+        if self.is_compressed:
+            self._temp_dest_file.write(decrypted_chunk)
+            return
         if not self.is_perform_local_compare:
             return
         if not self.local_compare_file:
@@ -134,6 +158,34 @@ class VerifyFile(StorageFileRetriever):
         self.total_compare_bytes += len(decrypted_chunk)
 
     def download_completed(self):
+
+        if self._temp_dest_file is not None:
+            self._temp_dest_file.close()
+
+        if self.is_compressed:
+            self.total_cleartext_bytes = 0 # zero-out compressed size, calc decomp size.
+            cleartext_hasher = GlobalHasherDefinitions().create_hasher() # calc decomp hash.
+            with gzip.GzipFile(filename=self._temp_dest_path, mode="rb") as input_file_gz:
+                while True:
+                    decrypted_decomp_chunk = input_file_gz.read(1024*1024*25)
+                    if len(decrypted_decomp_chunk) == 0:
+                        break
+                    self.total_cleartext_bytes += len(decrypted_decomp_chunk)
+                    cleartext_hasher.update_all(decrypted_decomp_chunk)
+                    if self.local_compare_file is not None:
+                        cur_pos = self.local_compare_file.tell()
+                        local_chunk = self.local_compare_file.read(len(decrypted_decomp_chunk))
+                        self.total_compare_bytes += len(decrypted_decomp_chunk)
+                        if decrypted_decomp_chunk != local_chunk:
+                            raise VerifyFailure(
+                                f"VerifyFile: The file verification failed: "
+                                f"cur_pos={cur_pos} "
+                                f"storage_chunk_size={len(decrypted_decomp_chunk)} "
+                                f"local_chunk_size={len(local_chunk)} "
+                                f"path={self.local_compare_path_str}"
+                            )
+            self._cleartext_digest = cleartext_hasher.get_primary_hexdigest()
+            os.remove(self._temp_dest_path)
 
         if self.local_compare_file:
             self.local_compare_file.close()
@@ -173,6 +225,7 @@ class Verify:
             raise InvalidStateError(
                 f"VerifyFile requires sbs_list to have at least one SpecificBackupSelection instance."
             )
+        self._temp_dir = tempfile.mkdtemp(prefix="atbu_vertmp_")
         self.verify_selections = verify_selections
         if not isinstance(self.verify_selections[0].storage_def, StorageDefinition):
             raise ValueError(f"The storage_def must be a StorageDefinition.")
@@ -180,9 +233,9 @@ class Verify:
         self.selected_files: list[BackupFileInformation] = None
         self.local_compare = local_compare
         self.local_compare_root_location = local_compare_root_location
-        self._subprocess_pipeline = SubprocessPipeline(
+        self._subprocess_pipeline = MultiprocessingPipeline(
             stages=[
-                PipelineStage(
+                SubprocessPipelineStage(
                     fn_determiner=is_qualified_for_operation,
                     fn_worker=run_operation_stage,
                 )
@@ -193,6 +246,38 @@ class Verify:
         self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
         self._is_used = False
+
+    def shutdown(self):
+        if self._subprocess_pipeline is not None:
+            self._subprocess_pipeline.shutdown()
+        try:
+            def on_error(_, path, exc_info):
+                value = ""
+                if (
+                    exc_info is not None
+                    and len(exc_info) >= 3
+                    and exc_info[2] is not None
+                ):
+                    value = f" ({exc_info[2]})"
+                logging.warning(f"Failed to delete temp file: {path}{value}")
+
+            if (
+                self._temp_dir is not None
+                and len(self._temp_dir) > 0
+                and os.path.isdir(self._temp_dir)
+            ):
+                shutil.rmtree(path=self._temp_dir, ignore_errors=False, onerror=on_error)
+        except Exception as ex:
+            logging.error(
+                f"Unhandled exception while cleaning up the verify temp folder: {self._temp_dir} ex={ex}"
+            )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.shutdown()
+        return False
 
     @property
     def storage_def(self) -> StorageDefinition:
@@ -229,12 +314,13 @@ class Verify:
                     file_info=file_info,
                     is_perform_local_compare=self.local_compare,
                     local_compare_root_location=self.local_compare_root_location,
+                    temp_dir=self._temp_dir,
                 )
                 future = self._subprocess_pipeline.submit(
                     work_item=BackupPipelineWorkItem(
                         operation_name=BACKUP_OPERATION_NAME_VERIFY,
                         file_info=file_info,
-                        is_qualified_for_operation=True,
+                        is_qualified=True,
                         operation_runner=verify_file,
                     )
                 )
@@ -288,12 +374,12 @@ def verify_storage(
     local_compare_root_location: str,
 ):
     verify_specific_backup_selection_list(sbs_list=sbs_list)
-    verify = Verify(
+    with Verify(
         verify_selections=sbs_list,
         local_compare=local_compare,
         local_compare_root_location=local_compare_root_location,
-    )
-    verify.verify_files()
+    ) as verify:
+        verify.verify_files()
     return not verify.is_failed
 
 

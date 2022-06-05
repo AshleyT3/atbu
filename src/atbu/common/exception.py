@@ -387,6 +387,12 @@ class PreambleParsingError(BackupException):
         super().__init__(message=message, cause=cause)
 
 
+class StateNotYetKnownError(BackupException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+
 class InvalidCommandLineArgument(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
