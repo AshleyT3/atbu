@@ -898,7 +898,7 @@ creates a single database at the root of the specified location.
         help=f"""One or more local file system directories whose persistent information to update,
 each optionally prefixed with the desired file info persistence to use (default is per-dir).
 Note, there is a space after per-file:, per-dir:, and any location. For example,
-'per-file: c:\SomeLocationThatShouldUsePerFile'.
+'per-file: c:\\SomeLocationThatShouldUsePerFile'.
 """,
     )
     parser_update_digests.set_defaults(func=handle_update_digests)
@@ -925,7 +925,7 @@ of removing or moving discovered duplicates.
         help=f"""You must specify this twice, once each for location A and B, optionally prefixing
 either with the desired file info persistence to use (default is per-dir).
 Note, there is a space after per-file:, per-dir:, and any location. For example,
-'per-file: c:\SomeLocationThatIsUsingPerFile'.
+'per-file: c:\\SomeLocationThatIsUsingPerFile'.
 """,
     )
     parser_diff.add_argument(

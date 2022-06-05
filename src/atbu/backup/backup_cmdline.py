@@ -16,8 +16,6 @@ r"""Backup-related command line handlers.
 import os
 from pathlib import Path
 import logging
-import shutil
-import tempfile
 from typing import Union
 
 from ..common.constants import *

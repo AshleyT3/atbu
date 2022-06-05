@@ -15,7 +15,6 @@ r"""ATBU Configuration-related classes/functions.
 - AtbuConfig is the primary class.
 """
 import base64
-from bz2 import compress
 import fnmatch
 import glob
 import logging
