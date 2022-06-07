@@ -25,6 +25,7 @@ from ..common.util_helpers import is_platform_path_case_sensitive
 from .database import FileInformationDatabaseCollection, extract_location_info
 from ..common.file_info import CHANGE_DETECTION_TYPE_DATESIZE, FileInformationPersistent
 from ..common.hasher import GlobalHasherDefinitions
+from ..common.mp_global import get_verbosity_level
 
 DIFF_COMMAND_MOVE_DUPLICATES = "move-duplicates"
 DIFF_COMMAND_REMOVE_DUPLICATES = "remove-duplicates"

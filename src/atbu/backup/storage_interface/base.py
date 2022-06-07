@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-r"""Base for ATBU storage interface abstraction, both decoupling ATBU from 
+r"""Base for ATBU storage interface abstraction, both decoupling ATBU from
 other APIs, and providing ATBU itself a common storage interface for its
 focused needs.
 """
+# pylint: disable=missing-class-docstring
+
 from abc import ABC, abstractmethod
 from socket import gaierror
 from http.client import NotConnected, ImproperConnectionState
@@ -141,6 +143,7 @@ class StorageInterfaceFactory:
         return self.storage_def_dict[CONFIG_VALUE_NAME_PROVIDER]
 
     def create_storage_interface(self) -> StorageInterface:
+        # pylint: disable=import-outside-toplevel
         desired_interface = self.storage_def_dict[CONFIG_VALUE_NAME_INTERFACE_TYPE]
         if desired_interface == CONFIG_INTERFACE_TYPE_LIBCLOUD:
             from .libcloud import LibCloudStorageInterface

@@ -155,6 +155,8 @@ listed above. If you are uncertain, you may want to backup those files before pr
                 restore_file_list.append(restore_file_bi)
             anomalies: list[BackupAnomaly] = []
             sp = MultiprocessingPipeline(
+                name="Recover",
+                max_simultaneous_work_items=min(os.cpu_count() // 2, 15),
                 stages=[
                     SubprocessPipelineStage(
                         fn_determiner=is_qualified_for_operation,

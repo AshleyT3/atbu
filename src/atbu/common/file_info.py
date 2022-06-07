@@ -23,6 +23,8 @@ import re
 import configparser
 from typing import Callable, Union
 
+from atbu.common.mp_global import get_verbosity_level
+
 from .exception import (
     AtbuException,
     FileChangedWhileCalculatingHash,

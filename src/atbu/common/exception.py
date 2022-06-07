@@ -13,6 +13,9 @@
 # limitations under the License.
 r"""ATBU Exceptions.
 """
+
+# pylint: disable=missing-class-docstring
+
 from dataclasses import dataclass
 import sys
 import traceback
@@ -142,12 +145,6 @@ class ContainerAutoCreationFailed(AtbuException):
 
 
 class RetryLimitReached(AtbuException):
-    def __init__(self, message: str = None, cause=None):
-        self._cause = cause
-        super().__init__(message=message, cause=cause)
-
-
-class GlobalContextAlreadySet(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)
@@ -420,6 +417,27 @@ class PipelineResultIsNotPipelineWorkItem(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)
+
+class PipelineLastStageError(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+class PipelineFutureStuckPendingError(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+class InvalidPipeConnectionMessage(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+class PipeConnectionAlreadyEof(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
 
 def exc_to_string(ex: Exception):
     return f"ex={ex} details: {traceback.format_exception(ex, ex, ex.__traceback__)}"

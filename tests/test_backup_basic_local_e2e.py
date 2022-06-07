@@ -31,6 +31,7 @@ from pytest import (
     RunResult,
     ExitCode,
 )
+import pytest
 
 from atbu.backup.config import AtbuConfig
 
@@ -64,7 +65,23 @@ def teardown_module(module):  # pylint: disable=unused-argument
     pass
 
 
+backup_restore_parameters = [
+    pytest.param(
+        "none",
+        id="no_compression",
+    ),
+    pytest.param(
+        "normal",
+        id="normal_compression",
+    ),
+]
+
+@pytest.mark.parametrize(
+    "compression_type",
+    backup_restore_parameters,
+)
 def test_backup_restore(
+    compression_type,
     tmp_path: Path,
     pytester: Pytester,
 ):
@@ -87,8 +104,9 @@ def test_backup_restore(
         source_directory=source_directory,
         expected_total_files=total_files,
         storage_specifier=backup_directory,
-        backup_timeout=30,
-        restore_timeout=30,
+        compression_type=compression_type,
+        backup_timeout=60,
+        restore_timeout=60,
         initial_backup_stdin=stdin_bytes,
     )
     pass  # pylint: disable=unnecessary-pass

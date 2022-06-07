@@ -16,20 +16,27 @@
 # pylint: disable=unused-variable
 # pylint: disable=unused-import
 
-from dataclasses import dataclass
+from cmath import exp
+from concurrent.futures import Future, ProcessPoolExecutor
 import os
 from pathlib import Path
-from uuid import uuid4
 import logging
-from pytest import LogCaptureFixture, CaptureFixture, fail, raises
+from random import randint
+import time
+from pytest import LogCaptureFixture, CaptureFixture, fail
+import pytest
+from atbu.common.exception import PipeConnectionAlreadyEof
+
 
 from atbu.common.mp_pipeline import (
     MultiprocessingPipeline,
+    PipeConnectionIO,
     PipelineStage,
     SubprocessPipelineStage,
     ThreadPipelineStage,
     PipelineWorkItem,
 )
+from .common_helpers import establish_random_seed
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +76,7 @@ def always_yes(wi: PipelineWorkItem):
 
 def test_subprocess_pipeline_basic(tmp_path: Path):
     sp = MultiprocessingPipeline(
+        name="test_subprocess_pipeline_basic",
         stages=[
             SubprocessPipelineStage(
                 fn_determiner=always_yes,
@@ -92,7 +100,6 @@ def test_subprocess_pipeline_basic(tmp_path: Path):
     r_wi = f.result()
     assert wi == r_wi
     assert not wi.is_failed
-    assert wi.exception is None
     assert wi.user_obj["parent"] == d["parent"]
     assert wi.user_obj[1] == "stage1"
     assert wi.user_obj[2] == "stage2: got this from parent: This is from parent"
@@ -126,7 +133,10 @@ class LargePipelineStage(SubprocessPipelineStage):
 
 def test_subprocess_pipeline_large(tmp_path: Path):
     stages = 100
-    sp = MultiprocessingPipeline()
+    sp = MultiprocessingPipeline(
+        max_simultaneous_work_items=min(os.cpu_count(), 15),
+        name="test_subprocess_pipeline_large",
+    )
     for i in range(stages):
         sp.add_stage(
             stage=LargePipelineStage()
@@ -135,12 +145,11 @@ def test_subprocess_pipeline_large(tmp_path: Path):
     f = sp.submit(wi)
     r_wi: PipelineWorkItem = f.result()
     assert wi == r_wi
-    if isinstance(r_wi.exception, Exception):
+    if r_wi.exceptions is not None:
         # Should be succesful.
-        # raise the exception so pytest displays its message.
-        raise r_wi.exception
+        # raise the the first exception so pytest displays its message.
+        raise r_wi.exceptions[0]
     assert not r_wi.is_failed
-    assert r_wi.exception is None
     assert r_wi.is_ok
     assert r_wi.num == 50
     sp.shutdown()
@@ -172,7 +181,10 @@ def perform_thread_stage_work(
     return pwi
 
 def test_subprocess_pipeline_large_mixed(tmp_path: Path):
-    sp = MultiprocessingPipeline()
+    sp = MultiprocessingPipeline(
+        name="test_subprocess_pipeline_large_mixed",
+        max_simultaneous_work_items=min(os.cpu_count(), 15),
+    )
     for _ in range(10):
         sp.add_stage(
             stage=MixedPipelineSubprocessStage()
@@ -187,14 +199,110 @@ def test_subprocess_pipeline_large_mixed(tmp_path: Path):
     f = sp.submit(wi)
     r_wi: PipelineWorkItem = f.result()
     assert wi == r_wi
-    if isinstance(r_wi.exception, Exception):
+    if r_wi.exceptions is not None:
         # Should be succesful.
-        # raise the exception so pytest displays its message.
-        raise r_wi.exception
+        # raise the first exception in the list so pytest displays its message.
+        raise r_wi.exceptions[0]
     assert not r_wi.is_failed
-    assert r_wi.exception is None
     assert r_wi.is_ok
     assert r_wi.num == 20
     assert r_wi.pid == os.getpid()
     sp.shutdown()
     assert sp.was_graceful_shutdown
+
+def gather_func(idnum, pr: PipeConnectionIO):
+    print(f"ENTER id={idnum} pid={os.getpid()}")
+    results = []
+    while not pr.eof:
+        results.append(pr.read())
+    assert pr.read() == bytes()
+    print(f"EXIT id={idnum} {os.getpid()} len={len(results)}")
+    pr.close()
+    return results
+
+def test_pipe_io_connection_basic(tmp_path: Path):
+    ppe = ProcessPoolExecutor()
+    pr, pw = PipeConnectionIO.create_reader_writer_pair()
+    fut = ppe.submit(
+        gather_func,
+        0,
+        pr
+    )
+    expected = [
+        "abc".encode(),
+        "123".encode(),
+        "the end".encode(),
+    ]
+    for i, e in enumerate(expected):
+        if i < len(expected)-1:
+            num_written = pw.write(e)
+            assert num_written == len(e)
+        else:
+            num_written = pw.write_eof(e)
+            assert num_written == len(e)
+    with pytest.raises(PipeConnectionAlreadyEof):
+        pw.write_eof(b'xyz')
+    r = fut.result(timeout=60)
+    assert len(r) == 3
+    assert r == expected
+
+def test_pipe_io_connection_many(tmp_path: Path):
+    seed = bytes([0xdb, 0x9e, 0xec, 0x45])
+    seed = establish_random_seed(tmp_path=tmp_path, random_seed=seed)
+    print(f"Seed={seed.hex(' ')}")
+    print(f"Parent pid={os.getpid()}")
+    total_conn = 50
+    ppe = ProcessPoolExecutor(max_workers=total_conn)
+    rw_fut_conn: list[tuple[Future, PipeConnectionIO]] = []
+    for i in range(total_conn):
+        pr, pw = PipeConnectionIO.create_reader_writer_pair()
+        fut = ppe.submit(
+            gather_func,
+            i,
+            pr
+        )
+        rw_fut_conn.append((i, fut, pw,))
+        print(f"#{len(rw_fut_conn)-1} submitted.")
+
+    expected = [
+        ("abc"*1024*1024*7).encode(),
+        ("123"*1024*1024*3).encode(),
+        ("the end"*100).encode(),
+    ]
+
+    print(f"Begin writing...")
+
+    process_writing = list(rw_fut_conn)
+    while len(process_writing) > 0:
+        idx = randint(0, len(process_writing) - 1)
+        idnum, fut, pw = process_writing[idx]
+        is_done = fut.done()
+        is_running = fut.running()
+        if not is_running:
+            time.sleep(0.010)
+            continue
+        print(f"id={idnum}: is_done={is_done} is_running={is_running} {str(fut)}")
+        for i, e in enumerate(expected):
+            if i < len(expected)-1:
+                num_written = pw.write(e)
+                assert num_written == len(e)
+            else:
+                num_written = pw.write_eof(e)
+                assert num_written == len(e)
+        with pytest.raises(PipeConnectionAlreadyEof):
+            pw.write_eof(b'xyz')
+        del process_writing[idx]
+
+    print(f"Waiting for Futures...")
+    while len(rw_fut_conn) > 0:
+        idx = randint(0, len(rw_fut_conn) - 1)
+        idnum, fut, pw = rw_fut_conn[idx]
+        is_done = fut.done()
+        is_running = fut.running()
+        print(f"BEGIN WAIT: id={idnum}: is_done={is_done} is_running={is_running}")
+        assert is_running or is_done
+        r = fut.result(timeout=120)
+        print(f"END WAIT: id={idnum}: is_done={is_done} is_running={is_running}")
+        assert len(r) == 3
+        assert r == expected
+        del rw_fut_conn[idx]

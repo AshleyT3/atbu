@@ -20,7 +20,6 @@ import multiprocessing
 import threading
 
 from .exception import (
-    GlobalContextAlreadySet,
     GlobalContextNotSet,
     QueueListenerAlreadyStarted,
     QueueListenerNotStarted,
@@ -55,9 +54,10 @@ class MultiprocessGlobalContext:
     generally avoid doing so if sharing is not needed.
     """
 
-    def __init__(self, logging_queue, logging_level):
+    def __init__(self, logging_queue, logging_level, verbosity_level):
         self._global_logging_queue = logging_queue
         self.global_logging_level = logging_level
+        self.global_verbosity_level = verbosity_level
 
     @property
     def global_logging_queue(self):
@@ -116,16 +116,18 @@ is_global_queue_handler_setup: bool = False
 def global_init_subprocess(global_context_from_parent):
     global global_context
     global_context = global_context_from_parent
-    connect_root_logger_to_global_logging_queue()
+    _connect_root_logger_to_global_logging_queue()
 
 
-def global_init(logging_level="INFO"):
+def global_init(logging_level="INFO", verbosity_level=0):
     global global_context
     if global_context:
-        raise GlobalContextAlreadySet()
+        return
     # Create system global logging mp Queue.
     global_context = MultiprocessGlobalContext(
-        logging_queue=multiprocessing.Queue(), logging_level=logging_level
+        logging_queue=multiprocessing.Queue(),
+        logging_level=logging_level,
+        verbosity_level=verbosity_level,
     )
 
 
@@ -198,7 +200,7 @@ def switch_to_non_queued_logging():
     global_context.remove_queue_handler_logger(handler=queue_handler)
 
 
-def connect_root_logger_to_global_logging_queue():
+def _connect_root_logger_to_global_logging_queue():
     global is_global_queue_handler_setup
     global queue_handler
     if not global_context:
@@ -249,23 +251,26 @@ def remove_created_logging_handlers():
                 untrack_logging_handler(h)
 
 
-def initialize_logging(logfile, loglevel, log_console_detail):
+def initialize_logging(logfile, loglevel, verbosity_level, log_console_detail):
     if not global_context:
         raise GlobalContextNotSet()
     file_log_level = logging.DEBUG
     console_log_level = logging.INFO
     global_context.global_logging_level = logging.INFO
+    global_context.global_verbosity_level = 0
     if loglevel is not None:
         file_log_level = loglevel
         console_log_level = loglevel
         global_context.global_logging_level = loglevel
+    if verbosity_level is not None:
+        global_context.global_verbosity_level = verbosity_level
 
     detailed_formatter = logging.Formatter(
         fmt="%(asctime)s.%(msecs)03d PID=%(process)-05d TID=%(thread)-05d %(name)-12s %(levelname)-8s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    connect_root_logger_to_global_logging_queue()
+    _connect_root_logger_to_global_logging_queue()
 
     # Handlers to add to the global queue listener which are
     # final consumers of the logging records.
@@ -286,6 +291,17 @@ def initialize_logging(logfile, loglevel, log_console_detail):
 
     start_global_queue_listener(*handlers)
 
+def set_verbosity_level(level):
+    global_init()
+    if not global_context:
+        raise GlobalContextNotSet()
+    global_context.global_verbosity_level = int(level)
+
+def get_verbosity_level() -> int:
+    global_init()
+    if not global_context:
+        raise GlobalContextNotSet()
+    return global_context.global_verbosity_level
 
 def deinitialize_logging():
     stop_global_queue_listener()

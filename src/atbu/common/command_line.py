@@ -13,15 +13,16 @@
 # limitations under the License.
 r"""Main entry point, argument parsing.
 """
-
+# pylint: disable=missing-class-docstring
+# pylint: disable=too-many-lines
 import argparse
 import logging
+import multiprocessing
 from typing import Union
 
 from .constants import *
 from .exception import (
     AtbuException,
-    GlobalContextAlreadySet,
     InvalidCommandLineArgument,
     InvalidStateError,
     QueueListenerNotStarted,
@@ -30,6 +31,7 @@ from .exception import (
 )
 from .mp_global import (
     deinitialize_logging,
+    get_verbosity_level,
     global_init,
     initialize_logging_basic,
     initialize_logging,
@@ -652,16 +654,6 @@ recommended you backup configurations before overwriting them by using
     )
 
     #
-    # creds set-username:
-    #
-    # TODO:
-    # creds_set_username_parser = subparser_creds.add_parser(
-    #    "set-username",
-    #    help="Set the user name (aka 'key')associated the storage secret for specified storage definition.",
-    #    parents=[parser_storage_def_specifier, parser_key_type],
-    # )
-
-    #
     # creds set-password:
     #
     creds_set_password_parser = subparser_creds.add_parser(
@@ -1064,10 +1056,8 @@ def wait_for_debugger_attach(debug_server_port: Union[str, int, list]):
 
 
 def main(argv=None):
-    try:
-        global_init()
-    except GlobalContextAlreadySet:
-        pass
+    multiprocessing.set_start_method("spawn")
+    global_init()
     initialize_logging_basic()
     # pdb.set_trace()
     logging.info(f"{ATBU_ACRONYM} - v{ATBU_VERSION_STRING}")
@@ -1087,8 +1077,9 @@ def main(argv=None):
             f"Expected help subject to match those available: {args.help_subject}"
         )
 
+    verbosity_level = 0
     if hasattr(args, "verbosity") and args.verbosity is not None:
-        set_verbosity_level(args.verbosity)
+        verbosity_level = args.verbosity
 
     # Instantiate global singleton GlobalHasherDefinitions.
     try:
@@ -1096,7 +1087,7 @@ def main(argv=None):
     except SingletonAlreadyCreated:
         logging.warning(
             f"GlobalHasherDefinitions already created."
-        )  # TODO: determine proper pytest cleanup and/or set is_test variable etc.
+        )
 
     logfile = None
     loglevel = None
@@ -1123,7 +1114,12 @@ def main(argv=None):
         if hasattr(args, "func"):
             remove_created_logging_handlers()
             remove_root_stream_handlers()
-            initialize_logging(logfile, loglevel, log_console_detail)
+            initialize_logging(
+                logfile=logfile,
+                loglevel=loglevel,
+                verbosity_level=verbosity_level,
+                log_console_detail=log_console_detail
+            )
             exit_code = args.func(args)
             if exit_code is None:
                 exit_code = 0

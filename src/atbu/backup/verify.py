@@ -13,6 +13,7 @@
 # limitations under the License.
 r"""Verify backups.
 """
+# pylint: disable=missing-class-docstring
 import gzip
 import io
 import logging
@@ -22,6 +23,8 @@ from concurrent import futures
 from concurrent.futures import FIRST_COMPLETED
 import shutil
 import tempfile
+
+from atbu.common.util_helpers import clear_file
 
 from ..common.exception import (
     CompareBytesMistmatchError,
@@ -43,7 +46,7 @@ from .backup_core import (
     BackupFileInformation,
     StorageFileRetriever,
     file_operation_futures_to_results,
-    BackupPipelineWorkItem,    
+    BackupPipelineWorkItem,
     is_qualified_for_operation,
     run_operation_stage,
 )
@@ -120,7 +123,7 @@ class VerifyFile(StorageFileRetriever):
             #
             dest_file_fd, self._temp_dest_path = tempfile.mkstemp(prefix="atbu_z_", dir=self._temp_dir, text=False)
             self._temp_dest_path = Path(self._temp_dest_path)
-            self._temp_dest_file = io.FileIO(file=dest_file_fd, mode="wb", closefd=True)
+            self._temp_dest_file = io.FileIO(file=dest_file_fd, mode="w+b", closefd=True)
             # Disable default cleartext hashing because completion code will
             # perform a cleartext hashing on the final decompressed file.
             self.disable_cleartext_hashing()
@@ -158,14 +161,16 @@ class VerifyFile(StorageFileRetriever):
         self.total_compare_bytes += len(decrypted_chunk)
 
     def download_completed(self):
-
-        if self._temp_dest_file is not None:
-            self._temp_dest_file.close()
-
-        if self.is_compressed:
+        if not self.is_compressed:
+            if self._temp_dest_file is not None:
+                raise InvalidStateError(
+                    f"_temp_dest_file should not be set if not compression."
+                )
+        else:
+            self._temp_dest_file.seek(0, io.SEEK_SET)
             self.total_cleartext_bytes = 0 # zero-out compressed size, calc decomp size.
             cleartext_hasher = GlobalHasherDefinitions().create_hasher() # calc decomp hash.
-            with gzip.GzipFile(filename=self._temp_dest_path, mode="rb") as input_file_gz:
+            with gzip.GzipFile(mode="rb", fileobj=self._temp_dest_file,) as input_file_gz:
                 while True:
                     decrypted_decomp_chunk = input_file_gz.read(1024*1024*25)
                     if len(decrypted_decomp_chunk) == 0:
@@ -185,6 +190,14 @@ class VerifyFile(StorageFileRetriever):
                                 f"path={self.local_compare_path_str}"
                             )
             self._cleartext_digest = cleartext_hasher.get_primary_hexdigest()
+            # Verify of a compressed file decrypts the compressed file to a
+            # subdirectory in the user's temp directory, where it is then
+            # decompressed for verify of the decompressed bytes. Zero'ing the
+            # file is a best-effort and should not be considered a secure
+            # clear. Python states it acquires temp file with exclusive access,
+            # and it is kept open through the following.
+            clear_file(fileobj=self._temp_dest_file, byte_pattern=[0x00])
+            self._temp_dest_file.close()
             os.remove(self._temp_dest_path)
 
         if self.local_compare_file:
@@ -193,7 +206,7 @@ class VerifyFile(StorageFileRetriever):
 
         self.perform_common_checks(
             log_msg_prefix_str="VerifyFile",
-            local_file_path_str=self.path_for_logging,
+            file_path_for_logging=self.path_for_logging,
             orig_file_info=self.file_info,
         )
 
@@ -234,6 +247,8 @@ class Verify:
         self.local_compare = local_compare
         self.local_compare_root_location = local_compare_root_location
         self._subprocess_pipeline = MultiprocessingPipeline(
+            name="Verify",
+            max_simultaneous_work_items=min(os.cpu_count() // 2, 15),
             stages=[
                 SubprocessPipelineStage(
                     fn_determiner=is_qualified_for_operation,

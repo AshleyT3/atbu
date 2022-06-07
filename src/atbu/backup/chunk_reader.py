@@ -16,6 +16,7 @@ in byte chunks of a specified size. This is important for particular
 APIs such as libcloud which expect to see data in specific chunk
 sizes until the last chunk.
 """
+from io import RawIOBase
 from typing import Callable
 from ..common.exception import AlreadyUsedError
 from ..common.aes_cbc import AesCbcPaddingEncryptor
@@ -33,10 +34,18 @@ class ChunkSizeFileReader:
     Instances can be used as an iterator or by manually calling methods.
     """
 
-    def __init__(self, chunk_size, path, user_func: Callable[[str, bytes], None]):
+    def __init__(
+        self,
+        chunk_size,
+        path,
+        fileobj: RawIOBase,
+        read_without_size: bool,
+        user_func: Callable[[str, bytes], None]
+    ):
         self._chunk_size = chunk_size
         self.path = path
-        self._file = None
+        self._file = fileobj
+        self.read_without_size = read_without_size
         self._eof_detected = False
         self._is_used = False
         self._user_func = user_func
@@ -63,7 +72,7 @@ class ChunkSizeFileReader:
     def open(self):
         self._checkused()
         if self._file:
-            raise Exception(f"The file has already been opened.")
+            return
         self._file = open(self.path, "rb")
 
     def close(self):
@@ -109,16 +118,19 @@ class ChunkSizeFileReader:
             raise Exception(
                 f"This instance must be entered and not closed in order to properly exit."
             )
-        if len(self._pending_output) < self._chunk_size:
-            new_file_bytes = self._file.read(
-                self._chunk_size - len(self._pending_output)
-            )
-            if len(new_file_bytes) > 0:
-                self._call_user_func(CHUNK_READER_CB_INPUT_BYTES, new_file_bytes)
-                if len(self._pending_output) == 0:
-                    self._pending_output = new_file_bytes
-                else:
-                    self._pending_output += new_file_bytes
+        while len(self._pending_output) < self._chunk_size:
+            size_to_read = None
+            if not self.read_without_size:
+                size_to_read = self._chunk_size - len(self._pending_output)
+            new_file_bytes = self._file.read(size_to_read)
+            if len(new_file_bytes) == 0:
+                break
+            self._call_user_func(CHUNK_READER_CB_INPUT_BYTES, new_file_bytes)
+            if len(self._pending_output) == 0:
+                self._pending_output = new_file_bytes
+            else:
+                self._pending_output += new_file_bytes
+
         if len(self._pending_output) <= self._chunk_size:
             bytes_to_return = self._pending_output
             self._pending_output = bytes()
@@ -138,7 +150,7 @@ class ChunkSizeFileReader:
     def __enter__(self):
         self._checkused()
         if self._file:
-            raise Exception(f"This instance cannot be entered more than once.")
+            return self
         self.open()
         return self
 
@@ -164,10 +176,18 @@ class ChunkSizeEncryptorReader(ChunkSizeFileReader):
         self,
         chunk_size,
         path,
+        fileobj: RawIOBase,
+        read_without_size: bool,
         encryptor: AesCbcPaddingEncryptor,
         user_func: Callable[[str, bytes], None],
     ):
-        super().__init__(chunk_size=chunk_size, path=path, user_func=user_func)
+        super().__init__(
+            chunk_size=chunk_size,
+            path=path,
+            fileobj=fileobj,
+            read_without_size=read_without_size,
+            user_func=user_func
+        )
         if not isinstance(encryptor, AesCbcPaddingEncryptor):
             raise ValueError(
                 f"The encryptor must be an instance of AesCbcPaddingEncryptor."
@@ -218,6 +238,7 @@ class ChunkSizeEncryptorReader(ChunkSizeFileReader):
             )
         if not self._file:
             raise Exception(f"The file is not open.")
+
         if self.encryptor.is_finalized:
             if len(self._pending_output) <= self._chunk_size:
                 ciphertext_chunk_to_return = self._pending_output
@@ -227,23 +248,12 @@ class ChunkSizeEncryptorReader(ChunkSizeFileReader):
                 self._pending_output = self._pending_output[self._chunk_size :]
             self._eof_detected = len(ciphertext_chunk_to_return) == 0
             return ciphertext_chunk_to_return
-        if len(self._pending_output) < self._chunk_size:
-            plaintext_bytes = self._file.read(
-                self._chunk_size - len(self._pending_output)
-            )
-        if len(plaintext_bytes) == 0:
-            new_cipher_text = self.encryptor.finalize()
-        else:
-            new_cipher_text = self.encryptor.update(input_bytes=plaintext_bytes)
-            self._call_user_func(CHUNK_READER_CB_INPUT_BYTES, plaintext_bytes)
-        if len(new_cipher_text) > 0:
-            if len(self._pending_output) == 0:
-                self._pending_output = new_cipher_text
-            else:
-                self._pending_output += new_cipher_text
-            self._call_user_func(CHUNK_READER_CB_CIPHERTEXT, new_cipher_text)
-        while len(plaintext_bytes) > 0 and len(self._pending_output) < self._chunk_size:
-            plaintext_bytes = self._file.read(self.encryptor.BLOCK_SIZE)
+
+        while len(self._pending_output) < self._chunk_size:
+            size_to_read = None
+            if not self.read_without_size:
+                size_to_read = self._chunk_size - len(self._pending_output) + (self.encryptor.BLOCK_SIZE * 3)
+            plaintext_bytes = self._file.read(size_to_read)
             if len(plaintext_bytes) == 0:
                 new_cipher_text = self.encryptor.finalize()
             else:
@@ -252,12 +262,16 @@ class ChunkSizeEncryptorReader(ChunkSizeFileReader):
             self._pending_output += new_cipher_text
             if len(new_cipher_text) > 0:
                 self._call_user_func(CHUNK_READER_CB_CIPHERTEXT, new_cipher_text)
+            if len(plaintext_bytes) == 0:
+                break
+
         if len(self._pending_output) <= self._chunk_size:
             ciphertext_chunk_to_return = self._pending_output
             self._pending_output = bytes()
         else:
             ciphertext_chunk_to_return = self._pending_output[: self._chunk_size]
             self._pending_output = self._pending_output[self._chunk_size :]
+
         self._eof_detected = len(ciphertext_chunk_to_return) == 0
         return ciphertext_chunk_to_return
 
@@ -265,14 +279,24 @@ class ChunkSizeEncryptorReader(ChunkSizeFileReader):
 def open_chunk_reader(
     chunk_size,
     path,
+    fileobj: RawIOBase,
+    read_without_size: bool,
     encryptor: AesCbcPaddingEncryptor,
     user_func: Callable[[str, bytes], None],
 ):
     if encryptor:
         return ChunkSizeEncryptorReader(
-            chunk_size=chunk_size, path=path, encryptor=encryptor, user_func=user_func
+            chunk_size=chunk_size,
+            path=path,
+            fileobj=fileobj,
+            read_without_size=read_without_size,
+            encryptor=encryptor,
+            user_func=user_func,
         )
-    else:
-        return ChunkSizeFileReader(
-            chunk_size=chunk_size, path=path, user_func=user_func
-        )
+    return ChunkSizeFileReader(
+        chunk_size=chunk_size,
+        path=path,
+        fileobj=fileobj,
+        read_without_size=read_without_size,
+        user_func=user_func,
+    )

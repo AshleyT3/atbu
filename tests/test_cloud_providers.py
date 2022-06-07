@@ -389,6 +389,7 @@ def test_backup_restore(
         source_directory=source_directory,
         expected_total_files=total_files,
         storage_specifier=storage_specifier,
+        compression_type="normal",
         backup_timeout=60 * 5,
         restore_timeout=60 * 5,
         initial_backup_stdin=None,

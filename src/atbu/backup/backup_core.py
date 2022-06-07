@@ -15,12 +15,13 @@ r"""Core backup classes/functions.
 """
 
 # pylint: disable=unnecessary-pass
+# pylint: disable=missing-class-docstring
+# pylint: disable=too-many-lines
 
-
-from asyncio import ALL_COMPLETED
 from dataclasses import dataclass
 import gzip
 import io
+from multiprocessing.connection import Connection
 import os
 from datetime import datetime, timezone
 import re
@@ -35,13 +36,14 @@ import multiprocessing
 from multiprocessing.managers import SyncManager
 from concurrent import futures
 from concurrent.futures import (
+    ALL_COMPLETED,
     FIRST_COMPLETED,
     Future,
     ThreadPoolExecutor,
 )
 import queue
 import json
-from typing import Callable, Iterator, Union
+from typing import BinaryIO, Callable, Iterator, Union
 from collections import defaultdict
 import struct
 
@@ -61,9 +63,12 @@ from ..common.mp_global import (
     get_process_pool_exec_init_func,
     get_process_pool_exec_init_args,
     ProcessThreadContextMixin,
+    get_verbosity_level,
 )
 from ..common.mp_pipeline import (
+    PipeConnectionIO,
     MultiprocessingPipeline,
+    PipeConnectionMessage,
     SubprocessPipelineStage,
     ThreadPipelineStage,
     PipelineWorkItem,
@@ -111,6 +116,20 @@ BACKUP_INFO_ALL_SECTION_NAME = "all"
 BACKUP_OPERATION_NAME_BACKUP = "Backup"
 BACKUP_OPERATION_NAME_RESTORE = "Restore"
 BACKUP_OPERATION_NAME_VERIFY = "Verify"
+
+BACKUP_PIPE_CMD_COMPRESSION_VIA_PIPE_ABORT = "CompViaPipe=False"
+BACKUP_PIPE_CMD_COMPRESSION_VIA_PIPE_BEGIN = "CompViaPipe=True"
+
+BACKUP_PIPELINE_STAGE_HASHING = 0
+BACKUP_PIPELINE_STAGE_DECISIONS = 1
+BACKUP_PIPELINE_STAGE_COMPRESSION = 2
+BACKUP_PIPELINE_STAGE_BACKUP = 3
+
+def _is_debug_logging():
+    return logging.getLogger().getEffectiveLevel() >= logging.DEBUG
+
+def _is_very_verbose_logging():
+    return get_verbosity_level() >= 2 and logging.getLogger().getEffectiveLevel() >= logging.DEBUG
 
 class StorageDefinition:
     def __init__(
@@ -270,6 +289,7 @@ class BackupFileInformation(FileInformation):
         self.is_decrypt_operation: bool = False  # Not persisted
         self.is_compressed: bool = False # Not peristed
         self.compressed_file_path: str = None # Not persisted
+        self.compressed_size: int = None # Not persisted (what was written to pipe for file)
 
     @property
     def path_for_logging(self):
@@ -353,7 +373,7 @@ class BackupFileInformation(FileInformation):
             "_type": "BackupFileInformation",
             "_discovery_path": self._discovery_path,
             "is_successful": self.is_successful,
-            "exception": str(self.exception),
+            "exception": self.exception if self.exception is None else str(self.exception),
             "ciphertext_hash": self._ciphertext_hash_during_backup,
             "encryption_IV": self.encryption_IV.hex() if self.encryption_IV else None,
             "storage_object_name": self.storage_object_name,
@@ -828,6 +848,50 @@ backup_info_json_enc_dec.add_def(
 )
 
 
+class BackupPipelineWorkItem(PipelineWorkItem):
+    def __init__(
+        self,
+        operation_name: str,
+        file_info: BackupFileInformation,
+        is_qualified: bool = False,
+        operation_runner: object = None,
+    ) -> None:
+        super().__init__(
+            user_obj=None,
+            auto_copy_attr=False,
+        )
+        self.operation_name = operation_name
+        self.is_qualified = is_qualified
+        self.file_info = file_info
+        self.operation_runner = operation_runner
+        self.compressed_size = None
+    def __str__(self) -> str:
+        s = super().__str__()
+        return s + f" oper={self.operation_name} is_q={self.is_qualified} or={self.operation_runner} path={self.file_info.path}"
+    def stage_complete(
+        self,
+        stage_num: int,
+        wi: 'BackupPipelineWorkItem',
+        ex: Exception
+    ):
+        super().stage_complete(stage_num, wi, ex)
+
+        if self.operation_name == BACKUP_OPERATION_NAME_BACKUP:
+            if stage_num == BACKUP_PIPELINE_STAGE_DECISIONS:
+                self.is_qualified = wi.is_qualified
+                self.operation_runner = wi.operation_runner
+            elif stage_num == BACKUP_PIPELINE_STAGE_COMPRESSION:
+                self.compressed_size = wi.file_info.compressed_size
+                self.file_info.compressed_size = self.compressed_size
+            elif stage_num == BACKUP_PIPELINE_STAGE_BACKUP:
+                self.file_info = wi.file_info
+                if self.file_info.compressed_size is not None:
+                    self.file_info.compressed_size = self.compressed_size
+        elif self.operation_name == BACKUP_OPERATION_NAME_RESTORE:
+            self.file_info = wi.file_info # Currently only a single stage.
+        elif self.operation_name == BACKUP_OPERATION_NAME_VERIFY:
+            self.file_info = wi.file_info # Currently only a single stage.
+
 class BackupSyncManager(SyncManager):
     pass
 
@@ -1157,7 +1221,11 @@ _PREAMBLE_FIELDS = [
     ("v", lambda fi: "1"),
     (
         _PREAMBLE_FIELD_COMPRESSION,
-        lambda fi: BACKUP_COMPRESSION_TYPE if fi.compressed_file_path is not None else BACKUP_COMPRESSION_NONE
+        lambda fi: BACKUP_COMPRESSION_TYPE if (
+            (fi.is_compressed is not None and fi.is_compressed)
+             or fi.compressed_file_path is not None
+             or fi.compressed_size is not None
+        ) else BACKUP_COMPRESSION_NONE
     ),
     (_PREAMBLE_HASHAGLO_MACRO, lambda fi: fi.primary_digest),
     ("size", lambda fi: fi.size_in_bytes),
@@ -1315,7 +1383,31 @@ class BackupFile(ProcessThreadContextMixin):
         self.object_name_reservations = object_name_reservations
         self.perform_cleartext_hashing = perform_cleartext_hashing
 
-    def run(self):
+    def get_compression_decision(
+        self,
+        pipe_input_file: PipeConnectionIO,
+    ) -> bool:
+        if pipe_input_file is not None:
+            msg = pipe_input_file.recv_message()
+            if msg.cmd == BACKUP_PIPE_CMD_COMPRESSION_VIA_PIPE_BEGIN:
+                return True
+        return False
+
+    def get_compression_pipe_input_file(
+        self,
+        pipe_conn: Connection,
+    ) -> tuple[PipeConnectionIO, int]:
+        if pipe_conn is not None:
+            pipe_input_file = PipeConnectionIO(pipe_conn, is_write=False)
+            is_compression = self.get_compression_decision(
+                pipe_input_file=pipe_input_file
+            )
+            if is_compression:
+                return (pipe_input_file, pipe_input_file.fileno(),)
+            pipe_input_file.close()
+        return (None, -1,)
+
+    def run(self, wi: BackupPipelineWorkItem):
         try:
             path = self.file_info.path
             path_to_backup = path
@@ -1332,7 +1424,7 @@ class BackupFile(ProcessThreadContextMixin):
                     f"BackupFile: {self.get_exec_context_log_stamp_str()} path={path} compressed={path_to_backup}"
                 )
             self.thread_exec = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="BackupStorageWriter"
+                thread_name_prefix="BackupStorageWriter"
             )
 
             def feedback(total_bytes_processed):
@@ -1386,12 +1478,21 @@ class BackupFile(ProcessThreadContextMixin):
                 elif what == CHUNK_READER_CB_INPUT_BYTES_MANUAL_APPEND:
                     pass  # ignore preamble data for plaintext hashing.
 
+            pipe_input_file, pipe_input_fileno = self.get_compression_pipe_input_file(
+                pipe_conn=wi.pipe_conn
+            )
+
+            self.file_info.is_compressed = pipe_input_file is not None
+
             with open_chunk_reader(
                 chunk_size=upload_chunk_size,
                 path=path_to_backup,
+                fileobj=pipe_input_file,
+                read_without_size=pipe_input_file is not None,
                 encryptor=enc,
                 user_func=perform_hashing_callback,
             ) as chunk_reader:
+
                 self.writer_future = self.thread_exec.submit(
                     BackupStorageWriter.run,
                     BackupStorageWriter(
@@ -1428,15 +1529,18 @@ class BackupFile(ProcessThreadContextMixin):
                 # bytes handled outside loop further below...
                 while True:
                     try:
+                        logging.debug(
+                            f"BackupFile: fileno={pipe_input_fileno}: waiting for next chunk."
+                        )
                         file_bytes = chunk_reader.read_chunk()
                         logging.debug(
-                            f"BackupFile: Processing file_bytes={len(file_bytes)}"
+                            f"BackupFile: fileno={pipe_input_fileno}: Processing file_bytes={len(file_bytes)}"
                         )
-                    except OSError:
-                        logging.error(f"Error backing up {path}.")
+                    except OSError as ex:
+                        logging.error(f"BackupFile: Error: fileno={pipe_input_fileno}: backing up {path} {exc_to_string(ex)}")
                         raise
-                    except BaseException:
-                        logging.error(f"Error backing up {path}.")
+                    except BaseException as ex:
+                        logging.error(f"BackupFile: Error: fileno={pipe_input_fileno}: backing up {path} {exc_to_string(ex)}")
                         raise
                     if len(file_bytes) < upload_chunk_size:
                         logging.debug(
@@ -1504,6 +1608,9 @@ class BackupFile(ProcessThreadContextMixin):
             )
             return (self.file_info, ex)
         finally:
+            if wi.pipe_conn is not None:
+                wi.pipe_conn.close()
+                wi.pipe_conn = None
             logging.debug(
                 f"{self.our_thread_name}: Completed: is_successful={self.file_info.is_successful} {path}"
             )
@@ -1651,7 +1758,7 @@ class BackupResultsManager:
         self.lock = multiprocessing.Lock()
         self.thread_stop_event = multiprocessing.Event()
         self.thread_exec = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix=f"BackupInfo-{specific_backup_name}"
+            thread_name_prefix=f"BackupResultsManager-{specific_backup_name}"
         )
         self.background_save_thread_future = self.thread_exec.submit(
             BackupResultsManager.background_save, self
@@ -1871,7 +1978,7 @@ def file_operation_future_result(
         # The most expected kind of result, a 2 element tuple (BackupFileInformation,Exception | None)
         #
         file_info: BackupFileInformation = wi.file_info
-        if file_info.is_successful and file_info.exception is None and wi.exception is None:
+        if file_info.is_successful and file_info.exception is None and not wi.is_failed:
             #
             # Most typical and successful case:
             # The BackupFileInformation is marked successful.
@@ -1886,7 +1993,7 @@ def file_operation_future_result(
             and not wi.is_qualified
             and file_info.is_unchanged_since_last
             and file_info.exception is None
-            and wi.exception is None
+            and not wi.is_failed
         ):
             logging.info(f"{the_operation} not needed, unchanged: {file_info.path_for_logging}")
             return None
@@ -1912,27 +2019,31 @@ def file_operation_future_result(
             )
             return file_info
 
-        if isinstance(wi.exception, Exception):
+        if wi.exceptions is not None:
             #
             # Non-typical... an exception with BackupFileInformation
             # exception was not set. Something caused a caught exception
             # which did not update the BackupFileInformation instance. (bug)
             #
-            ex = wi.exception
-            msg = (
-                f"{the_operation} failed: "
-                f"Did not expect Future.exception() to return exception. "
-                f"path={file_info.path} Error occurred: {exc_to_string(ex)}"
-            )
-            logging.error(msg)
-            anomalies.append(
-                BackupAnomaly(
-                    kind=ANOMALY_KIND_EXCEPTION,
-                    file_info=file_info,
-                    exception=ex,
-                    message=msg,
+            if not isinstance(wi.exceptions, list):
+                raise InvalidStateError(
+                    f"Expecting a list of exceptions but got {type(wi.exceptions)}"
                 )
-            )
+            for ex in wi.exceptions:
+                msg = (
+                    f"{the_operation} failed: "
+                    f"Did not expect Future.exception() to return exception. "
+                    f"path={file_info.path} Error occurred: {exc_to_string(ex)}"
+                )
+                logging.error(msg)
+                anomalies.append(
+                    BackupAnomaly(
+                        kind=ANOMALY_KIND_EXCEPTION,
+                        file_info=file_info,
+                        exception=ex,
+                        message=msg,
+                    )
+                )
             return file_info
 
         #
@@ -1988,20 +2099,6 @@ def file_operation_futures_to_results(
 
     return fi_list
 
-class BackupPipelineWorkItem(PipelineWorkItem):
-    def __init__(
-        self,
-        operation_name: str,
-        file_info: BackupFileInformation,
-        is_qualified: bool = False,
-        operation_runner: object = None,
-    ) -> None:
-        super().__init__(self)
-        self.operation_name = operation_name
-        self.is_qualified = is_qualified
-        self.file_info = file_info
-        self.operation_runner = operation_runner
-
 class HasherPipelineStage(SubprocessPipelineStage):
     def __init__(self) -> None:
         super().__init__()
@@ -2022,10 +2119,36 @@ class HasherPipelineStage(SubprocessPipelineStage):
             )
             raise
 
+class GzipFileWrapper(gzip.GzipFile):
+    # pylint: disable=useless-super-delegation
+    def __init__(self, filename=None, mode=None,
+                 compresslevel=9, fileobj=None, mtime=None):
+        super().__init__(
+            filename=filename,
+            mode=mode,
+            compresslevel=compresslevel,
+            fileobj=fileobj,
+            mtime=mtime,
+        )
+        self.compressed_bytes = 0
+    def __enter__(self) -> object:
+        return super().__enter__()
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        return super().__exit__(exc_type, exc_val, exc_tb)
+    def write(self, data):
+        self.compressed_bytes += len(data)
+        if _is_very_verbose_logging():
+            logging.debug(
+                f"GzipFileWrapper: writing {len(data)} of data to compression: path={self.filename}"
+            )
+        return super().write(data)
+
+
 class CompressionPipelineStage(SubprocessPipelineStage):
     def __init__(
         self,
         compression_settings: dict,
+        upload_chunk_size: int,
         backup_temp_dir: str,
         ext_to_abort_count_dict: dict,
         ext_to_ratio: dict,
@@ -2036,6 +2159,7 @@ class CompressionPipelineStage(SubprocessPipelineStage):
     ) -> None:
         super().__init__(fn_determiner, fn_worker, **stage_kwargs)
         self.compression_settings = compression_settings
+        self.upload_chunk_size = upload_chunk_size,
         self.backup_temp_dir = backup_temp_dir
         self.compression_level = self.compression_settings[CONFIG_VALUE_NAME_COMPRESSION_LEVEL]
         self.is_compression_active = self.compression_level != BACKUP_COMPRESSION_NONE
@@ -2043,61 +2167,26 @@ class CompressionPipelineStage(SubprocessPipelineStage):
         self.compress_min_file_size = int(self.compression_settings[CONFIG_VALUE_NAME_COMPRESS_MIN_FILE_SIZE])
         self.compress_min_compress_ratio = float(self.compression_settings[CONFIG_VALUE_NAME_MIN_COMPRESS_RATIO])
         self.compress_max_ftype_attempts = int(self.compression_settings[CONFIG_VALUE_NAME_MAX_FTYPE_ATTEMPTS])
-        self.ext_to_min_ratio_abort_count = ext_to_abort_count_dict # dict[str,int]()
+        self.ext_to_poor_ratio_count = ext_to_abort_count_dict # dict[str,int]()
         self.ext_to_ratio = ext_to_ratio # dict[str,float]()
         self.shared_lock = shared_lock
-    def is_for_stage(self, pwi: BackupPipelineWorkItem) -> bool:
-        return self.compression_level != BACKUP_COMPRESSION_NONE
-    def perform_stage_work(
-        self,
-        pwi: BackupPipelineWorkItem,
-        **kwargs,
-    ):
-        fi = pwi.file_info
-        if re.match(self.no_compress_pat, fi.nc_path) is not None:
-            return pwi
-        nc_ext = os.path.normcase(fi.ext)
-        if len(nc_ext) > 0:
-            with self.shared_lock:
-                abort_count = self.ext_to_min_ratio_abort_count.get(nc_ext)
-            if abort_count is not None and abort_count >= self.compress_max_ftype_attempts:
-                logging.debug(
-                    f"Skipping compression for extension, more than {self.compress_max_ftype_attempts} poor compression results: "
-                    f"path={fi.path}"
-                )
-                return pwi
-        if fi.size_in_bytes < self.compress_min_file_size:
-            logging.debug(
-                f"Skipping compression for file less than {self.compress_min_file_size} bytes: "
-                f"path={fi.path}"
-            )
-            return pwi
-        compression_size = None
-        temp_file_fd, temp_file_path = tempfile.mkstemp(prefix="atbu_z_", dir=self.backup_temp_dir, text=False)
-        logging.debug(
-            f"Compressing: orig_size={fi.size_in_bytes} path={fi.path} --> dest={temp_file_path}"
-        )
-        read_size = 1024*1024*25
-        with (
-            open(
-                file=fi.path,
-                mode="rb"
-            ) as input_file,
+        self.output_file = None
 
-            gzip.GzipFile(
-                mode="wb",
-                fileobj=io.FileIO(file=temp_file_fd, mode="wb", closefd=True),
-            ) as output_gzip_file
-        ):
-            while True:
-                b = input_file.read(read_size)
-                if len(b) == 0:
-                    break
-                output_gzip_file.write(b)
-        fi.compressed_file_path = temp_file_path
-        compression_size = os.path.getsize(fi.compressed_file_path)
-        compression_ratio = compression_size / fi.size_in_bytes
-        is_compression_abort = compression_ratio > self.compress_min_compress_ratio
+    @property
+    def is_pipe_with_next_stage(self):
+        return self.is_compression_active
+
+    def is_for_stage(self, pwi: BackupPipelineWorkItem) -> bool:
+        return self.compression_level != BACKUP_COMPRESSION_NONE and pwi.is_qualified
+
+    def update_compression_stats(
+        self,
+        fi: BackupFileInformation,
+    ):
+        nc_ext = os.path.normcase(fi.ext)
+        compressed_size = fi.compressed_size
+        compression_ratio = compressed_size / fi.size_in_bytes
+        is_compression_poor = compression_ratio > self.compress_min_compress_ratio
         with self.shared_lock:
             compression_ratio_avg = self.ext_to_ratio.get(nc_ext)
             if compression_ratio_avg is None:
@@ -2105,33 +2194,247 @@ class CompressionPipelineStage(SubprocessPipelineStage):
             else:
                 compression_ratio_avg = (compression_ratio_avg + compression_ratio) / 2
             self.ext_to_ratio[nc_ext] = compression_ratio_avg
-            if is_compression_abort:
+            if is_compression_poor:
                 if len(nc_ext) > 0:
-                    abort_count = self.ext_to_min_ratio_abort_count.get(nc_ext)
-                    if abort_count is None:
-                        abort_count = 0
-                    abort_count += 1
-                    self.ext_to_min_ratio_abort_count[nc_ext] = abort_count
+                    poor_ratio_count = self.ext_to_poor_ratio_count.get(nc_ext)
+                    if poor_ratio_count is None:
+                        poor_ratio_count = 0
+                    poor_ratio_count += 1
+                    self.ext_to_poor_ratio_count[nc_ext] = poor_ratio_count
                 else:
-                    abort_count = -1 # No extension, not tracked, still abort, logged below.
-        if is_compression_abort:
+                    poor_ratio_count = -1 # No extension, not tracked, still abort, logged below.
+        if is_compression_poor:
             logging.debug(
-                f"Aborting use of inefficient compression: "
-                f"ext={nc_ext} ext_count={abort_count} "
+                f"Tracked inefficient compression: "
+                f"ext={nc_ext} ext_count={poor_ratio_count} "
                 f"orig_size={fi.size_in_bytes} "
-                f"comp_size={compression_size} "
+                f"comp_size={compressed_size} "
                 f"ratio={compression_ratio} "
                 f"path={fi.path}"
             )
-            try:
-                if os.path.isfile(fi.compressed_file_path):
-                    os.remove(path=fi.compressed_file_path)
-            except Exception as ex:
-                logging.error(
-                    f"Unexpected error trying to remove compressed file: "
-                    f"{fi.compressed_file_path} {exc_to_string(ex)}"
+
+    def is_no_compress_file(
+        self,
+        fi: BackupFileInformation,
+    ):
+        return re.match(self.no_compress_pat, fi.nc_path) is not None
+
+    def has_file_poorly_compressed_to_many_times(
+        self,
+        fi: BackupFileInformation,
+    ):
+        nc_ext = os.path.normcase(fi.ext)
+        if len(nc_ext) > 0:
+            with self.shared_lock:
+                abort_count = self.ext_to_poor_ratio_count.get(nc_ext)
+            if abort_count is not None and abort_count >= self.compress_max_ftype_attempts:
+                logging.debug(
+                    f"Skipping compression for extension, more than {self.compress_max_ftype_attempts} poor compression results: "
+                    f"path={fi.path}"
                 )
+                return True
+
+    def is_file_below_compress_size_threshold(
+        self,
+        fi: BackupFileInformation,
+    ):
+        if fi.size_in_bytes < self.compress_min_file_size:
+            logging.debug(
+                f"Skipping compression for file less than {self.compress_min_file_size} bytes: "
+                f"path={fi.path}"
+            )
+            return True
+
+    def compress_to_output_file(
+        self,
+        fi: BackupFileInformation,
+        output_file: io.RawIOBase,
+    ):
+        output_fileno = output_file.fileno()
+        try:
+            read_size = 35*1024*1024
+            with (
+
+                open(
+                    file=fi.path,
+                    mode="rb"
+                ) as input_file,
+
+                GzipFileWrapper( # gzip.GzipFile(
+                    mode="wb",
+                    fileobj=output_file,
+                ) as output_gzip_file
+
+            ):
+                while True:
+                    b = input_file.read(read_size)
+                    if len(b) == 0:
+                        break
+                    if _is_very_verbose_logging():
+                        logging.debug(
+                            f"Sending {len(b)} bytes through compression to fileno={output_fileno}: path={fi.path}"
+                        )
+                    output_gzip_file.write(b)
+
+            fi.compressed_size = self.get_compressed_size()
+
+            if self.is_pipe_with_next_stage and hasattr(output_file, "write_eof"):
+                output_file.write_eof(bytes())
+
+            if _is_debug_logging():
+                logging.debug(
+                    f"Compression complete: orig_size={fi.size_in_bytes} comp_size={fi.compressed_size} fileno={output_fileno} path={fi.path}"
+                )
+        except Exception as ex:
+            logging.error(
+                f"Compression failed: fileno={output_fileno} path={fi.path} {exc_to_string(ex)}"
+            )
+            raise
+
+    def get_compressed_size(self):
+        if self.is_pipe_with_next_stage:
+            return self.output_file.num_bytes
+        else:
+            return self.output_file.tell()
+
+    def get_output_file(
+        self,
+        pwi: BackupPipelineWorkItem,
+    ) -> BinaryIO:
+        fi = pwi.file_info
+        if self.output_file is not None:
+            return self.output_file
+        if self.is_pipe_with_next_stage:
+            self.output_file = PipeConnectionIO(c=pwi.pipe_conn, is_write=True)
+            if _is_debug_logging():
+                logging.debug(
+                    f"Compression avenue: orig_size={fi.size_in_bytes} path={fi.path} --> pipe"
+                )
+        else:
+            temp_file_fd, temp_file_path = tempfile.mkstemp(prefix="atbu_z_", dir=self.backup_temp_dir, text=False)
+            if _is_debug_logging():
+                logging.debug(
+                    f"Compressing avenue: orig_size={fi.size_in_bytes} path={fi.path} --> dest={temp_file_path}"
+                )
+            self.output_file = io.FileIO(file=temp_file_fd, mode="wb", closefd=True)
+            fi.compressed_file_path = temp_file_path
+        return self.output_file
+
+    def inform_abort_compression(
+        self,
+        pwi: BackupPipelineWorkItem,
+    ):
+        if not self.is_pipe_with_next_stage or pwi.pipe_conn is None:
+            if _is_debug_logging():
+                logging.debug(
+                    f"no need to inform abort compression: wi={str(pwi)}"
+                )
+            return
+        if _is_debug_logging():
+            logging.debug(
+                f"inform abort compression: wi={str(pwi)}"
+            )
+        o: PipeConnectionIO = self.get_output_file(pwi)
+        if not isinstance(o, PipeConnectionIO):
+            raise InvalidStateError(
+                f"Expected PipeConnectionIO but got {type(o)}."
+            )
+        o.send_message(
+            msg=PipeConnectionMessage(
+                cmd=BACKUP_PIPE_CMD_COMPRESSION_VIA_PIPE_ABORT
+            )
+        )
+
+    def inform_begin_compression(
+        self,
+        pwi: BackupPipelineWorkItem,
+    ):
+        if not self.is_pipe_with_next_stage or pwi.pipe_conn is None:
+            if _is_debug_logging():
+                logging.debug(
+                    f"no need to inform begin compression: wi={str(pwi)}"
+                )
+            return
+        if _is_debug_logging():
+            logging.debug(
+                f"inform begin compression: wi={str(pwi)}"
+            )
+        o: PipeConnectionIO = self.get_output_file(pwi)
+        if not isinstance(o, PipeConnectionIO):
+            raise InvalidStateError(
+                f"Expected PipeConnectionIO but got {type(o)}."
+            )
+        o.send_message(
+            msg=PipeConnectionMessage(
+                cmd=BACKUP_PIPE_CMD_COMPRESSION_VIA_PIPE_BEGIN
+            )
+        )
+
+    def perform_stage_work(
+        self,
+        pwi: BackupPipelineWorkItem,
+        **kwargs,
+    ):
+        if _is_debug_logging():
+            logging.debug(
+                f"perform_stage_work: ENTER: wi={str(pwi)}"
+            )
+        try:
+            if self.is_pipe_with_next_stage and pwi.pipe_conn is None:
+                raise InvalidStateError(
+                    f"perform_stage_work: "
+                    f"Expected pipe connection because is_pipe_with_next_stage is True. wi={str(pwi)}"
+                )
+
+            if not self.is_compression_active:
+                return pwi
+
+            fi = pwi.file_info
+
+            if self.is_no_compress_file(fi=fi):
+                if _is_debug_logging():
+                    logging.debug(
+                        f"perform_stage_work: is_no_compress_file==True wi={str(pwi)}"
+                    )
+                self.inform_abort_compression(pwi=pwi)
+                return pwi
+
+            if self.has_file_poorly_compressed_to_many_times(fi=fi):
+                if _is_debug_logging():
+                    logging.debug(
+                        f"perform_stage_work: has_file_poorly_compressed_to_many_times==True wi={str(pwi)}"
+                    )
+                self.inform_abort_compression(pwi=pwi)
+                return pwi
+
+            if self.is_file_below_compress_size_threshold(fi=fi):
+                if _is_debug_logging():
+                    logging.debug(
+                        f"perform_stage_work: is_file_below_compress_size_threshold==True wi={str(pwi)}"
+                    )
+                self.inform_abort_compression(pwi=pwi)
+                return pwi
+
+            #
+            # Compress to output file.
+            #
+            self.inform_begin_compression(pwi=pwi)
+            self.compress_to_output_file(fi=fi, output_file=self.output_file)
+            self.update_compression_stats(fi=fi)
+        except Exception as ex:
             fi.compressed_file_path = None
+            pwi.append_exception(ex)
+            logging.error(f"Exception during compression pipeline stage. wi={str(pwi)} {exc_to_string(ex)}")
+        finally:
+            if self.output_file is not None and not self.output_file.closed:
+                self.output_file.close()
+            if pwi.pipe_conn is not None and not pwi.pipe_conn.closed:
+                pwi.pipe_conn.close()
+            pwi.pipe_conn = None
+            if _is_debug_logging():
+                logging.debug(
+                    f"perform_stage_work: EXIT: wi={str(pwi)}"
+                )
         return pwi
 
 def is_qualified_for_operation(wi: BackupPipelineWorkItem):
@@ -2146,9 +2449,15 @@ def run_operation_stage(wi: BackupPipelineWorkItem):
     # values that cannot be picked, set it to None.
     operation_runner = wi.operation_runner
     wi.operation_runner = None
-    operation_runner.run()
+    # The old way of returning results via the
+    # future was as shown tuple[file_info,Exception].
+    # TODO: This can be changed given 'wi' is passed in.
+    fi, ex = operation_runner.run(wi)
+    fi.exception = ex
+    wi.file_info = fi
+    if isinstance(ex, Exception):
+        wi.append_exception(ex)
     return wi
-
 
 class Backup:
 
@@ -2199,6 +2508,8 @@ class Backup:
         self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
         self._subprocess_pipeline = MultiprocessingPipeline(
+            name="Backup",
+            max_simultaneous_work_items=min(os.cpu_count() // 2, 15),
             process_initfunc=get_process_pool_exec_init_func(),
             process_initargs=get_process_pool_exec_init_args(),
         )
@@ -2208,22 +2519,20 @@ class Backup:
         self._subprocess_pipeline.add_stage(
             ThreadPipelineStage(
                 fn_determiner=lambda pwi: True,
-                fn_worker=self._post_hasher_evaluation,
+                fn_worker=self._post_hasher_decision_making,
             )
         )
-        compression_level = self._compression_settings[CONFIG_VALUE_NAME_COMPRESSION_LEVEL]
-        self._compression_stage = None
-        if compression_level != BACKUP_COMPRESSION_NONE:
-            self._compression_stage = CompressionPipelineStage(
-                compression_settings=self._compression_settings,
-                backup_temp_dir=self._temp_dir,
-                ext_to_abort_count_dict=multiprocessing.Manager().dict(),
-                ext_to_ratio=multiprocessing.Manager().dict(),
-                shared_lock=multiprocessing.Manager().Lock() # pylint: disable=no-member
-            )
-            self._subprocess_pipeline.add_stage(
-                stage=self._compression_stage,
-            )
+        self._compression_stage = CompressionPipelineStage(
+            compression_settings=self._compression_settings,
+            backup_temp_dir=self._temp_dir,
+            upload_chunk_size=self.storage_def.upload_chunk_size,
+            ext_to_abort_count_dict=multiprocessing.Manager().dict(),
+            ext_to_ratio=multiprocessing.Manager().dict(),
+            shared_lock=multiprocessing.Manager().Lock() # pylint: disable=no-member
+        )
+        self._subprocess_pipeline.add_stage(
+            stage=self._compression_stage,
+        )
         self._subprocess_pipeline.add_stage(
             SubprocessPipelineStage(
                 fn_determiner=is_qualified_for_operation,
@@ -2482,7 +2791,7 @@ class Backup:
         return True
 
 
-    def _post_hasher_evaluation(self, wi: BackupPipelineWorkItem):
+    def _post_hasher_decision_making(self, wi: BackupPipelineWorkItem):
         """Handle a hashing result."""
 
         file_info: BackupFileInformation = wi.file_info
@@ -2572,11 +2881,15 @@ class Backup:
                     )
                 )
 
-            logging.info(f"Wait backup file operations to complete...")
+            logging.info(f"Wait for {len(pending_backups)} backup file operations to complete...")
             while len(pending_backups) > 0:
                 done, pending_backups = futures.wait(
                     fs=pending_backups, return_when=FIRST_COMPLETED
                 )
+                if _is_very_verbose_logging():
+                    logging.debug(
+                        f"Backup: observe {len(done)} completed, {len(pending_backups)} remaining files."
+                    )
                 self._results_mgr.extend_temp_results(
                     file_operation_futures_to_results(
                         fs=done,
@@ -2585,6 +2898,8 @@ class Backup:
                         the_operation=BACKUP_OPERATION_NAME_BACKUP,
                     )
                 )
+                if _is_very_verbose_logging() and len(pending_backups) > 0:
+                    logging.info(f"Wait for {len(pending_backups)} backup file operations to complete...")
 
             #
             # Stopping the results manager saves the final backup information file.
@@ -2685,7 +3000,7 @@ class Backup:
         try:
             self._backup_files()
         finally:
-            self._results_mgr.stop()  # TODO: Remove this if the other is kept.
+            self._results_mgr.stop()
         logging.info(f"All backup file operations have completed.")
         if (
             self._compression_stage is not None
@@ -2702,8 +3017,9 @@ class Backup:
                 for k, v in sorted(ext_to_ratio.items(), key=lambda t: t[1]):
                     if len(k) == 0:
                         k = "(no extension)"
+                    k = f" '{k}' "
                     logging.info(
-                        f"{' ' + k + ' ':.<45} {(v*100):.1f}%"
+                        f"{k:.<45} {(v*100):5.1f}%"
                     )
                 logging.info(f"")
         if len(self.anomalies) == 0:
@@ -2961,7 +3277,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
         """
         pass
 
-    def run(self):
+    def run(self, wi: BackupPipelineWorkItem): # pylint: disable=unused-argument
         try:
             self.file_info.is_successful = False
             self.file_info.exception = None
@@ -3117,10 +3433,10 @@ class StorageFileRetriever(ProcessThreadContextMixin):
     def perform_common_checks(
         self,
         log_msg_prefix_str: str,
-        local_file_path_str: str,
+        file_path_for_logging: str,
         orig_file_info: BackupFileInformation,
     ):
-        logging.info(f"{log_msg_prefix_str}: Completed for {local_file_path_str}")
+        logging.info(f"{log_msg_prefix_str}: Completed for {file_path_for_logging}")
         logging.info(f"{'  Total bytes ':.<45} {self.total_cleartext_bytes}")
         if self._cleartext_digest is not None:
             logging.info(f"{'  SHA256 download ':.<45} {self.cleartext_digest}")
@@ -3136,7 +3452,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
         ):
             raise SizeMistmatchError(
                 f"{log_msg_prefix_str}: The file's cleartext sizes do not match: "
-                f"path={local_file_path_str} "
+                f"path={file_path_for_logging} "
                 f"backup_size={orig_file_info.size_in_bytes} "
                 f"header_size={self.preamble_size_in_bytes} "
                 f"verify_size={self.total_cleartext_bytes}"
@@ -3148,14 +3464,14 @@ class StorageFileRetriever(ProcessThreadContextMixin):
             raise DateTimeMistmatchError(
                 f"{log_msg_prefix_str}: "
                 f"The backup record of file date/time do not match those stored in the backup: "
-                f"path={local_file_path_str} "
+                f"path={file_path_for_logging} "
                 f"original_modified={orig_file_info.modified_date_stamp_ISO8601_utc} ({orig_file_info.modified_time_posix}) "
                 f"header_modified={preamble_modified_time_ISO8601} ({self.preamble_modified_time_posix}) "
             )
         if orig_file_info.primary_digest != self.cleartext_digest:
             raise DigestMistmatchError(
                 f"{log_msg_prefix_str}: The file's cleartext hashes do not match: "
-                f"path={local_file_path_str} "
+                f"path={file_path_for_logging} "
                 f"backup_hash{backing_fi_digest_indicator}={orig_file_info.primary_digest} "
                 f"verify_hash={orig_file_info.cleartext_hash_during_restore}"
             )
@@ -3171,7 +3487,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
                 # encrypted preamble which is not included in the plaintext digest.
                 raise DigestMistmatchError(
                     f"{log_msg_prefix_str}: The file's ciphertext hashes do not match: "
-                    f"path={local_file_path_str} "
+                    f"path={file_path_for_logging} "
                     f"backup_hash={orig_file_info.ciphertext_hash_during_backup} "
                     f"verify_hash={orig_file_info.ciphertext_hash_during_restore}"
                 )

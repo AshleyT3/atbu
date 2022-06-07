@@ -18,7 +18,7 @@ json "database" file.
 There was a second revision of persistent info functionality incorporated
 into ATBU so you may see redundancy or superfluous constructs within.
 """
-
+# pylint: disable=missing-class-docstring
 from dataclasses import dataclass
 import os
 import json
@@ -342,6 +342,7 @@ class FileInformationDatabaseCollection:
         return combined_info.values()
 
     def get_dict_nc_path_to_fi(self):
+        # pylint: disable=unused-variable
         (
             primary_update_db,
             other_db,
@@ -349,6 +350,7 @@ class FileInformationDatabaseCollection:
         return primary_update_db.get_dict_ncpath_to_fi()
 
     def get_dict_digest_to_fi(self):
+        # pylint: disable=unused-variable
         (
             primary_update_db,
             other_db,

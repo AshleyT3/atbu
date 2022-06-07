@@ -78,7 +78,12 @@ BACKUP_COMPRESSION_TYPE = "gzip"
 CONFIG_SECTION_COMPRESSION = "compression"
 CONFIG_VALUE_NAME_COMPRESSION_LEVEL = "level"
 CONFIG_VALUE_NAME_NO_COMPRESS_PATTERN = "no_compress_pattern"
-ATBU_BACKUP_DEFAULT_NO_COMPRESS_RE_PAT = r"(.*\.jpg$|.*\.jpeg$|.*\.mp4$|.*\.mov$|.*\.mpg|.*\.mpeg$|.*\.mp3$)"
+ATBU_BACKUP_DEFAULT_NO_COMPRESS_RE_PAT = (
+    r"("
+    r".*\.jpg$|.*\.jpeg$|.*\.mp4$|.*\.mov$|.*\.mpg|.*\.mpeg$|.*\.mp3$|"
+    r".*\.zip$|.*\.gz$|.*\.7z$|.*\.bz2$"
+    r")"
+)
 CONFIG_VALUE_NAME_COMPRESS_MIN_FILE_SIZE = "min_size"
 ATBU_BACKUP_DEFAULT_COMPRESS_MIN_FILE_SIZE = 150
 CONFIG_VALUE_NAME_MIN_COMPRESS_RATIO = "min_ratio"
@@ -178,14 +183,3 @@ PBKDF2_WORK_FACTOR = 1000000
 
 # BASE64_PREFIX_ORIGINAL_IS_BYTES = 0x0B
 # BASE64_PREFIX_ORIGINAL_IS_STR = 0x05
-
-verbosity_level = 0
-
-
-def set_verbosity_level(level):
-    global verbosity_level
-    verbosity_level = int(level)
-
-
-def get_verbosity_level() -> int:
-    return verbosity_level
