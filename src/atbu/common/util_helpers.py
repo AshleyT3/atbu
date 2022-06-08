@@ -30,19 +30,23 @@ from datetime import datetime, timezone
 
 from .exception import InvalidFunctionArgument
 
+
 class AutoNameEnum(Enum):
     @staticmethod
     def _generate_next_value_(name, start, count, last_values):
         return name
 
+
 def is_platform_path_case_sensitive():
     return os.path.normcase("A") == "A"
+
 
 def get_trash_bin_name():
     if platform.system() == "Windows":
         return "Recycle Bin"
     else:
         return "Trash"
+
 
 def get_file_max_pos(fd):
     cur_pos = fd.tell()
@@ -185,7 +189,8 @@ def is_valid_base64_string(str_to_check):
     except Exception:
         return False
 
-def clear_file(fileobj: Union[io.IOBase, str, Path], byte_pattern: list[int]=None):
+
+def clear_file(fileobj: Union[io.IOBase, str, Path], byte_pattern: list[int] = None):
     """This should not be considered secure as it
     cannot guarantee filesystem buffering anomalies.
     """
@@ -202,7 +207,7 @@ def clear_file(fileobj: Union[io.IOBase, str, Path], byte_pattern: list[int]=Non
     fileobj.seek(0, SEEK_END)
     total_bytes = fileobj.tell()
     for v in byte_pattern:
-        b = bytes([v] * (1024*1024*25))
+        b = bytes([v] * (1024 * 1024 * 25))
         num_remaining = total_bytes
         fileobj.seek(0, SEEK_SET)
         while num_remaining > 0:

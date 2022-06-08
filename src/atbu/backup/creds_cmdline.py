@@ -539,23 +539,23 @@ def handle_delete_storage_definition(
 ):
     """Delete a storage definition.
 
-        Args:
-            storage_def_name: The storage definition name.
-            skip_confirmation_prompt: If True, then no
-                prompting will occur, definition will be
-                deleted.
-            delete_backup_info: If True, the backup information
-                will also be deleted, if False the backup
-                information will not be deleted. If None,
-                and skip_confirmation_prompt==False, the
-                user will be prompted about backup information,
-                otherwise in the case of not prompting, the
-                backup information will not be deleted. The
-                goal is to be cautious about deleting backup
-                informoation despite it being recoverable from
-                a good backup. Essentially, the user must be
-                explicitly one way or another about including
-                backup information in the deletion process.
+    Args:
+        storage_def_name: The storage definition name.
+        skip_confirmation_prompt: If True, then no
+            prompting will occur, definition will be
+            deleted.
+        delete_backup_info: If True, the backup information
+            will also be deleted, if False the backup
+            information will not be deleted. If None,
+            and skip_confirmation_prompt==False, the
+            user will be prompted about backup information,
+            otherwise in the case of not prompting, the
+            backup information will not be deleted. The
+            goal is to be cautious about deleting backup
+            informoation despite it being recoverable from
+            a good backup. Essentially, the user must be
+            explicitly one way or another about including
+            backup information in the deletion process.
     """
     switch_to_non_queued_logging()
     bin_name = get_trash_bin_name()
@@ -578,9 +578,9 @@ configuration.
 """
         )
         if (
-            delete_backup_info is not None      # If user was explicit
-            and delete_backup_info              # and user said Yes to deleting BI
-            and len(existing_backup_info) > 0   # and there is BI to delete
+            delete_backup_info is not None  # If user was explicit
+            and delete_backup_info  # and user said Yes to deleting BI
+            and len(existing_backup_info) > 0  # and there is BI to delete
         ):
             print()
             print(
@@ -601,13 +601,11 @@ will also be deleted:
             print("The storage definition will not be deleted.")
             return
         if (
-            delete_backup_info is None          # user was not explicit
-            and len(existing_backup_info) > 0   # there is BI to delete
+            delete_backup_info is None  # user was not explicit
+            and len(existing_backup_info) > 0  # there is BI to delete
         ):
             print()
-            print(
-                f"This storage definition also has backup information as follows:"
-            )
+            print(f"This storage definition also has backup information as follows:")
             print()
             for bip in existing_backup_info:
                 print(f"    {bip}")
@@ -639,7 +637,7 @@ that newly imported configuration.
             if a == "a":
                 print("The storage definition will not be deleted.")
                 return
-            delete_backup_info = a == 'y'
+            delete_backup_info = a == "y"
     logging.info(f"Deleting storage definition '{storage_def_name}'...")
     atbu_cfg.delete_storage_def(storage_def_name=storage_def_name)
     logging.info(f"Saving configuration file {atbu_cfg.path}...")
@@ -656,6 +654,7 @@ that newly imported configuration.
     else:
         logging.info(f"There is no backup information for '{storage_def_name}'.")
     logging.info(f"The storage definition '{storage_def_name}' was deleted.")
+
 
 def handle_creds(args):
     logging.debug(f"handle_creds")

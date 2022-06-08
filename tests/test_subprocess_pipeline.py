@@ -57,22 +57,27 @@ def queue_worker_func(parm_top_secret, parent_pid):
         parm_top_secret,
     )
 
+
 def int_stage0(wi: PipelineWorkItem):
     wi.user_obj[0] = 100
     return wi
+
 
 def int_stage1(wi: PipelineWorkItem):
     wi.user_obj[0] = wi.user_obj[0] * 2
     wi.user_obj[1] = "stage1"
     return wi
 
+
 def int_stage2(wi: PipelineWorkItem):
     wi.user_obj[0] = wi.user_obj[0] * 2
     wi.user_obj[2] = f"stage2: got this from parent: {wi.user_obj['parent']}"
     return wi
 
+
 def always_yes(wi: PipelineWorkItem):
     return True
+
 
 def test_subprocess_pipeline_basic(tmp_path: Path):
     sp = MultiprocessingPipeline(
@@ -89,8 +94,8 @@ def test_subprocess_pipeline_basic(tmp_path: Path):
             SubprocessPipelineStage(
                 fn_determiner=always_yes,
                 fn_worker=int_stage2,
-            )
-        ]
+            ),
+        ],
     )
 
     d = {}
@@ -119,9 +124,11 @@ class LargePipelineWorkItem(PipelineWorkItem):
 class LargePipelineStage(SubprocessPipelineStage):
     def __init__(self) -> None:
         super().__init__()
+
     def is_for_stage(self, pwi: LargePipelineWorkItem) -> bool:
         pwi.is_ok = not pwi.is_ok
         return not pwi.is_ok
+
     def perform_stage_work(
         self,
         pwi: LargePipelineWorkItem,
@@ -138,9 +145,7 @@ def test_subprocess_pipeline_large(tmp_path: Path):
         name="test_subprocess_pipeline_large",
     )
     for i in range(stages):
-        sp.add_stage(
-            stage=LargePipelineStage()
-        )
+        sp.add_stage(stage=LargePipelineStage())
     wi = LargePipelineWorkItem()
     f = sp.submit(wi)
     r_wi: PipelineWorkItem = f.result()
@@ -155,14 +160,18 @@ def test_subprocess_pipeline_large(tmp_path: Path):
     sp.shutdown()
     assert sp.was_graceful_shutdown
 
+
 class MixedPipelineSubprocessStage(PipelineStage):
     def __init__(self) -> None:
         super().__init__()
+
     @property
     def is_subprocess(self):
         return True
+
     def is_for_stage(self, pwi: LargePipelineWorkItem) -> bool:
         return True
+
     def perform_stage_work(
         self,
         pwi: LargePipelineWorkItem,
@@ -172,6 +181,7 @@ class MixedPipelineSubprocessStage(PipelineStage):
         pwi.num += 1
         return pwi
 
+
 def perform_thread_stage_work(
     pwi: LargePipelineWorkItem,
     **kwargs,
@@ -180,15 +190,14 @@ def perform_thread_stage_work(
     pwi.num += 1
     return pwi
 
+
 def test_subprocess_pipeline_large_mixed(tmp_path: Path):
     sp = MultiprocessingPipeline(
         name="test_subprocess_pipeline_large_mixed",
         max_simultaneous_work_items=min(os.cpu_count(), 15),
     )
     for _ in range(10):
-        sp.add_stage(
-            stage=MixedPipelineSubprocessStage()
-        )
+        sp.add_stage(stage=MixedPipelineSubprocessStage())
         sp.add_stage(
             stage=ThreadPipelineStage(
                 fn_determiner=lambda pwi: True,
@@ -210,6 +219,7 @@ def test_subprocess_pipeline_large_mixed(tmp_path: Path):
     sp.shutdown()
     assert sp.was_graceful_shutdown
 
+
 def gather_func(idnum, pr: PipeConnectionIO):
     print(f"ENTER id={idnum} pid={os.getpid()}")
     results = []
@@ -220,34 +230,32 @@ def gather_func(idnum, pr: PipeConnectionIO):
     pr.close()
     return results
 
+
 def test_pipe_io_connection_basic(tmp_path: Path):
     ppe = ProcessPoolExecutor()
     pr, pw = PipeConnectionIO.create_reader_writer_pair()
-    fut = ppe.submit(
-        gather_func,
-        0,
-        pr
-    )
+    fut = ppe.submit(gather_func, 0, pr)
     expected = [
         "abc".encode(),
         "123".encode(),
         "the end".encode(),
     ]
     for i, e in enumerate(expected):
-        if i < len(expected)-1:
+        if i < len(expected) - 1:
             num_written = pw.write(e)
             assert num_written == len(e)
         else:
             num_written = pw.write_eof(e)
             assert num_written == len(e)
     with pytest.raises(PipeConnectionAlreadyEof):
-        pw.write_eof(b'xyz')
+        pw.write_eof(b"xyz")
     r = fut.result(timeout=60)
     assert len(r) == 3
     assert r == expected
 
+
 def test_pipe_io_connection_many(tmp_path: Path):
-    seed = bytes([0xdb, 0x9e, 0xec, 0x45])
+    seed = bytes([0xDB, 0x9E, 0xEC, 0x45])
     seed = establish_random_seed(tmp_path=tmp_path, random_seed=seed)
     print(f"Seed={seed.hex(' ')}")
     print(f"Parent pid={os.getpid()}")
@@ -256,18 +264,20 @@ def test_pipe_io_connection_many(tmp_path: Path):
     rw_fut_conn: list[tuple[Future, PipeConnectionIO]] = []
     for i in range(total_conn):
         pr, pw = PipeConnectionIO.create_reader_writer_pair()
-        fut = ppe.submit(
-            gather_func,
-            i,
-            pr
+        fut = ppe.submit(gather_func, i, pr)
+        rw_fut_conn.append(
+            (
+                i,
+                fut,
+                pw,
+            )
         )
-        rw_fut_conn.append((i, fut, pw,))
         print(f"#{len(rw_fut_conn)-1} submitted.")
 
     expected = [
-        ("abc"*1024*1024*7).encode(),
-        ("123"*1024*1024*3).encode(),
-        ("the end"*100).encode(),
+        ("abc" * 1024 * 1024 * 7).encode(),
+        ("123" * 1024 * 1024 * 3).encode(),
+        ("the end" * 100).encode(),
     ]
 
     print(f"Begin writing...")
@@ -283,14 +293,14 @@ def test_pipe_io_connection_many(tmp_path: Path):
             continue
         print(f"id={idnum}: is_done={is_done} is_running={is_running} {str(fut)}")
         for i, e in enumerate(expected):
-            if i < len(expected)-1:
+            if i < len(expected) - 1:
                 num_written = pw.write(e)
                 assert num_written == len(e)
             else:
                 num_written = pw.write_eof(e)
                 assert num_written == len(e)
         with pytest.raises(PipeConnectionAlreadyEof):
-            pw.write_eof(b'xyz')
+            pw.write_eof(b"xyz")
         del process_writing[idx]
 
     print(f"Waiting for Futures...")

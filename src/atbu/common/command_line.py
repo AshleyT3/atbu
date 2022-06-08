@@ -134,7 +134,7 @@ def create_argparse():
     # Uncomment to allow --debug-server (for use with VS Code pydebug)
     parser.add_argument(
         "--debug-server",
-        help=argparse.SUPPRESS, #"Activate the debug server to listen on specified port, wait for a client connect."
+        help=argparse.SUPPRESS,  # "Activate the debug server to listen on specified port, wait for a client connect."
         type=int,
         required=False,
     )
@@ -319,7 +319,8 @@ sneaky corruption is detected when a file's date/time and size have remained the
 same since the last backup, but the digests are different.""",
     )
     parser_backup.add_argument(
-        "-z", "--compression",
+        "-z",
+        "--compression",
         choices=BACKUP_COMPRESSION_CHOICES,
         help=f"""Set the backup compression level. The default is '{BACKUP_COMPRESSION_DEFAULT}'.
 """,
@@ -596,7 +597,8 @@ fail to properly backup your locally stored backup information (which includes t
         help="Delete without a confirmation prompt.",
     )
     cred_delete_storage_def_parser.add_argument(
-        "--delete-backup-info", "--dbi",
+        "--delete-backup-info",
+        "--dbi",
         action=argparse.BooleanOptionalAction,
         help="""If you specify --no-delete-backup-info (--no-dbi), backup information files
 will not be deleted. By default, a storage definition's backup informatiion
@@ -1085,9 +1087,7 @@ def main(argv=None):
     try:
         GlobalHasherDefinitions([DEFAULT_HASH_ALGORITHM])
     except SingletonAlreadyCreated:
-        logging.warning(
-            f"GlobalHasherDefinitions already created."
-        )
+        logging.warning(f"GlobalHasherDefinitions already created.")
 
     logfile = None
     loglevel = None
@@ -1118,7 +1118,7 @@ def main(argv=None):
                 logfile=logfile,
                 loglevel=loglevel,
                 verbosity_level=verbosity_level,
-                log_console_detail=log_console_detail
+                log_console_detail=log_console_detail,
             )
             exit_code = args.func(args)
             if exit_code is None:

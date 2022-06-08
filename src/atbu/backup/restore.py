@@ -69,6 +69,7 @@ from ..common.mp_pipeline import (
     SubprocessPipelineStage,
 )
 
+
 class RestoreFile(StorageFileRetriever):
     def __init__(
         self,
@@ -82,10 +83,14 @@ class RestoreFile(StorageFileRetriever):
         self._temp_dir = temp_dir
         self._dest_root_location = Path(dest_root_location)
         self._allow_overwrite = allow_overwrite
-        self._dest_path_intermediate = self._dest_root_location / self.file_info.restore_path
+        self._dest_path_intermediate = (
+            self._dest_root_location / self.file_info.restore_path
+        )
         self._dest_path_final = self._dest_path_intermediate
         self._dest_path_for_logging = str(self._dest_path_intermediate)
-        self._dest_path_existed: bool = None  # For sanity check against allow_overwrite.
+        self._dest_path_existed: bool = (
+            None  # For sanity check against allow_overwrite.
+        )
         self._dest_file = None
 
     def get_download_iterator(self) -> tuple[Iterator[bytes], tuple[Exception]]:
@@ -108,7 +113,9 @@ class RestoreFile(StorageFileRetriever):
     def prepare_destination(self):
 
         if self.file_info.is_decrypt_operation:
-            self._dest_path_intermediate = self._dest_root_location / self.preamble_path_without_root
+            self._dest_path_intermediate = (
+                self._dest_root_location / self.preamble_path_without_root
+            )
             self._dest_path_final = self._dest_path_intermediate
             self._dest_path_for_logging = str(self._dest_path_intermediate)
 
@@ -116,7 +123,9 @@ class RestoreFile(StorageFileRetriever):
             #
             # Decomrpession case: decompress to temp file.
             #
-            dest_file_fd, self._dest_path_intermediate = tempfile.mkstemp(prefix="atbu_z_", dir=self._temp_dir, text=False)
+            dest_file_fd, self._dest_path_intermediate = tempfile.mkstemp(
+                prefix="atbu_z_", dir=self._temp_dir, text=False
+            )
             self._dest_path_intermediate = Path(self._dest_path_intermediate)
             self._dest_file = io.FileIO(file=dest_file_fd, mode="w+b", closefd=True)
             # The _dest_path never existed prevously in this case,
@@ -172,8 +181,7 @@ class RestoreFile(StorageFileRetriever):
         if self._dest_path_existed is None:
             # Must be set by prepare.
             raise InvalidStateError(
-                f"The self.dest_path_existed flag "
-                f"should not be None at this point."
+                f"The self.dest_path_existed flag " f"should not be None at this point."
             )
 
         # Only allow cleanup of _dest_path if overwrite was
@@ -211,10 +219,7 @@ class RestoreFile(StorageFileRetriever):
                 self._dest_file.close()
                 self._dest_file = None
         else:
-            if (
-                self._dest_path_final.exists()
-                and not self._allow_overwrite
-            ):
+            if self._dest_path_final.exists() and not self._allow_overwrite:
                 # Given earlier checks, this point should never be reached.
                 raise RestoreFilePathAlreadyExistsError(
                     f"The restore final file destination path already exists "
@@ -229,18 +234,16 @@ class RestoreFile(StorageFileRetriever):
                     f"final_dest_path={self._dest_path_final}"
                 )
 
-            logging.debug(
-                f"Decompressing to {self._dest_path_final}"
-            )
+            logging.debug(f"Decompressing to {self._dest_path_final}")
             self._dest_path_final.parent.mkdir(parents=True, exist_ok=True)
             self._dest_file.seek(0, io.SEEK_SET)
             with (
                 gzip.GzipFile(mode="rb", fileobj=self._dest_file) as input_file_gz,
-                open(self._dest_path_final, mode="wb") as output_file
+                open(self._dest_path_final, mode="wb") as output_file,
             ):
                 hasher = GlobalHasherDefinitions().create_hasher()
                 while True:
-                    b = input_file_gz.read(1024*1024*25)
+                    b = input_file_gz.read(1024 * 1024 * 25)
                     if len(b) == 0:
                         break
                     hasher.update_all(b)
@@ -303,7 +306,9 @@ class Restore:
         self._selected_files: list[BackupFileInformation] = selections
         self.dest_root_location = dest_root_location
         Path(self.dest_root_location).mkdir(parents=True, exist_ok=True)
-        self._temp_dir = tempfile.mkdtemp(prefix="atbu_resttmp_", dir=self.dest_root_location)
+        self._temp_dir = tempfile.mkdtemp(
+            prefix="atbu_resttmp_", dir=self.dest_root_location
+        )
         self._allow_overwrite = allow_overwrite
         self._auto_path_mapping = auto_path_mapping
         self._subprocess_pipeline = MultiprocessingPipeline(
@@ -326,6 +331,7 @@ class Restore:
         if self._subprocess_pipeline is not None:
             self._subprocess_pipeline.shutdown()
         try:
+
             def on_error(_, path, exc_info):
                 value = ""
                 if (
@@ -341,7 +347,9 @@ class Restore:
                 and len(self._temp_dir) > 0
                 and os.path.isdir(self._temp_dir)
             ):
-                shutil.rmtree(path=self._temp_dir, ignore_errors=False, onerror=on_error)
+                shutil.rmtree(
+                    path=self._temp_dir, ignore_errors=False, onerror=on_error
+                )
         except Exception as ex:
             logging.error(
                 f"Unhandled exception while cleaning up the restore temp folder: {self._temp_dir} ex={ex}"
@@ -456,7 +464,8 @@ class Restore:
             sel_disc_paths_parts = list(map(re_split_sep.split, sel_disc_paths))
             min_part_count = min(
                 map(
-                    lambda pa: len(pa), sel_disc_paths_parts # pylint: disable=unnecessary-lambda
+                    lambda pa: len(pa),
+                    sel_disc_paths_parts,  # pylint: disable=unnecessary-lambda
                 )  # pylint: disable=unnecessary-lambda
             )  # pylint: disable=unnecessary-lambda
             part_ele_idx = 0

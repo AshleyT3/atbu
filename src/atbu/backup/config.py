@@ -143,26 +143,24 @@ def add_path_value(
         value_cfg = value_cfg[s]
     value_cfg[section_value_path[-1]] = value
 
+
 def prompt_user_password_file_does_not_exist(default_filename: str):
     is_exist = default_filename is not None and os.path.isfile(default_filename)
-    print(
-        f"Specify a path to an existing password .json file."
-    )
+    print(f"Specify a path to an existing password .json file.")
     def_qual = ""
     if is_exist:
         def_qual = "<ENTER> for the default, "
         print(
             f"If you do not specify a name and press <ENTER>, the default name will be used."
         )
-        print(
-            f"Default path (file exists): {default_filename}"
-        )
+        print(f"Default path (file exists): {default_filename}")
     a = input(f"Enter the path, {def_qual}or 'n' to abort:")
     if a.lower() in ["n", "no"]:
         return None
     if is_exist and a == "":
         return default_filename
     return a
+
 
 def restore_keyring_secrets(storage_def: dict):
     keyring_section: dict = storage_def.get(CONFIG_SECTION_KEYRING_MAPPING)
@@ -188,10 +186,10 @@ def restore_keyring_secrets(storage_def: dict):
         if password_type == CONFIG_PASSWORD_TYPE_FILENAME:
             filename = base64.b64decode(cba_password.decode("utf-8")).decode("utf-8")
             while not os.path.isfile(filename):
-                print(
-                    f"The credential file does not exist: {filename}"
+                print(f"The credential file does not exist: {filename}")
+                user_specified_filename = prompt_user_password_file_does_not_exist(
+                    filename
                 )
-                user_specified_filename = prompt_user_password_file_does_not_exist(filename)
                 if user_specified_filename is None:
                     raise CredentialSecretFileNotFoundError(
                         f"An existing credential password filename was not specified, aborting restore."
@@ -593,7 +591,7 @@ configuration, you can choose to have one created for you.
         )
         return storage_def
 
-    def get_storage_def_dict(self, storage_def_name, must_exist: bool=False) -> dict:
+    def get_storage_def_dict(self, storage_def_name, must_exist: bool = False) -> dict:
         storage_def_dict = self.get_storage_defs_section().get(storage_def_name)
         if must_exist and storage_def_dict is None:
             raise StorageDefinitionNotFoundError(

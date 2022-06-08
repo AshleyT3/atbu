@@ -291,17 +291,20 @@ def initialize_logging(logfile, loglevel, verbosity_level, log_console_detail):
 
     start_global_queue_listener(*handlers)
 
+
 def set_verbosity_level(level):
     global_init()
     if not global_context:
         raise GlobalContextNotSet()
     global_context.global_verbosity_level = int(level)
 
+
 def get_verbosity_level() -> int:
     global_init()
     if not global_context:
         raise GlobalContextNotSet()
     return global_context.global_verbosity_level
+
 
 def deinitialize_logging():
     stop_global_queue_listener()

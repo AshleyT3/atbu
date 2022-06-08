@@ -40,7 +40,7 @@ class ChunkSizeFileReader:
         path,
         fileobj: RawIOBase,
         read_without_size: bool,
-        user_func: Callable[[str, bytes], None]
+        user_func: Callable[[str, bytes], None],
     ):
         self._chunk_size = chunk_size
         self.path = path
@@ -186,7 +186,7 @@ class ChunkSizeEncryptorReader(ChunkSizeFileReader):
             path=path,
             fileobj=fileobj,
             read_without_size=read_without_size,
-            user_func=user_func
+            user_func=user_func,
         )
         if not isinstance(encryptor, AesCbcPaddingEncryptor):
             raise ValueError(
@@ -252,7 +252,11 @@ class ChunkSizeEncryptorReader(ChunkSizeFileReader):
         while len(self._pending_output) < self._chunk_size:
             size_to_read = None
             if not self.read_without_size:
-                size_to_read = self._chunk_size - len(self._pending_output) + (self.encryptor.BLOCK_SIZE * 3)
+                size_to_read = (
+                    self._chunk_size
+                    - len(self._pending_output)
+                    + (self.encryptor.BLOCK_SIZE * 3)
+                )
             plaintext_bytes = self._file.read(size_to_read)
             if len(plaintext_bytes) == 0:
                 new_cipher_text = self.encryptor.finalize()

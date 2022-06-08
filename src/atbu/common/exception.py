@@ -26,11 +26,13 @@ ANOMALY_KIND_EXCEPTION = "exception"
 ANOMALY_KIND_CANCELLED = "cancelled"
 ANOMALY_KIND_UNEXPECTED_STATE = "unexpected state"
 
+
 @dataclass
 class Anomaly:
     kind: ANOMALY_KINDS
     exception: Exception = None
     message: str = None
+
 
 class AtbuException(Exception):
     def __init__(self, message: str, cause=None):
@@ -413,25 +415,30 @@ class InvalidBase64StringError(AtbuException):
         self._cause = cause
         super().__init__(message=message, cause=cause)
 
+
 class PipelineResultIsNotPipelineWorkItem(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)
+
 
 class PipelineLastStageError(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)
 
+
 class PipelineFutureStuckPendingError(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)
 
+
 class InvalidPipeConnectionMessage(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)
+
 
 class PipeConnectionAlreadyEof(AtbuException):
     def __init__(self, message: str = None, cause=None):

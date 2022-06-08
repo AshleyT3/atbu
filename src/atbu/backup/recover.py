@@ -60,6 +60,7 @@ from ..common.mp_pipeline import (
     SubprocessPipelineStage,
 )
 
+
 def sort_backup_info_filename_list(filename_list: list[str]):
     re_match_time_stamp = re.compile(rf"(.*)-(\d{{8}}-\d{{6}}){BACKUP_INFO_EXTENSION}")
     temp_list: list[str] = []
@@ -199,9 +200,7 @@ listed above. If you are uncertain, you may want to backup those files before pr
                 if fi is not None and fi.is_successful:
                     logging.info(f"Successfully restored {fi.path}")
     except Exception as ex:
-        msg = (
-            f"Unhandled exception: {exc_to_string(ex)}"
-        )
+        msg = f"Unhandled exception: {exc_to_string(ex)}"
         logging.error(msg)
         anomalies.append(
             BackupAnomaly(

@@ -750,10 +750,7 @@ def duplicate_files(
         while attempts_remaining > 0:
             bn = randint(0, len(files_duplicated) - 1)
             path_to_br = files_duplicated[bn][1]
-            if (
-                bn not in br_winners
-                and os.path.getsize(path_to_br) != 0
-            ):
+            if bn not in br_winners and os.path.getsize(path_to_br) != 0:
                 break
             attempts_remaining -= 1
         if attempts_remaining <= 0:

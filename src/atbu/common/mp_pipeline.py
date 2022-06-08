@@ -22,7 +22,12 @@ import io
 import logging
 import multiprocessing
 import concurrent.futures
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ThreadPoolExecutor,
+    ProcessPoolExecutor,
+)
 from multiprocessing.connection import Connection
 import queue
 import time
@@ -31,28 +36,35 @@ from typing import Callable
 from .exception import *
 from .mp_global import get_verbosity_level
 
+
 def _is_very_verbose_logging():
-    return get_verbosity_level() >= 2 and logging.getLogger().getEffectiveLevel() >= logging.DEBUG
+    return (
+        get_verbosity_level() >= 2
+        and logging.getLogger().getEffectiveLevel() >= logging.DEBUG
+    )
+
 
 PIPE_CONN_MSG_CMD_DATA = "data"
 PIPE_CONN_MSG_CMD_DATA_FINAL = "data-final"
 PIPE_CONN_MSG_DATA_CMDS = [PIPE_CONN_MSG_CMD_DATA, PIPE_CONN_MSG_CMD_DATA_FINAL]
+
+
 class PipeConnectionMessage:
-    def __init__(self, cmd: str, data: bytes=None) -> None:
+    def __init__(self, cmd: str, data: bytes = None) -> None:
         if data is None:
             data = bytes()
         if not isinstance(data, (bytes, bytearray)):
-            raise InvalidFunctionArgument(
-                f"Expecting data to be bytes or bytearray."
-            )
+            raise InvalidFunctionArgument(f"Expecting data to be bytes or bytearray.")
         self.cmd = cmd
         self.data = data
+
 
 class PipeConnectionIO(io.RawIOBase):
     """Allow FileIO-like interface with a Pipe Connection object. Not a
     fully functional RawIOBase but close enough to meet certain the needs
     of certain classes which can accept/use such.
     """
+
     # pylint: disable=no-self-use
     def __init__(self, c: Connection, is_write: bool) -> None:
         super().__init__()
@@ -71,7 +83,7 @@ class PipeConnectionIO(io.RawIOBase):
         r, w = multiprocessing.connection.Pipe(duplex=False)
         return (
             PipeConnectionIO(c=r, is_write=False),
-            PipeConnectionIO(c=w, is_write=True)
+            PipeConnectionIO(c=w, is_write=True),
         )
 
     def reset_num_bytes(self):
@@ -140,7 +152,7 @@ class PipeConnectionIO(io.RawIOBase):
                 logging.debug(
                     f"PipeConnectionIO.recv_message: receiving: fileno={self._cached_fileno}..."
                 )
-            msg  = self.c.recv()
+            msg = self.c.recv()
             if not isinstance(msg, PipeConnectionMessage):
                 raise InvalidPipeConnectionMessage(
                     f"PipeConnectionIO.recv_message: "
@@ -207,9 +219,7 @@ class PipeConnectionIO(io.RawIOBase):
 
     def write_eof(self, buf) -> int:
         if self.eof:
-            raise PipeConnectionAlreadyEof(
-                f"PipeConnectionIO.write_eof: already eof."
-            )
+            raise PipeConnectionAlreadyEof(f"PipeConnectionIO.write_eof: already eof.")
         if _is_very_verbose_logging():
             logging.debug(
                 f"PipeConnectionIO.write_eof: fileno={self._cached_fileno} writing EOF."
@@ -279,9 +289,7 @@ class PipeConnectionIO(io.RawIOBase):
 
     def close(self) -> None:
         if _is_very_verbose_logging():
-            logging.debug(
-                f"PipeConnectionIO.close: fileno={self._cached_fileno}."
-            )
+            logging.debug(f"PipeConnectionIO.close: fileno={self._cached_fileno}.")
             self.c.close()
 
     @property
@@ -294,33 +302,12 @@ class PipeConnectionIO(io.RawIOBase):
     def seek(self, __offset: int, __whence: int = ...) -> int:
         raise NotImplementedError()
 
-def wait_not_pending(fut: Future, timeout_secs: int = None):
-    """Wait for ProcessPoolExecutor-submitted work to leave
-    the PENDING state. Currently concurrent.futures provides
-    no wait to wait for non-PENDING state, much less access
-    that state specifically. We infer by looking for running
-    or done at interval. Waiting for non-pending is important
-    for sharing Pipe Connection ends, where this parent process
-    wishes to close both ends which it does not need, or want
-    to have remaining open.
-    """
-    s = time.perf_counter()
-    while not fut.done() and not fut.running():
-        e = time.perf_counter()
-        if timeout_secs is not None:
-            wait_secs = e - s
-            if wait_secs >= timeout_secs:
-                return False
-        time.sleep(0.100)
-    return True
-
 
 class PipelineWorkItem:
-
     def __init__(
         self,
         user_obj: object = None,
-        auto_copy_attr: bool=True,
+        auto_copy_attr: bool = True,
         **kwargs,
     ) -> None:
         """Create a pipeline work item.
@@ -352,31 +339,33 @@ class PipelineWorkItem:
     # attributes that should not be auto-copy'ed.
     #
     OUR_ATTRIBUTES = [
-        '_cur_stage',
-        'user_obj',
-        'user_kwargs',
-        'exceptions',
-        'pipe_conn',
-        '_auto_copy_attr',
+        "_cur_stage",
+        "user_obj",
+        "user_kwargs",
+        "exceptions",
+        "pipe_conn",
+        "_auto_copy_attr",
     ]
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}: next_stage={self._cur_stage} user_obj={self.user_obj} exceps={self.exceptions}"
+
     @property
     def auto_copy_attr(self):
         return self._auto_copy_attr
+
     @auto_copy_attr.setter
     def auto_copy_attr(self, value):
         self._auto_copy_attr = value
+
     @property
     def is_failed(self):
-        has_exceptions = (
-            self.exceptions is not None
-            and len(self.exceptions) > 0
-        )
+        has_exceptions = self.exceptions is not None and len(self.exceptions) > 0
         return has_exceptions
+
     def increment_stage(self):
         self._cur_stage += 1
+
     @property
     def cur_stage(self):
         """Current stage which is usually the next stage to
@@ -384,17 +373,20 @@ class PipelineWorkItem:
         submitting the work.
         """
         return self._cur_stage
+
     @cur_stage.setter
     def cur_stage(self, value):
         self._cur_stage = value
+
     def append_exception(self, ex: Exception):
         if self.exceptions is None:
             self.exceptions = list[Exception]()
         self.exceptions.append(ex)
+
     def stage_complete(
         self,
-        stage_num: int, # pylint: disable=unused-argument
-        wi: 'PipelineWorkItem', # pylint: disable=unused-argument
+        stage_num: int,  # pylint: disable=unused-argument
+        wi: "PipelineWorkItem",  # pylint: disable=unused-argument
         ex: Exception,
     ):
         """If ex is None, wi is the PipelineWorkItem from the stage's
@@ -411,7 +403,7 @@ class PipelineWorkItem:
             if self.exceptions is None:
                 self.exceptions = list[Exception]()
             self.exceptions.extend(wi.exceptions)
-        self.user_obj = wi.user_obj # Always copied.
+        self.user_obj = wi.user_obj  # Always copied.
         if self._auto_copy_attr:
             # By default, copy all of user's additions.
             # User can disable as desired.
@@ -419,19 +411,22 @@ class PipelineWorkItem:
                 if k not in PipelineWorkItem.OUR_ATTRIBUTES:
                     self.__dict__[k] = v
 
+
 @dataclass(eq=True, frozen=True)
 class _WorkItemStageRunCtx:
     cur_stage: int
     fut: Future
     wi: PipelineWorkItem
+
     def __str__(self) -> str:
         return f"cur_stage={self.cur_stage} wi={str(self.wi)} fut={str(self.fut)}"
+
 
 class PipelineStage:
     def __init__(
         self,
-        fn_determiner: Callable[[PipelineWorkItem], bool]=None,
-        fn_worker: Callable[..., PipelineWorkItem]=None,
+        fn_determiner: Callable[[PipelineWorkItem], bool] = None,
+        fn_worker: Callable[..., PipelineWorkItem] = None,
         **stage_kwargs,
     ) -> None:
         self.fn_determiner = fn_determiner
@@ -458,11 +453,7 @@ class PipelineStage:
             )
         return self.fn_determiner(pwi)
 
-    def perform_stage_work(
-        self,
-        pwi: PipelineWorkItem,
-        **kwargs
-    ):
+    def perform_stage_work(self, pwi: PipelineWorkItem, **kwargs):
         if self.fn_worker is None:
             raise InvalidStateError(
                 f"PipelineStage fn_worker is None, cannot work, looks like a holiday today."
@@ -482,14 +473,15 @@ class ThreadPipelineStage(PipelineStage):
     def is_subprocess(self):
         return False
 
+
 class MultiprocessingPipeline:
     def __init__(
         self,
-        stages: list[PipelineStage]=None,
+        stages: list[PipelineStage] = None,
         max_simultaneous_work_items=None,
         name="unnamed",
         process_initfunc=None,
-        process_initargs=()
+        process_initargs=(),
     ) -> None:
         if stages is None:
             stages = list[PipelineStage]()
@@ -570,9 +562,7 @@ class MultiprocessingPipeline:
             wi.append_exception(ex)
             wifut.set_exception(ex)
 
-    def _get_running_wi_count(
-        self
-    ):
+    def _get_running_wi_count(self):
         return len(self._running_wi_contexts)
 
     def _is_wi_still_running(
@@ -655,11 +645,12 @@ class MultiprocessingPipeline:
                 f" _WorkItemStageRunCtx instance."
             )
 
-        return (wi, c,)
+        return (
+            wi,
+            c,
+        )
 
-    def _get_queued_wi(
-        self
-    ):
+    def _get_queued_wi(self):
         """Returns a tuple (wi, is_shutdown), where wi will
         be a work item if there's work that should run, else
         it will be None. If is_shutdown==True, caller should
@@ -676,10 +667,14 @@ class MultiprocessingPipeline:
                     Anomaly(
                         kind=ANOMALY_KIND_EXCEPTION,
                         exception=ex,
-                        message="Unexpected Empty on _pl_input_queue.get()"
+                        message="Unexpected Empty on _pl_input_queue.get()",
                     )
                 )
-                return (None, None, False,)
+                return (
+                    None,
+                    None,
+                    False,
+                )
 
     def _handle_completed_fut(
         self,
@@ -701,7 +696,9 @@ class MultiprocessingPipeline:
             # are parallel stages for the same work item, they are
             # completed separately from this call.
             #
-            self._log_state(ctx_str="Future completion", futs_of_interest=set([done_fut]))
+            self._log_state(
+                ctx_str="Future completion", futs_of_interest=set([done_fut])
+            )
             wi, ctx = self._get_completed_work_item_info(fut=done_fut)
             if done_fut.exception() is not None:
                 #
@@ -758,7 +755,7 @@ class MultiprocessingPipeline:
             Anomaly(
                 kind=ANOMALY_KIND_EXCEPTION,
                 exception=InvalidStateError(msg),
-                message=msg
+                message=msg,
             )
         )
         return self._get_queued_wi()
@@ -769,14 +766,11 @@ class MultiprocessingPipeline:
             conn.close()
             del self._fut_to_pipe_conn[done_fut]
 
-    def _handle_stages_for_wi(
-        self,
-        wi: PipelineWorkItem
-    ):
+    def _handle_stages_for_wi(self, wi: PipelineWorkItem):
         if wi.cur_stage < 0 or wi.cur_stage > self.num_stages:
-            wi.append_exception(InvalidStateError(
-                f"Invalid pipeline stage next_stage={wi.cur_stage}"
-            ))
+            wi.append_exception(
+                InvalidStateError(f"Invalid pipeline stage next_stage={wi.cur_stage}")
+            )
             wi.cur_stage = self.num_stages
             self._set_wi_to_finished(wi)
             return
@@ -799,12 +793,8 @@ class MultiprocessingPipeline:
             # Work item was not submitted, not failed.
             # Ask next stage if it wants the work item.
             wi.increment_stage()
-        if (
-            not self._is_wi_still_running(wi=wi)
-            and wi.cur_stage >= self.num_stages
-        ):
+        if not self._is_wi_still_running(wi=wi) and wi.cur_stage >= self.num_stages:
             self._set_wi_to_finished(wi)
-
 
     def _pl_worker(self):
         try:
@@ -832,8 +822,7 @@ class MultiprocessingPipeline:
                     self._renew_input_queue_future()
                     all_futs.add(self._input_queue_fut)
                     done_futs, _ = concurrent.futures.wait(
-                        fs=all_futs,
-                        return_when=FIRST_COMPLETED
+                        fs=all_futs, return_when=FIRST_COMPLETED
                     )
 
                     #
@@ -899,21 +888,15 @@ class MultiprocessingPipeline:
         if stage.is_subprocess:
             if not use_second_pool:
                 fut = self._process_exec.submit(
-                    stage.perform_stage_work,
-                    stage_wi_copy,
-                    **kwargs
+                    stage.perform_stage_work, stage_wi_copy, **kwargs
                 )
             else:
                 fut = self._process_exec2.submit(
-                    stage.perform_stage_work,
-                    stage_wi_copy,
-                    **kwargs
+                    stage.perform_stage_work, stage_wi_copy, **kwargs
                 )
         else:
             fut = self._thread_exec.submit(
-                stage.perform_stage_work,
-                stage_wi_copy,
-                **kwargs
+                stage.perform_stage_work, stage_wi_copy, **kwargs
             )
 
         #
@@ -931,8 +914,7 @@ class MultiprocessingPipeline:
         wi: PipelineWorkItem,
         stage_num: int = None,
     ) -> bool:
-        """Returns True if next stage wants work item, else False.
-        """
+        """Returns True if next stage wants work item, else False."""
         if stage_num is None:
             stage_num = wi.cur_stage
         next_stage = self._stages[stage_num]
@@ -945,18 +927,12 @@ class MultiprocessingPipeline:
             wi.append_exception(ex)
             return False
 
-    def _try_submit_to_stage(
-        self,
-        wi: PipelineWorkItem
-    ) -> bool:
+    def _try_submit_to_stage(self, wi: PipelineWorkItem) -> bool:
         if not self._is_stage_for_work_item(wi=wi):
             if wi.is_failed:
                 wi.cur_stage = self.num_stages
             return False
-        fut = self._submit_to_stage(
-            stage=self._stages[wi.cur_stage],
-            wi=wi
-        )
+        fut = self._submit_to_stage(stage=self._stages[wi.cur_stage], wi=wi)
         self._log_state(ctx_str="single stage submission", futs_of_interest=set([fut]))
         wi.increment_stage()
         return True
@@ -994,31 +970,25 @@ class MultiprocessingPipeline:
         #
         conn_w: Connection = None
         conn_r: Connection = None
-        fut_w: Future = None # current stage
-        fut_r: Future = None # next stage if current stage requests pipe.
+        fut_w: Future = None  # current stage
+        fut_r: Future = None  # next stage if current stage requests pipe.
         conn_r, conn_w = multiprocessing.Pipe(duplex=False)
 
         #
         # Submit work item to writer stage.
         #
         next_stage = self._stages[wi.cur_stage]
-        fut_w = self._submit_to_stage(
-            stage=next_stage,
-            wi=wi,
-            pipe_conn=conn_w
-        )
+        fut_w = self._submit_to_stage(stage=next_stage, wi=wi, pipe_conn=conn_w)
 
         #
         # Submit work item to reader stage.
         #
         wi.increment_stage()
         next_stage = self._stages[wi.cur_stage]
-        fut_r = self._submit_to_stage(
-            stage=next_stage,
-            wi=wi,
-            pipe_conn=conn_r
+        fut_r = self._submit_to_stage(stage=next_stage, wi=wi, pipe_conn=conn_r)
+        self._log_state(
+            ctx_str="dual stage submission", futs_of_interest=set([fut_w, fut_r])
         )
-        self._log_state(ctx_str="dual stage submission", futs_of_interest=set([fut_w, fut_r]))
 
         wi.increment_stage()
 
@@ -1033,18 +1003,13 @@ class MultiprocessingPipeline:
         fut: Future
         if self._is_wi_still_running(wi=wi):
             self._log_state(
-                ctx_str="_set_wi_to_finished: wi still running",
-                only_of_interest=False
+                ctx_str="_set_wi_to_finished: wi still running", only_of_interest=False
             )
-            raise InvalidStateError(
-                f"Work item has ongoing work being tracked."
-            )
+            raise InvalidStateError(f"Work item has ongoing work being tracked.")
         with self._wi_to_fut_cond:
             fut = self._wi_to_wifut.get(wi)
             if fut is None:
-                raise InvalidStateError(
-                    f"Cannot find Future for work item."
-                )
+                raise InvalidStateError(f"Cannot find Future for work item.")
             del self._wi_to_wifut[wi]
             if _is_very_verbose_logging():
                 self._log_state(
@@ -1080,12 +1045,15 @@ class MultiprocessingPipeline:
                     self._input_queue_fut is not None
                     and not self._input_queue_fut.done()
                 ):
-                    self._input_queue_fut.set_result(
-                        self._pl_input_queue.qsize()
-                    )
+                    self._input_queue_fut.set_result(self._pl_input_queue.qsize())
         return wi_fut
 
-    def _log_state(self, ctx_str=None, futs_of_interest: set[Future]=None, only_of_interest: bool=True):
+    def _log_state(
+        self,
+        ctx_str=None,
+        futs_of_interest: set[Future] = None,
+        only_of_interest: bool = True,
+    ):
         if not _is_very_verbose_logging():
             return
         if futs_of_interest is None:
@@ -1122,13 +1090,9 @@ class MultiprocessingPipeline:
         work_item: PipelineWorkItem,
     ) -> Future:
         if work_item is None:
-            raise InvalidFunctionArgument(
-                f"work_item must be a PipelineWorkItem."
-            )
+            raise InvalidFunctionArgument(f"work_item must be a PipelineWorkItem.")
         if self._wi_to_wifut.get(work_item) is not None:
-            raise InvalidFunctionArgument(
-                f"work_item is already in the pipeline."
-            )
+            raise InvalidFunctionArgument(f"work_item is already in the pipeline.")
         return self._internal_submit(
             work_item=work_item,
         )

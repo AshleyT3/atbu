@@ -76,6 +76,7 @@ backup_restore_parameters = [
     ),
 ]
 
+
 @pytest.mark.parametrize(
     "compression_type",
     backup_restore_parameters,

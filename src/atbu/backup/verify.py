@@ -65,6 +65,7 @@ from ..common.mp_pipeline import (
     SubprocessPipelineStage,
 )
 
+
 class VerifyFile(StorageFileRetriever):
     def __init__(
         self,
@@ -121,14 +122,17 @@ class VerifyFile(StorageFileRetriever):
             #
             # Decomrpession case: decompress to temp file.
             #
-            dest_file_fd, self._temp_dest_path = tempfile.mkstemp(prefix="atbu_z_", dir=self._temp_dir, text=False)
+            dest_file_fd, self._temp_dest_path = tempfile.mkstemp(
+                prefix="atbu_z_", dir=self._temp_dir, text=False
+            )
             self._temp_dest_path = Path(self._temp_dest_path)
-            self._temp_dest_file = io.FileIO(file=dest_file_fd, mode="w+b", closefd=True)
+            self._temp_dest_file = io.FileIO(
+                file=dest_file_fd, mode="w+b", closefd=True
+            )
             # Disable default cleartext hashing because completion code will
             # perform a cleartext hashing on the final decompressed file.
             self.disable_cleartext_hashing()
             return
-
 
     def attempt_failed_cleanup(self):
         if self.local_compare_file:
@@ -168,18 +172,27 @@ class VerifyFile(StorageFileRetriever):
                 )
         else:
             self._temp_dest_file.seek(0, io.SEEK_SET)
-            self.total_cleartext_bytes = 0 # zero-out compressed size, calc decomp size.
-            cleartext_hasher = GlobalHasherDefinitions().create_hasher() # calc decomp hash.
-            with gzip.GzipFile(mode="rb", fileobj=self._temp_dest_file,) as input_file_gz:
+            self.total_cleartext_bytes = (
+                0  # zero-out compressed size, calc decomp size.
+            )
+            cleartext_hasher = (
+                GlobalHasherDefinitions().create_hasher()
+            )  # calc decomp hash.
+            with gzip.GzipFile(
+                mode="rb",
+                fileobj=self._temp_dest_file,
+            ) as input_file_gz:
                 while True:
-                    decrypted_decomp_chunk = input_file_gz.read(1024*1024*25)
+                    decrypted_decomp_chunk = input_file_gz.read(1024 * 1024 * 25)
                     if len(decrypted_decomp_chunk) == 0:
                         break
                     self.total_cleartext_bytes += len(decrypted_decomp_chunk)
                     cleartext_hasher.update_all(decrypted_decomp_chunk)
                     if self.local_compare_file is not None:
                         cur_pos = self.local_compare_file.tell()
-                        local_chunk = self.local_compare_file.read(len(decrypted_decomp_chunk))
+                        local_chunk = self.local_compare_file.read(
+                            len(decrypted_decomp_chunk)
+                        )
                         self.total_compare_bytes += len(decrypted_decomp_chunk)
                         if decrypted_decomp_chunk != local_chunk:
                             raise VerifyFailure(
@@ -266,6 +279,7 @@ class Verify:
         if self._subprocess_pipeline is not None:
             self._subprocess_pipeline.shutdown()
         try:
+
             def on_error(_, path, exc_info):
                 value = ""
                 if (
@@ -281,7 +295,9 @@ class Verify:
                 and len(self._temp_dir) > 0
                 and os.path.isdir(self._temp_dir)
             ):
-                shutil.rmtree(path=self._temp_dir, ignore_errors=False, onerror=on_error)
+                shutil.rmtree(
+                    path=self._temp_dir, ignore_errors=False, onerror=on_error
+                )
         except Exception as ex:
             logging.error(
                 f"Unhandled exception while cleaning up the verify temp folder: {self._temp_dir} ex={ex}"
