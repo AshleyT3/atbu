@@ -14,7 +14,7 @@
 r"""Common test helpers.
 """
 
-# pylint: disable=unnecessary-pass
+# pylint: disable=line-too-long
 
 from dataclasses import dataclass
 from io import SEEK_END, SEEK_SET
@@ -42,22 +42,22 @@ from libcloud.storage.drivers.azure_blobs import (
     AZURE_DOWNLOAD_CHUNK_SIZE,
     AZURE_UPLOAD_CHUNK_SIZE,
 )
-from atbu.common.constants import (
+from atbu.tools.backup.constants import (
     CRED_KEY_TYPE_ENCRYPTION,
     CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
 )
-from atbu.backup.credentials import Credential
+from atbu.tools.backup.credentials import Credential
 
 # Even for local-only tests, include chunk sizes for
 # max-related potential edge cases.
-from atbu.backup.storage_interface.base import (
+from atbu.tools.backup.storage_interface.base import (
     DEFAULT_CHUNK_DOWNLOAD_SIZE,
     DEFAULT_CHUNK_UPLOAD_SIZE,
 )
 
-from atbu.backup.config import AtbuConfig
+from atbu.tools.backup.config import AtbuConfig
 
-from atbu.backup.creds_cmdline import handle_credential_change
+from atbu.tools.backup.creds_cmdline import handle_credential_change
 from atbu.common.exception import InvalidStateError  # pylint: disable=unused-import
 
 
@@ -398,9 +398,10 @@ def directories_have_no_matches_by_path(di1: DirInfo, di2: DirInfo):
 
 
 def extract_dir_info_from_verify_log(output_lines: list[str]):
+    # pylint: disable=line-too-long
     result = DirInfo()
     # Example:
-    # VerifyFile: path=C:\Users\User\AppData\Local\Temp\pytest-of-User\pytest-50\test_verify_compare_local0\SourceDataDir\TestFile-001.bin backup_size=8851403 verified_bytes=8851403 backup_sha256=6966b71902f13743558bd571ed6e6091f2e11f998fcbb4bb28a94959c81ef1cd verify_sha256=6966b71902f13743558bd571ed6e6091f2e11f998fcbb4bb28a94959c81ef1cd
+    # VerifyFile: path=<path_name_here> backup_size=8851403 verified_bytes=8851403 backup_sha256=<digest_here> verify_sha256=<digest_here>
     re_extract = re.compile(
         r".*VerifyFile:\s+path=([^\s]+)\s+backup_size=(\d+)\s+verify_size=(\d+)\s+backup_modified=([^\s]+)\s+backup_sha256=([^\s]+)\s+verify_sha256=([^\s]+).*"
     )

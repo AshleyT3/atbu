@@ -50,7 +50,7 @@ from pytest import (
     ExitCode,
 )
 
-from atbu.common.constants import (
+from atbu.tools.backup.constants import (
     CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD,
     CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION,
     CONFIG_PASSWORD_TYPE_FILENAME,
@@ -60,14 +60,9 @@ from atbu.common.constants import (
     CRED_KEY_TYPE_ENCRYPTION,
     CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
 )
-from atbu.backup.config import AtbuConfig
+from atbu.tools.backup.config import AtbuConfig
 
-from atbu.backup.storage_interface.base import StorageInterfaceFactory
-
-from atbu.backup.credentials import Credential
-from atbu.backup.creds_cmdline import (
-    handle_credential_change,
-)  # pylint: disable=unused-import
+from atbu.tools.backup.storage_interface.base import StorageInterfaceFactory
 
 # pylint: disable=unused-import
 from .secrets import (

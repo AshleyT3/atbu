@@ -33,7 +33,7 @@ from pytest import (
 )
 import pytest
 
-from atbu.backup.config import AtbuConfig
+from atbu.tools.backup.config import AtbuConfig
 
 from .common_helpers import (
     create_test_data_directory_minimal,

@@ -11,9 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+r"""E2E tests for persistent file information.
+"""
 
 # pylint: disable=unnecessary-pass
 # pylint: disable=unused-import,wrong-import-position
+# pylint: disable=line-too-long
 
 from asyncio import InvalidStateError
 from collections import namedtuple
@@ -25,12 +28,6 @@ import re
 import string
 from typing import Any
 import logging
-
-from atbu.common.constants import (
-    ATBU_PERSIST_TYPE_PER_BOTH,
-    ATBU_PERSIST_TYPE_PER_DIR,
-    ATBU_PERSIST_TYPE_PER_FILE,
-)
 
 LOGGER = logging.getLogger(__name__)
 import pytest
@@ -46,19 +43,21 @@ from pytest import (
     ExitCode,
 )
 
-# import pdb; pdb.set_trace()
-# import pdb; pdb.set_trace()
-from atbu.common.command_line import main
-from atbu.common.file_info import (
+from atbu.tools.backup.global_hasher import GlobalHasherDefinitions
+from atbu.tools.backup.constants import (
+    ATBU_PERSIST_TYPE_PER_BOTH,
+    ATBU_PERSIST_TYPE_PER_DIR,
+    ATBU_PERSIST_TYPE_PER_FILE,
+)
+from atbu.tools.persisted_info.file_info import (
     ATBU_PERSISTENT_INFO_EXTENSION,
     FileInformation,
     FileInformationPersistent,
 )
-from atbu.common.hasher import DEFAULT_HASH_ALGORITHM, GlobalHasherDefinitions
-from atbu.persisted_info.database import (
+from atbu.tools.persisted_info.database import (
     FileInformationDatabaseCollection,
-    FileInformationDatabase,
 )
+
 from .common_helpers import run_atbu
 
 SIZE_1MB = 1024 * 1024
@@ -176,7 +175,7 @@ AddedFileInfoDetailed = namedtuple(
 output_extraction_definitions: list[OutputExtractionDefinition] = [
     OutputExtractionDefinition(
         name="UpdatedFileInfo",
-        # Example: Updated info: path=C:\Users\TestUser\AppData\Local\Temp\pytest-of-TestUser\pytest-67\test_diff0\LocationA\Folder1\Folder1File1-SIZE_BINARY_CONTENTS_1.bin sha256=c675a38c212c8bfa4da21923380bfceb4713f88f71e13aceb705f33f98bcfe63
+        # Example: Updated info: path=<path_name_here> sha256=<digest_here>
         regex=re.compile(
             f".*The.*file info was updated: path=([^\\s]+)\\s+([^=]+)=([0-9a-fA-F]+).*"
         ),
@@ -184,7 +183,7 @@ output_extraction_definitions: list[OutputExtractionDefinition] = [
     ),
     OutputExtractionDefinition(
         name="AddedFileInfo",
-        # Example: Updated info: path=C:\Users\TestUser\AppData\Local\Temp\pytest-of-TestUser\pytest-67\test_diff0\LocationA\Folder1\Folder1File1-SIZE_BINARY_CONTENTS_1.bin sha256=c675a38c212c8bfa4da21923380bfceb4713f88f71e13aceb705f33f98bcfe63
+        # Example: Updated info: path=<path_name_here> sha256=<digest_here>
         regex=re.compile(
             f".*The.*file info was added: path=([^\\s]+)\\s+([^=]+)=([0-9a-fA-F]+).*"
         ),
@@ -192,7 +191,7 @@ output_extraction_definitions: list[OutputExtractionDefinition] = [
     ),
     OutputExtractionDefinition(
         name="UpToDateFileInfo",
-        # Example: Updated info: path=C:\Users\TestUser\AppData\Local\Temp\pytest-of-TestUser\pytest-67\test_diff0\LocationA\Folder1\Folder1File1-SIZE_BINARY_CONTENTS_1.bin sha256=c675a38c212c8bfa4da21923380bfceb4713f88f71e13aceb705f33f98bcfe63
+        # Example: Updated info: path=<path_name_here> sha256=<digest_here>
         regex=re.compile(
             f".*The.*file info was up to date: path=([^\\s]+)\\s+([^=]+)=([0-9a-fA-F]+).*"
         ),
@@ -200,7 +199,7 @@ output_extraction_definitions: list[OutputExtractionDefinition] = [
     ),
     OutputExtractionDefinition(
         name="AddedFileInfoDetailed",
-        # Example: Adding file information to results: path=C:\\Users\\TestUser\\AppData\\Local\\Temp\\pytest-of-TestUser\\pytest-5\\test_diff0\\LocationA\\Folder1\\Folder1File1-SIZE_BINARY_CONTENTS_1.bin\nconfig_path=C:\\Users\\TestUser\\AppData\\Local\\Temp\\pytest-of-TestUser\\pytest-5\\test_diff0\\LocationA\\Folder1\\Folder1File1-SIZE_BINARY_CONTENTS_1.bin.atbu\ninfo_current...\n  sizeinbytes=1048576\n  lastmodified=2022/03/28-00:17:40\n  sha256=c675a38c212c8bfa4da21923380bfceb4713f88f71e13aceb705f33f98bcfe63\ninfo_history...\n  INFO.0000:\n    sizeinbytes=1048576\n    lastmodified=2022/03/28-00:17:40\n    sha256=c675a38c212c8bfa4da21923380bfceb4713f88f71e13aceb705f33f98bcfe63'
+        # Example: Adding file information to results: path=<path_name_here>\nconfig_path=<path_name_here>\ninfo_current...\n  sizeinbytes=1048576\n  lastmodified=2022/03/28-00:17:40\n  sha256=<digest_here>\ninfo_history...\n  INFO.0000:\n    sizeinbytes=1048576\n    lastmodified=2022/03/28-00:17:40\n    sha256=<digest_here>'
         regex=re.compile(
             f".*The.*file info was added:"
             f".*path=([^\\s]+).*\n.*config_path=([^\\s]+).*\n.*info_current.*\n.*sizeinbytes=(\\d+).*\n.*lastmodified=([^\\s]+).*\n.*\\s([^\\s=]+)=([0-9a-zA-Z]+).*\n.*info_history.*"
@@ -397,7 +396,7 @@ def is_digest_in_output(digest: str, output_lines: list[str]):
 
 def verify_specific_layout_validated(specific_layout: SpecificLayout):
     for sle in specific_layout:
-        assert sle.validated == True
+        assert sle.validated
 
 
 def verify_output_file_hash_info(

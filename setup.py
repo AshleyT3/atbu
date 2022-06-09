@@ -30,7 +30,7 @@ setuptools.setup(
         "efforts to manage file integrity, duplication, and bitrot detection."
     ),
     entry_points = {
-        'console_scripts': ['atbu=atbu.common.command_line:main']
+        'console_scripts': ['atbu=atbu.tools.backup.command_line:main']
     },
     long_description="""
 ATBU Backup & Persistent File Information is a local/cloud backup/restore
@@ -59,6 +59,8 @@ Documentation: https://atbu.readthedocs.io/en/latest/
     packages=setuptools.find_packages(where="src"),
     python_requires=">=3.9",
     install_requires=[
+        "atbu-common-pkg >= 0.0.1",
+        "atbu-mp-pipeline-pkg >= 0.0.1",
         "cryptography >= 36.0.2",
         "pwinput >= 1.0.2",
         "keyring >= 23.5.0",
