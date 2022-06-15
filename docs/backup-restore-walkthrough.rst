@@ -1,3 +1,5 @@
+.. _cloud-and-local-backup:
+
 |PROJNAME| Cloud and Local Backup/Restore Getting Started
 =========================================================
 
@@ -723,6 +725,8 @@ You can see from the above that incremental plus detected the changed file's con
 Note in the above that |PROJNAME| also has Incremental Plus Bitrot Detection on by default, which causes it to flag an error if it detects suspicious, potentially sneaky file modifications. |PROJNAME| still backs up the file, but at the same time it also produces an error to alert you to the potential. If you do not wish for |PROJNAME| to emit an error, you can use --no-detect-bitrot which will have |PROJNAME| output only an informational message about the potential.
 
 As mentioned, even when |PROJNAME| detects the the potential issue, it continues to back up the file, assuming the change is intentional. Since all backup history is retained, you still have the original backed up if you end up considering this more recent backup to be bitrot or some other undesried sneaky change.
+
+.. _exporting-backup-config:
 
 Exporting your backup config/private key
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

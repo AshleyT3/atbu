@@ -12,27 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 r"""Credential-related classes.
-- CredentialByteArray: Uses byte_array so cred can be zero'ed out afterwards as
-  a form of cleanup. Any such efforts at cleanup are *not* security for several
-  good reasons, one of which is that CredentialByteArray is not the only party
-  handling secrets, where some others such as the cryptography/keyring packages
-  use bytes immutable so do not allow, from Python perspective, the zero'ing
-  out the memory area they populate with keys/passwords.
-- A best effort toward minimizing the time frame when secrets are exposed would be
-  to have all parties handling secrets to use a "SecureByteArray" of sorts, which
-  would allow memory locking, enforce clearing at cleanup, etc. Stil, None of
-  that would remove the need to keep the machine/process secure, but would merely
-  minimize the issue caused by immutables which themselves may well leave secrets
-  lying around for much longer time periods, if not spreading copies around beyond
-  some original.
-- Therefore, to achieve security when using a Python process that handles secrets
-  in the clear at *any* time for *however* long a duration, the machine and process
-  space must be kept clear of threats.
+
+    CredentialByteArray: Uses byte_array so cred can be zero'ed out afterwards as
+    a form of cleanup. Any such efforts at cleanup are *not* security for several
+    good reasons, one of which is that CredentialByteArray is not the only party
+    handling secrets, where some others such as the cryptography/keyring packages
+    use bytes immutable so do not allow, from Python perspective, the zero'ing
+    out the memory area they populate with keys/passwords.
+
+    A best effort toward minimizing the time frame when secrets are exposed would be
+    to have all parties handling secrets to use a "SecureByteArray" of sorts, which
+    would allow memory locking, enforce clearing at cleanup, etc. Stil, None of
+    that would remove the need to keep the machine/process secure, but would merely
+    minimize the issue caused by immutables which themselves may well leave secrets
+    lying around for much longer time periods, if not spreading copies around beyond
+    some original.
+
+    Therefore, to achieve security when using a Python process that handles secrets
+    in the clear at *any* time for *however* long a duration, the machine and process
+    space must be kept clear of threats.
 """
 
 import base64
 import os
-from typing import Union
+from typing import Callable, Union
 from hashlib import pbkdf2_hmac
 import keyring
 import pwinput
@@ -54,7 +57,15 @@ from .exception import (
     CredentialRequestInvalidError,
     CredentialSecretDerivationError,
 )
+from .yubikey_helpers import (
+    get_max_challenge_size,
+    is_yubikey_required,
+    is_a_yubikey_present,
+    challenge_response,
+    YubiKeyNotPressedTimeout,
+)
 
+_MAX_PASSWORD = 100
 
 class CredentialByteArray(bytearray):
     """A bytearray with override to allow zeroing out of bytearray
@@ -477,15 +488,30 @@ class Credential:
         c.set_from_bytes(cred_bytes=cred_bytes)
         return c
 
+def default_is_password_valid(password: CredentialByteArray):
+    if len(password) > _MAX_PASSWORD:
+        print(f"Your password is too long.")
+        print(f"The maximum length password is {_MAX_PASSWORD} UTF-8 encoded bytes.")
+        return False
+    return True
 
 def prompt_for_password(
-    prompt, prompt_again=None, hidden: bool = True
+    prompt,
+    prompt_again=None,
+    hidden: bool = True,
+    is_password_valid_func: Callable[[CredentialByteArray], bool] = None,
 ) -> CredentialByteArray:
+    if is_password_valid_func is None:
+        is_password_valid_func = default_is_password_valid
     pw_input_func = pwinput.pwinput if hidden else input
     while True:
-        password_attempt1 = CredentialByteArray(pw_input_func(prompt).encode())
+        password_attempt1 = CredentialByteArray(
+            pw_input_func(prompt).encode("utf-8")
+        )
         if len(password_attempt1) == 0:
             print("Blank passwords are not allowed, try again.")
+            continue
+        if not is_password_valid_func(password_attempt1):
             continue
         if not prompt_again:
             return password_attempt1
@@ -493,9 +519,74 @@ def prompt_for_password(
         if password_attempt1 == password_attempt2:
             del password_attempt2
             return password_attempt1
-        else:
-            print("The passwords did not match, try again.")
+        print("The passwords did not match, try again.")
 
+def check_yubikey_presence_with_message(display_presence_message: bool=False):
+    if not is_a_yubikey_present():
+        print(
+            f"IMPORTANT: No YubiKey was detected. "
+            f"Please insert your YubiKey before entering your password."
+        )
+        return False
+    if display_presence_message:
+        print(f"A YubiKey was detected.")
+    return True
+
+def is_password_valid_yubikey(password: CredentialByteArray):
+    if len(password) > get_max_challenge_size():
+        print(
+            f"The password you entered is {len(password)} byte when UTF-8 encoded."
+        )
+        print(
+            f"The UTF-8 encoded password cannot be larger than {get_max_challenge_size()} bytes."
+        )
+        print(
+            f"Please try a shorter password."
+        )
+        check_yubikey_presence_with_message()
+        return False
+    return check_yubikey_presence_with_message()
+
+def prompt_for_password_with_yubikey_opt(
+    prompt,
+    prompt_again = None,
+    hidden: bool = True,
+):
+    is_password_valid_func = None
+
+    while True:
+        if is_yubikey_required():
+            is_password_valid_func = is_password_valid_yubikey
+            check_yubikey_presence_with_message(
+                display_presence_message=True
+            )
+
+        password = prompt_for_password(
+            prompt=prompt,
+            prompt_again=prompt_again,
+            hidden=hidden,
+            is_password_valid_func=is_password_valid_func,
+        )
+
+        if not is_yubikey_required():
+            break
+
+        try:
+            print(f"Press your key now to allow challenge/response...")
+            password = CredentialByteArray(
+                challenge_response(
+                    challenge=password
+                )
+            )
+            break
+        except YubiKeyNotPressedTimeout as ex:
+            print(f"You did not press your key in time. Please try again.")
+        except OSError as ex:
+            if is_a_yubikey_present():
+                raise
+            print(f"The YubiKey is no longer present.")
+
+    return password
 
 def get_base64_password_from_keyring(
     service_name: str,
@@ -569,8 +660,8 @@ def unlock_credential(credential: Credential):
         else:
             attempts = 5
             while True:
-                password = prompt_for_password(
-                    prompt="Enter a password for this backup:"
+                password = prompt_for_password_with_yubikey_opt(
+                    prompt="Enter the password for this backup:"
                 )
                 credential.set(password=password)
                 try:

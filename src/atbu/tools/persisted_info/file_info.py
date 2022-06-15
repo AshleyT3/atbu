@@ -278,14 +278,17 @@ class FileInformationPersistent(FileInformation):
     """Like FileInformation, instances of FileInformationPersistent
     represent information about a file, but are instances that represent
     file information as obtained from one of several mechanisms...
-        - Originally, the information is likely obtained from a file
-          within a file system.
-        - The original information can be stored in per-file .atbu file
-          information files, where it can be later retrieved for use in
-          comparing with other files or even with its own current state.
-        - The original information can also be stored in a file information
-          database (json db) where it can be compared with either another
-          json db or a live file system.
+
+        Originally, the information is likely obtained from a file
+        within a file system.
+
+        The original information can be stored in per-file .atbu file
+        information files, where it can be later retrieved for use in
+        comparing with other files or even with its own current state.
+
+        The original information can also be stored in a file information
+        database (json db) where it can be compared with either another
+        json db or a live file system.
 
     In all the above cases, once information is retrieved, whether from
     the file system, a json db, or a .atbu file information file, the

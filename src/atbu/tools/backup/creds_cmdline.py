@@ -35,7 +35,7 @@ from .config import (
 from .credentials import (
     Credential,
     CredentialByteArray,
-    prompt_for_password,
+    prompt_for_password_with_yubikey_opt,
     set_password_to_keyring,
 )
 from .storage_interface.base import (
@@ -268,7 +268,7 @@ You have chosen to require a password before a backup/restore can begin which re
 to enter a password.
 """
         )
-        password = prompt_for_password(
+        password = prompt_for_password_with_yubikey_opt(
             prompt="Enter a password for this backup:",
             prompt_again="Enter a password for this backup again:",
         )

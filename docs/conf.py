@@ -10,10 +10,36 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
-# import os
-# import sys
-# sys.path.insert(0, os.path.abspath('.'))
 
+import os
+import pathlib
+import subprocess
+
+our_dir = pathlib.Path(__file__).parent
+#sys.path.insert(0, (our_dir / "src/atbu/tools").resolve().as_posix())
+
+static_subdir = our_dir / "_static"
+static_subdir.mkdir(exist_ok=True)
+
+# Remove apidocs/* files created by sphinx-apidoc which are not needed.
+# This avoids warnings without the need to insert :orhpan:.
+apidocs_subdir = our_dir / "apidocs"
+
+apidoc_to_remove = [
+    "modules.rst",
+    "atbu.rst",
+]
+
+for tr in apidoc_to_remove:
+    tr_path = apidocs_subdir / tr
+    if tr_path.exists():
+        tr_path.unlink()
+
+# Detect if we are running on read the docs
+is_running_on_rtd = os.environ.get('READTHEDOCS', '').lower() == 'true'
+if is_running_on_rtd:
+    cmd = "sphinx-apidoc -d 4 ../src/atbu -o apidocs/ --implicit-namespaces"
+    subprocess.call(cmd, shell=True)
 
 # -- Project information -----------------------------------------------------
 
@@ -32,8 +58,15 @@ release = '0.001'
 # ones.
 extensions = [
     'sphinx.ext.autodoc',
-    'sphinx.ext.autosummary'
+    'sphinx.ext.napoleon',
+    'sphinx.ext.autosummary',
+    'myst_parser',
 ]
+
+source_suffix = {
+    ".rst": "restructuredtext",
+    ".md": "markdown",
+}
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -59,10 +92,9 @@ html_theme_options = {
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
-#rst_epilog = """
-#.. |PKGNAME| replace:: tryhthis
-#.. |PROJNAME| replace:: ATBU
-#"""
+html_css_files = [
+    'css/custom.css',
+]
 
 def ultimateReplace(app, docname, source):
     result = source[0]

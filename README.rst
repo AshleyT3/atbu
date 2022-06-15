@@ -6,7 +6,7 @@ TL;DR: |PROJNAMELONG| is a local/cloud backup/restore command-line utility with 
 
 Documentation: https://atbu.readthedocs.io/en/latest/
 
-The following is included at the documentation link above.
+The following is a subset of the documentation at the link above.
 
 .. contents:: **Contents**
     :depth: 3
@@ -43,6 +43,7 @@ Highlights
    * View listings and information of backups.
    * Optionally utilize **SHA256-based de-duplication capabilities.** (Incremental Plus and Increment Plus with de-duplication)
    * **Encryption/decryption keys are completely under your control.**
+   * Support for YubiKey HMAC-SHA1 backup encryption key protection.
    * Some perhaps useful technical details:
       * **Uses libcloud** so can likely easily be configured for at least some libcloud storage providers (currently tested for Azure Storage and Google Cloud Storage).
       * Uses **multipart uploads** and will keep trying to upload "forever" until you make it stop so goal is for it to be resilient to network disconnections/disruptions.

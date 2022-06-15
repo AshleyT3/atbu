@@ -418,9 +418,13 @@ class SpecificBackupInformation:
     method for more details.
 
     General structure/schema:
-        * List of BackupFileInformation in memory or saved to an ATBU backup information file.
-        * Can hold information for one or more backups (even though below saves for one backup).
-        * Layout:
+
+        List of BackupFileInformation in memory or saved to an ATBU backup information file.
+
+        Can hold information for one or more backups (even though below saves for one backup).
+
+        Layout::
+
             {
                 "name": "ATBU Backup Information",
                 "version": "0.1",
@@ -435,6 +439,7 @@ class SpecificBackupInformation:
 
                 }
             }
+
     """
 
     def __init__(
@@ -589,20 +594,22 @@ class BackupInformationDatabase:
         self,
         cur_fi: BackupFileInformation,
     ) -> tuple[bool, BackupFileInformation]:
-        """So-called sneaky corruption is when the the prior
-        backup for the same path location as cur_fi has the
-        same date/time and size, but the digests are different.
-        In such a case, the file content has been modified
-        while its date/time and size have not changed. This
-        could be bitrot or a normal/malicious program updating
-        the modified date/time after changing file content.
-        Return tuple as follows:
-            (is_potential, BackupFileInformation)
-        where
-            is_potential is True if there is potential sneaky
-                corruption, else False.
-            BackupFileInformation is the prior backup for the
-                same path location as cur_fi.
+        """So-called sneaky corruption is when the the prior backup for the same
+        path location as cur_fi has the same date/time and size, but the digests
+        are different. In such a case, the file content has been modified while
+        its date/time and size have not changed. This could be bitrot or a
+        normal/malicious program updating the modified date/time after changing
+        file content.
+
+        Args:
+            cur_fi (BackupFileInformation): The file info whose location will be
+                used to find existing sneaky corruption info.
+
+        Returns:
+            tuple[bool, BackupFileInformation]: Tuple (is_potential,
+                BackupFileInformation) where is_potential is True if there is
+                potential sneaky corruption, else False. BackupFileInformation
+                is the prior backup for the same path location as cur_fi.
         """
         # Get change state for same path location.
         is_changed, existing_fi = self.get_file_date_size_modified_state(cur_fi=cur_fi)
@@ -1719,15 +1726,18 @@ class BackupFile(ProcessThreadContextMixin):
 
 class BackupResultsManager:
     """BackupResultsManager performs the following duties:
-        * The constructor establishes the specific name of the backup,
-          which includes UTC start time.
-        * This BackupResultsManager accepts results from BackupFile
-          Future instances as they complete.
-        * This BackupResultsManager periodically uses SpecificBackupInformation
-          to save the results to a temp file.
-        * After backup completes, this BackupResultsManager finalizes the
-          results (aka backup information) by using SpecificBackupInformation
-          to save the final results (tmp to non-tmp file).
+        The constructor establishes the specific name of the backup, which
+        includes UTC start time.
+
+        This BackupResultsManager accepts results from BackupFile Future
+        instances as they complete.
+
+        This BackupResultsManager periodically uses SpecificBackupInformation
+        to save the results to a temp file.
+
+        After backup completes, this BackupResultsManager finalizes the results
+        (aka backup information) by using SpecificBackupInformation to save the
+        final results (tmp to non-tmp file).
     """
 
     BACKUP_INFORMATION_SAVE_INTERVAL_SECONDS = 60

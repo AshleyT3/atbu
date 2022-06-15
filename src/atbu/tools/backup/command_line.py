@@ -20,6 +20,14 @@ import logging
 import multiprocessing
 from typing import Union
 
+from atbu.common.exception import (
+    exc_to_string,
+    AtbuException,
+    InvalidCommandLineArgument,
+    InvalidStateError,
+    QueueListenerNotStarted,
+    SingletonAlreadyCreated,
+)
 from atbu.mp_pipeline.mp_global import (
     deinitialize_logging,
     get_verbosity_level,
@@ -35,14 +43,7 @@ from atbu.common.hasher import (
 
 
 from .constants import *
-from .exception import (
-    AtbuException,
-    InvalidCommandLineArgument,
-    InvalidStateError,
-    QueueListenerNotStarted,
-    SingletonAlreadyCreated,
-    exc_to_string,
-)
+from .exception import YubiKeyBackendNotAvailableError
 from .global_hasher import GlobalHasherDefinitions
 from .backup_core import (
     BACKUP_COMPRESSION_CHOICES,
@@ -53,6 +54,7 @@ from .restore import handle_restore, handle_decrypt
 from .verify import handle_verify
 from .recover import handle_recover
 from .list_items import handle_list
+from .yubikey_helpers import set_require_yubikey, setup_yubikey_infra
 from .creds_cmdline import handle_creds
 from ..persisted_info.file_info import (
     CHANGE_DETECTION_CHOICES,
@@ -167,6 +169,20 @@ def create_argparse():
         "--verbosity",
         action="count",
         help="""increase verbosity with each usage (i.e., -vv is more verbose than -v).
+""",
+    )
+    parser_common.add_argument(
+        "--yk",
+        action="store_true",
+        default=False,
+        help="""Require YubiKey HMAC-SHA1 challenge/response to access the backup encryption key.
+When this option is specified, a YubiKey with slot 2 configured for HMAC-SHA1
+challenge/response will be used/required along with your password to unlock a
+backup encryption key. This means, for a password-protected backup, you will be
+required to have your password and a YubiKey. This option is also used when
+setting up a backup for use with Yubikey. You must have a YubiKey and you must
+ensure yubikey-manager is installed (i.e., pip install yubikey-manager). See
+documentation for further details.
 """,
     )
 
@@ -1100,7 +1116,8 @@ def main(argv=None):
         logfile = args.logfile
     if hasattr(args, "loglevel"):
         loglevel = args.loglevel
-    # If no log file specified and user is creating/updating database, automatically place log file side-by-side with db.
+    # If no log file specified and user is creating/updating database,
+    # automatically place log file side-by-side with db.
     if (
         not logfile
         and hasattr(args, "func")
@@ -1125,6 +1142,21 @@ def main(argv=None):
                 verbosity_level=verbosity_level,
                 log_console_detail=log_console_detail,
             )
+
+            if hasattr(args, "yk"):
+                if not isinstance(args.yk, bool):
+                    raise InvalidStateError(f"--yk should yield a bool option.")
+                if args.yk:
+                    set_require_yubikey(is_required=args.yk)
+                    try:
+                        setup_yubikey_infra()
+                    except YubiKeyBackendNotAvailableError as ex:
+                        logging.error(
+                            f"YubiKey Manager is not installed or "
+                            f"could not be initialized."
+                        )
+                        raise
+
             exit_code = args.func(args)
             if exit_code is None:
                 exit_code = 0
@@ -1141,7 +1173,7 @@ def main(argv=None):
         except QueueListenerNotStarted:
             pass
         except Exception as ex:
-            print(f"Failure during stop_global_queue_listener. {exc_to_string(ex)}")
+            print(f"Failure during deinitialize_logging. {exc_to_string(ex)}")
     logging.debug(f"{ATBU_PROGRAM_NAME} exit_code={exit_code}")
     return exit_code
 
