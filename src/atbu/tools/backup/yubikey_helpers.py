@@ -15,10 +15,7 @@ r"""YubiKey helpers.
 A layer of helpers between ATBU and yubikey-manager.
 """
 
-from atbu.common.exception import (
-    exc_to_string,
-    InvalidFunctionArgument
-)
+from atbu.common.exception import exc_to_string, InvalidFunctionArgument
 
 from .exception import (
     YubiKeyBackendNotAvailableError,
@@ -28,12 +25,15 @@ from .exception import (
 _IS_YUBIKEY_REQUIRED = False
 _IS_YUBIKEY_INFRA_INIT = False
 
+
 def set_require_yubikey(is_required: bool):
     global _IS_YUBIKEY_REQUIRED
     _IS_YUBIKEY_REQUIRED = is_required
 
+
 def is_yubikey_required():
     return _IS_YUBIKEY_REQUIRED
+
 
 def setup_yubikey_infra():
     # pylint: disable=import-outside-toplevel,unused-import
@@ -46,6 +46,7 @@ def setup_yubikey_infra():
         import ykman
         import yubikit.core
         import yubikit.yubiotp
+
         _IS_YUBIKEY_INFRA_INIT = True
     except Exception as ex:
         raise YubiKeyBackendNotAvailableError(
@@ -54,10 +55,12 @@ def setup_yubikey_infra():
             f"pip install yubikey-manager. {exc_to_string(ex)}"
         ).with_traceback(ex.__traceback__) from ex
 
+
 def get_list_yubikey_devices():
     # pylint: disable=undefined-variable
     setup_yubikey_infra()
     return ykman.hid.backend.list_devices()
+
 
 def is_a_yubikey_present():
     l = get_list_yubikey_devices()
@@ -65,9 +68,11 @@ def is_a_yubikey_present():
         return False
     return len(l) > 0
 
+
 def get_max_challenge_size():
     # pylint: disable=undefined-variable
     return yubikit.yubiotp.HMAC_CHALLENGE_SIZE
+
 
 def challenge_response(
     challenge: bytes,
@@ -79,14 +84,11 @@ def challenge_response(
         raise InvalidFunctionArgument(
             f"The challenge must be {get_max_challenge_size()} bytes or less."
         )
-    with ykman.device.connect_to_device(
-        None,
-        [yubikit.core.otp.OtpConnection]
-    )[0] as c:
+    with ykman.device.connect_to_device(None, [yubikit.core.otp.OtpConnection])[0] as c:
         s = yubikit.yubiotp.YubiOtpSession(c)
         try:
             response = s.calculate_hmac_sha1(
-                slot=slot_num, # Will use CONFIG_SLOT.CHAL_HMAC_n
+                slot=slot_num,  # Will use CONFIG_SLOT.CHAL_HMAC_n
                 challenge=challenge,
             )
             return response

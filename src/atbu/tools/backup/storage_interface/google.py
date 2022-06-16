@@ -299,8 +299,7 @@ class GoogleStorageInterface(StorageInterface):
                 pos_before_xmit = stream.tell()
                 response = upload.transmit_next_chunk(session)
                 logging.debug(
-                    f"upload_stream_to_object: "
-                    f"chunk upload response={response}"
+                    f"upload_stream_to_object: " f"chunk upload response={response}"
                 )
                 logging.debug(
                     f"upload_stream_to_object: "
@@ -394,9 +393,7 @@ class GoogleStorageInterface(StorageInterface):
 
         session = self._create_session()
         session.headers["x-goog-project-id"] = self.project_name
-        url_template = (
-            "https://www.googleapis.com/download/storage/v1/b/{bucket}/o/{blob_name}?alt=media"
-        )
+        url_template = "https://www.googleapis.com/download/storage/v1/b/{bucket}/o/{blob_name}?alt=media"
         download_url = url_template.format(
             bucket=self.storage_def[CONFIG_VALUE_NAME_CONTAINER],
             blob_name=storage_object.name,

@@ -21,6 +21,7 @@ from atbu.common.hasher import (
 )
 from atbu.common.singleton import Singleton
 
+
 class GlobalHasherDefinitions(HasherDefinitions, metaclass=Singleton):
     _init_algos: list[str] = None
 

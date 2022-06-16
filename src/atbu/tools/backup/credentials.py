@@ -67,6 +67,7 @@ from .yubikey_helpers import (
 
 _MAX_PASSWORD = 100
 
+
 class CredentialByteArray(bytearray):
     """A bytearray with override to allow zeroing out of bytearray
     on demand or when deleted.
@@ -488,12 +489,14 @@ class Credential:
         c.set_from_bytes(cred_bytes=cred_bytes)
         return c
 
+
 def default_is_password_valid(password: CredentialByteArray):
     if len(password) > _MAX_PASSWORD:
         print(f"Your password is too long.")
         print(f"The maximum length password is {_MAX_PASSWORD} UTF-8 encoded bytes.")
         return False
     return True
+
 
 def prompt_for_password(
     prompt,
@@ -505,9 +508,7 @@ def prompt_for_password(
         is_password_valid_func = default_is_password_valid
     pw_input_func = pwinput.pwinput if hidden else input
     while True:
-        password_attempt1 = CredentialByteArray(
-            pw_input_func(prompt).encode("utf-8")
-        )
+        password_attempt1 = CredentialByteArray(pw_input_func(prompt).encode("utf-8"))
         if len(password_attempt1) == 0:
             print("Blank passwords are not allowed, try again.")
             continue
@@ -521,7 +522,8 @@ def prompt_for_password(
             return password_attempt1
         print("The passwords did not match, try again.")
 
-def check_yubikey_presence_with_message(display_presence_message: bool=False):
+
+def check_yubikey_presence_with_message(display_presence_message: bool = False):
     if not is_a_yubikey_present():
         print(
             f"IMPORTANT: No YubiKey was detected. "
@@ -532,24 +534,22 @@ def check_yubikey_presence_with_message(display_presence_message: bool=False):
         print(f"A YubiKey was detected.")
     return True
 
+
 def is_password_valid_yubikey(password: CredentialByteArray):
     if len(password) > get_max_challenge_size():
-        print(
-            f"The password you entered is {len(password)} byte when UTF-8 encoded."
-        )
+        print(f"The password you entered is {len(password)} byte when UTF-8 encoded.")
         print(
             f"The UTF-8 encoded password cannot be larger than {get_max_challenge_size()} bytes."
         )
-        print(
-            f"Please try a shorter password."
-        )
+        print(f"Please try a shorter password.")
         check_yubikey_presence_with_message()
         return False
     return check_yubikey_presence_with_message()
 
+
 def prompt_for_password_with_yubikey_opt(
     prompt,
-    prompt_again = None,
+    prompt_again=None,
     hidden: bool = True,
 ):
     is_password_valid_func = None
@@ -557,9 +557,7 @@ def prompt_for_password_with_yubikey_opt(
     while True:
         if is_yubikey_required():
             is_password_valid_func = is_password_valid_yubikey
-            check_yubikey_presence_with_message(
-                display_presence_message=True
-            )
+            check_yubikey_presence_with_message(display_presence_message=True)
 
         password = prompt_for_password(
             prompt=prompt,
@@ -573,11 +571,7 @@ def prompt_for_password_with_yubikey_opt(
 
         try:
             print(f"Press your key now to allow challenge/response...")
-            password = CredentialByteArray(
-                challenge_response(
-                    challenge=password
-                )
-            )
+            password = CredentialByteArray(challenge_response(challenge=password))
             break
         except YubiKeyNotPressedTimeout as ex:
             print(f"You did not press your key in time. Please try again.")
@@ -587,6 +581,7 @@ def prompt_for_password_with_yubikey_opt(
             print(f"The YubiKey is no longer present.")
 
     return password
+
 
 def get_base64_password_from_keyring(
     service_name: str,

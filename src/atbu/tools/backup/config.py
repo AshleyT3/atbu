@@ -86,8 +86,7 @@ def update_config_list_to_dict(items: list):
                 }
             }
         }
-
-"""
+    """
     if not isinstance(items, list):
         raise ValueError(f"The items parameter must be a list")
     if not isinstance(items[0], tuple):
@@ -233,10 +232,10 @@ def is_storage_def_name_ok(storage_def_name):
 def is_existing_filesystem_storage_path(storage_location: str):
     """An existing valid filesystem storage path has the following characteristics:
 
-        It exists as a directory.
+    It exists as a directory.
 
-        It is specified as an absolute path. (For no other reason than to ensure the user specifies
-            something explicit/clear.)
+    It is specified as an absolute path. (For no other reason than to ensure the user specifies
+        something explicit/clear.)
     """
     return os.path.isdir(storage_location) and is_absolute_path(storage_location)
 

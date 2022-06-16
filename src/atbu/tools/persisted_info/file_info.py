@@ -40,7 +40,7 @@ from atbu.common.hasher import (
 from ..backup.exception import (
     PersistentFileInfoError,
     InvalidPersistentFileInfoError,
-    PersistentFileInfoVersionMismatch
+    PersistentFileInfoVersionMismatch,
 )
 from ..backup.constants import *
 from ..backup.global_hasher import GlobalHasherDefinitions

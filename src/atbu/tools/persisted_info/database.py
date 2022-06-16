@@ -36,6 +36,7 @@ from .file_info import (
     LocationFileInfoUpdater,
 )
 
+
 class CustomEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, FileInformationPersistent):

@@ -20,10 +20,7 @@ import logging
 from ..backup.exception import *
 from ..backup.constants import *
 from .file_info import SneakyCorruptionPotential
-from .database import (
-    FileInformationDatabaseCollection,
-    extract_location_info
-)
+from .database import FileInformationDatabaseCollection, extract_location_info
 
 
 def handle_update_digests(args):

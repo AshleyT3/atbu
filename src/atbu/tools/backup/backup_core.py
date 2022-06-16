@@ -892,9 +892,8 @@ class BackupPipelineWorkItem(PipelineWorkItem):
     def __str__(self) -> str:
         the_str = super().__str__()
         return (
-            the_str
-            + f" oper={self.operation_name} is_q={self.is_qualified} "
-              f"or={self.operation_runner} path={self.file_info.path}"
+            the_str + f" oper={self.operation_name} is_q={self.is_qualified} "
+            f"or={self.operation_runner} path={self.file_info.path}"
         )
 
     def stage_complete(
@@ -1216,9 +1215,7 @@ class BackupStorageWriter(ProcessThreadContextMixin):
                             f"name={candidate_name} {exc_to_string(ex)}"
                         )
                         try:
-                            container.delete_object(
-                                candidate_name
-                            )
+                            container.delete_object(candidate_name)
                             # TODO: Track partial names that cannot be deleted
                             # for later deletion (exclude if reused during retry).
                         except Exception as ex2:
@@ -1726,18 +1723,18 @@ class BackupFile(ProcessThreadContextMixin):
 
 class BackupResultsManager:
     """BackupResultsManager performs the following duties:
-        The constructor establishes the specific name of the backup, which
-        includes UTC start time.
+    The constructor establishes the specific name of the backup, which
+    includes UTC start time.
 
-        This BackupResultsManager accepts results from BackupFile Future
-        instances as they complete.
+    This BackupResultsManager accepts results from BackupFile Future
+    instances as they complete.
 
-        This BackupResultsManager periodically uses SpecificBackupInformation
-        to save the results to a temp file.
+    This BackupResultsManager periodically uses SpecificBackupInformation
+    to save the results to a temp file.
 
-        After backup completes, this BackupResultsManager finalizes the results
-        (aka backup information) by using SpecificBackupInformation to save the
-        final results (tmp to non-tmp file).
+    After backup completes, this BackupResultsManager finalizes the results
+    (aka backup information) by using SpecificBackupInformation to save the
+    final results (tmp to non-tmp file).
     """
 
     BACKUP_INFORMATION_SAVE_INTERVAL_SECONDS = 60
@@ -2477,10 +2474,7 @@ class CompressionPipelineStage(SubprocessPipelineStage):
         **kwargs,
     ):
         if _is_debug_logging():
-            logging.debug(
-                f"perform_stage_work: "
-                f"ENTER: wi={str(pwi)}"
-            )
+            logging.debug(f"perform_stage_work: " f"ENTER: wi={str(pwi)}")
         try:
             if self.is_pipe_with_next_stage and pwi.pipe_conn is None:
                 raise InvalidStateError(
@@ -3605,8 +3599,7 @@ class StorageFileRetriever(ProcessThreadContextMixin):
             )
         if self._storage_def.is_encryption_used:
             logging.info(
-                f"{'  SHA256 encrypted download ':.<45} "
-                f"{self.ciphertext_digest}"
+                f"{'  SHA256 encrypted download ':.<45} " f"{self.ciphertext_digest}"
             )
             logging.info(
                 f"{'  SHA256 encrypted original ':.<45} "

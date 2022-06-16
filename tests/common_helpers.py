@@ -17,7 +17,6 @@ r"""Common test helpers.
 # pylint: disable=line-too-long
 
 from dataclasses import dataclass
-import enum
 from io import SEEK_END, SEEK_SET
 import os
 from concurrent.futures import ProcessPoolExecutor
@@ -60,11 +59,13 @@ from atbu.tools.backup.config import AtbuConfig
 from atbu.tools.backup.creds_cmdline import handle_credential_change
 from atbu.common.exception import InvalidStateError  # pylint: disable=unused-import
 
+
 def copy2_pacifier_patch(src, dst, *args, **kwargs):
     print(f"Copying {src} -> {dst}")
     return shutil.copy2(src=src, dst=dst, *args, **kwargs)
 
-def duplicate_tree(src_dir, dst_dir, no_pacifier: bool=False):
+
+def duplicate_tree(src_dir, dst_dir, no_pacifier: bool = False):
     src_dir = Path(src_dir)
     dst_dir = Path(dst_dir)
     assert src_dir.is_dir()
@@ -72,11 +73,8 @@ def duplicate_tree(src_dir, dst_dir, no_pacifier: bool=False):
     copy_func = copy2_pacifier_patch
     if no_pacifier:
         copy_func = shutil.copy2
-    shutil.copytree(
-        src=src_dir,
-        dst=dst_dir,
-        copy_function=copy_func
-    )
+    shutil.copytree(src=src_dir, dst=dst_dir, copy_function=copy_func)
+
 
 class TestValues:
     def __init__(self, values, some_limit) -> None:
@@ -466,17 +464,17 @@ def extract_storage_definition_and_config_file_path(
         )
     return result
 
+
 def extract_backup_names_from_log(output_lines: list[str]) -> list[str]:
     names = []
-    re_extract_backup_name = re.compile(
-        r"^\s*([^\s]+-\d{8}-\d{6})"
-    )
+    re_extract_backup_name = re.compile(r"^\s*([^\s]+-\d{8}-\d{6})")
     for line in output_lines:
         m = re_extract_backup_name.match(line)
         if m is None:
             continue
         names.append(m.groups()[0])
     return names
+
 
 @dataclass
 class LogSummaryInfo:
@@ -665,6 +663,7 @@ def create_test_data_directory_minimal(
     )
     assert num_files_created >= min_files_expected
     return num_files_created
+
 
 def create_test_data_directory_minimal_vary(
     path_to_dir: Path,
@@ -1442,11 +1441,13 @@ def validate_backup_restore(
 
     pass
 
+
 @dataclass
 class SourceDirInfo:
     total_files: int
     dir_path: Path
     restore_path: Path
+
 
 def validate_backup_restore_history(
     pytester,
@@ -1472,9 +1473,7 @@ def validate_backup_restore_history(
     ]
     last_br_info = test_backup_restore_dir_info[0]
     for i in range(1, max_history):
-        new_dir_path = source_directory.with_name(
-            name=source_directory.name + f"-{i}"
-        )
+        new_dir_path = source_directory.with_name(name=source_directory.name + f"-{i}")
         new_restore_path = source_directory.with_name(
             name=source_directory.name + f"-{i}-Restore"
         )
@@ -1491,21 +1490,19 @@ def validate_backup_restore_history(
             dir_path=new_dir_path,
             restore_path=new_restore_path,
         )
-        test_backup_restore_dir_info.append(
-            last_br_info
-        )
+        test_backup_restore_dir_info.append(last_br_info)
 
     for i, br_info in enumerate(test_backup_restore_dir_info):
         rr = run_atbu(
             pytester,
             tmp_path,
             "backup",
-            "-f" if i==0 else "-i",
+            "-f" if i == 0 else "-i",
             str(br_info.dir_path),
             storage_specifier,
             "-z",
             compression_type,
-            stdin=initial_backup_stdin if i==0 else None,
+            stdin=initial_backup_stdin if i == 0 else None,
             timeout=backup_timeout,
             log_base_name=f"backup{i}",
         )
@@ -1521,9 +1518,7 @@ def validate_backup_restore_history(
     )
     assert rr.ret == ExitCode.OK
 
-    backup_names = extract_backup_names_from_log(
-        output_lines=rr.outlines
-    )
+    backup_names = extract_backup_names_from_log(output_lines=rr.outlines)
     assert len(backup_names) == len(test_backup_restore_dir_info)
     backup_names = backup_names[::-1]
 
