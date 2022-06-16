@@ -17,6 +17,7 @@ r"""Common test helpers.
 # pylint: disable=line-too-long
 
 from dataclasses import dataclass
+import enum
 from io import SEEK_END, SEEK_SET
 import os
 from concurrent.futures import ProcessPoolExecutor
@@ -56,10 +57,26 @@ from atbu.tools.backup.storage_interface.base import (
 )
 
 from atbu.tools.backup.config import AtbuConfig
-
 from atbu.tools.backup.creds_cmdline import handle_credential_change
 from atbu.common.exception import InvalidStateError  # pylint: disable=unused-import
 
+def copy2_pacifier_patch(src, dst, *args, **kwargs):
+    print(f"Copying {src} -> {dst}")
+    return shutil.copy2(src=src, dst=dst, *args, **kwargs)
+
+def duplicate_tree(src_dir, dst_dir, no_pacifier: bool=False):
+    src_dir = Path(src_dir)
+    dst_dir = Path(dst_dir)
+    assert src_dir.is_dir()
+    assert not dst_dir.exists()
+    copy_func = copy2_pacifier_patch
+    if no_pacifier:
+        copy_func = shutil.copy2
+    shutil.copytree(
+        src=src_dir,
+        dst=dst_dir,
+        copy_function=copy_func
+    )
 
 class TestValues:
     def __init__(self, values, some_limit) -> None:
@@ -449,6 +466,17 @@ def extract_storage_definition_and_config_file_path(
         )
     return result
 
+def extract_backup_names_from_log(output_lines: list[str]) -> list[str]:
+    names = []
+    re_extract_backup_name = re.compile(
+        r"^\s*([^\s]+-\d{8}-\d{6})"
+    )
+    for line in output_lines:
+        m = re_extract_backup_name.match(line)
+        if m is None:
+            continue
+        names.append(m.groups()[0])
+    return names
 
 @dataclass
 class LogSummaryInfo:
@@ -585,6 +613,18 @@ def get_file_size_defs_02_minimal():
     ]
 
 
+def get_file_size_defs_03_minimal_vary():
+    return [
+        RandomTestValues(
+            low_count_inclusive=1,
+            high_count_inclusive=5,
+            low_inclusive=0,
+            high_inclusive=1024,
+            some_limit=1,
+        ),
+    ]
+
+
 def get_min_files_expected(file_size_defs):
     total_files = 0
     for fsd in file_size_defs:
@@ -613,6 +653,24 @@ def create_test_data_directory_minimal(
     add_files_to_existing: bool = False,
 ):
     file_size_defs = get_file_size_defs_02_minimal()
+    min_files_expected = get_min_files_expected(file_size_defs=file_size_defs)
+    assert min_files_expected > 0
+
+    num_files_created = create_test_data_directory(
+        path_to_dir=path_to_dir,
+        max_levels=5,
+        max_dirs_per_level=3,
+        per_level_file_size_def=file_size_defs,
+        add_files_to_existing=add_files_to_existing,
+    )
+    assert num_files_created >= min_files_expected
+    return num_files_created
+
+def create_test_data_directory_minimal_vary(
+    path_to_dir: Path,
+    add_files_to_existing: bool = False,
+):
+    file_size_defs = get_file_size_defs_03_minimal_vary()
     min_files_expected = get_min_files_expected(file_size_defs=file_size_defs)
     assert min_files_expected > 0
 
@@ -1382,4 +1440,114 @@ def validate_backup_restore(
                 di1=source_dir_info, di2=restore_dir_info
             )
 
+    pass
+
+@dataclass
+class SourceDirInfo:
+    total_files: int
+    dir_path: Path
+    restore_path: Path
+
+def validate_backup_restore_history(
+    pytester,
+    tmp_path,
+    max_history,
+    source_directory,
+    expected_total_files,
+    storage_specifier,
+    compression_type,
+    backup_timeout,
+    restore_timeout,
+    initial_backup_stdin=None,
+):
+    source_directory = Path(source_directory)
+    test_backup_restore_dir_info: list[SourceDirInfo] = [
+        SourceDirInfo(
+            total_files=expected_total_files,
+            dir_path=source_directory,
+            restore_path=source_directory.with_name(
+                name=source_directory.name + "-Restore"
+            ),
+        )
+    ]
+    last_br_info = test_backup_restore_dir_info[0]
+    for i in range(1, max_history):
+        new_dir_path = source_directory.with_name(
+            name=source_directory.name + f"-{i}"
+        )
+        new_restore_path = source_directory.with_name(
+            name=source_directory.name + f"-{i}-Restore"
+        )
+        duplicate_tree(
+            src_dir=last_br_info.dir_path,
+            dst_dir=new_dir_path,
+        )
+        new_dir_total_files = create_test_data_directory_minimal_vary(
+            path_to_dir=new_dir_path,
+            add_files_to_existing=True,
+        )
+        last_br_info = SourceDirInfo(
+            total_files=last_br_info.total_files + new_dir_total_files,
+            dir_path=new_dir_path,
+            restore_path=new_restore_path,
+        )
+        test_backup_restore_dir_info.append(
+            last_br_info
+        )
+
+    for i, br_info in enumerate(test_backup_restore_dir_info):
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            "backup",
+            "-f" if i==0 else "-i",
+            str(br_info.dir_path),
+            storage_specifier,
+            "-z",
+            compression_type,
+            stdin=initial_backup_stdin if i==0 else None,
+            timeout=backup_timeout,
+            log_base_name=f"backup{i}",
+        )
+        assert rr.ret == ExitCode.OK
+
+    rr = run_atbu(
+        pytester,
+        tmp_path,
+        "list",
+        storage_specifier,
+        "backup:*",
+        log_base_name=f"list-backups",
+    )
+    assert rr.ret == ExitCode.OK
+
+    backup_names = extract_backup_names_from_log(
+        output_lines=rr.outlines
+    )
+    assert len(backup_names) == len(test_backup_restore_dir_info)
+    backup_names = backup_names[::-1]
+
+    for i, br_info in enumerate(test_backup_restore_dir_info):
+        backup_name = backup_names[i]
+        with DirInfo(br_info.dir_path) as source_dir_info:
+            source_dir_info.gather_info(start_gathering_digests=True)
+            rr = run_atbu(
+                pytester,
+                tmp_path,
+                "restore",
+                storage_specifier,
+                f"backup:{backup_name}",
+                "files:*",
+                br_info.restore_path,
+                timeout=restore_timeout,
+                log_base_name=f"restore{i}-{backup_name}",
+            )
+            assert rr.ret == ExitCode.OK
+            with DirInfo(br_info.restore_path) as restore_dir_info:
+                restore_dir_info.gather_info(start_gathering_digests=True)
+                assert len(source_dir_info.file_list) == br_info.total_files
+                assert len(restore_dir_info.file_list) == br_info.total_files
+                assert directories_match_entirely_by_order(
+                    di1=source_dir_info, di2=restore_dir_info
+                )
     pass
