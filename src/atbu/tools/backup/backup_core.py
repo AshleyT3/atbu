@@ -723,7 +723,7 @@ class BackupInformationDatabase:
                 #
                 # A normcase path_without_location_root is needed for indexing below.
                 nc_path_wo_root = sb_fi.nc_path_without_root
-                # If this sb_fi needs resovling, add to "to be resolved" dict.
+                # If this sb_fi needs resolving, add to "to be resolved" dict.
                 if sb_fi.is_unchanged_since_last and sb_fi.backing_fi is None:
                     if not sb_fi.deduplication_option:
                         needs_backing_fi_dict[nc_path_wo_root].append(sb_fi)
@@ -2827,6 +2827,7 @@ class Backup:
             )
             self._unchanged_skipped_files.append(file_info)
             file_info.is_unchanged_since_last = True
+            file_info.deduplication_option = existing_fi.deduplication_option
             file_info.backing_fi = existing_fi
             self._results_mgr.extend_temp_results(file_info)
             return False
@@ -2944,6 +2945,7 @@ class Backup:
                         logging.info(f"Skipping unchanged file: {file_info.path}")
                         self._unchanged_skipped_files.append(file_info)
                         file_info.is_unchanged_since_last = True
+                        file_info.deduplication_option = existing_fi.deduplication_option
                         file_info.backing_fi = existing_fi
                         # For incremental, there is only date/size check for same path
                         # to see if there is a match. When such a match occurs, set
