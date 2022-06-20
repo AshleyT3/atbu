@@ -168,7 +168,8 @@ class GoogleStorageInterface(StorageInterface):
         super().__init__()
         self.storage_def: dict = storage_def
         self.driver_config: dict = self.storage_def[CONFIG_SECTION_DRIVER]
-        self.project_name = self.driver_config[CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT]
+        self.project_name = self.driver_config.get(CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT)
+        self.project_name_str = self.project_name if self.project_name is not None else "<none>"
         self.scoped_credentials = self._create_credential()
 
     def _create_credential(self):
@@ -258,7 +259,8 @@ class GoogleStorageInterface(StorageInterface):
     ):
         # pylint: disable=too-many-locals
         session = self._create_session()
-        session.headers["x-goog-project-id"] = self.project_name
+        if self.project_name is not None:
+            session.headers["x-goog-project-id"] = self.project_name
         url_template = (
             "https://www.googleapis.com/upload/storage/v1/b/{bucket}/o?"
             "uploadType=resumable"
@@ -279,7 +281,7 @@ class GoogleStorageInterface(StorageInterface):
             stream_final=False,
         )
         logging.debug(
-            f"Uploading: project={self.project_name} container={container.name} "
+            f"Uploading: project={self.project_name_str} container={container.name} "
             f"object={object_name}: UploadID={response.headers['X-GUploader-UploadID']} "
             f"from source_path={source_path}"
         )
