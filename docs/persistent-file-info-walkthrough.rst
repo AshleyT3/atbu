@@ -728,6 +728,7 @@ If you think of C:\\my-ext-drives-photo-inventory.json as "all of my backup data
 The above was merely to show you that you can combine multiple locations into a single .json DB for later use/diff'ing as desired. Perhaps a more effective use of offline .json DB is to save each drive in its own .json DB. Let's try that now by running these two commands...
 
 ``atbu save-db --db c:\my-D-backup-drive-inventory.json D:\MyData\``
+
 ``atbu save-db --db c:\my-E-backup-drive-inventory.json E:\MyData\``
 
 **Example...**
