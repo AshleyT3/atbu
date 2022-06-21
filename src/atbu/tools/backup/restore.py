@@ -35,6 +35,7 @@ from atbu.mp_pipeline.mp_pipeline import (
     MultiprocessingPipeline,
     SubprocessPipelineStage,
 )
+from atbu.mp_pipeline.mp_helper import wait_futures_to_regulate
 
 from .constants import (
     ATBU_FILE_BACKUP_EXTENSION,
@@ -399,6 +400,10 @@ class Restore:
                     allow_overwrite=self._allow_overwrite,
                     storage_def=self.storage_def,
                     temp_dir=self._temp_dir,
+                )
+                wait_futures_to_regulate(
+                    fs=pending_restores,
+                    max_allowed_pending=Restore.MAX_SIMULTANEOUS_FILES
                 )
                 future = self._subprocess_pipeline.submit(
                     work_item=BackupPipelineWorkItem(

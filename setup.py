@@ -59,8 +59,8 @@ Documentation: https://atbu.readthedocs.io/en/latest/
     packages=setuptools.find_namespace_packages(where="src"),
     python_requires=">=3.9",
     install_requires=[
-        "atbu-common-pkg >= 0.0.1",
-        "atbu-mp-pipeline-pkg >= 0.0.1",
+        "atbu-common-pkg >= 0.0.3",
+        "atbu-mp-pipeline-pkg >= 0.0.7",
         "cryptography >= 36.0.2",
         "pwinput >= 1.0.2",
         "keyring >= 23.5.0",

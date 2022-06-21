@@ -67,6 +67,7 @@ from atbu.mp_pipeline.mp_pipeline import (
     ThreadPipelineStage,
     PipelineWorkItem,
 )
+from atbu.mp_pipeline.mp_helper import wait_futures_to_regulate
 from atbu.common.hasher import (
     Hasher,
     DEFAULT_HASH_ALGORITHM,
@@ -2971,6 +2972,10 @@ class Backup:
                         logging.info(
                             f"Scheduling backup of file never backed up before: {file_info.path}"
                         )
+                wait_futures_to_regulate(
+                    fs=pending_backups,
+                    max_allowed_pending=Backup.MAX_SIMULTANEOUS_FILES
+                )
                 pending_backup_fut = self._subprocess_pipeline.submit(
                     work_item=BackupPipelineWorkItem(
                         operation_name=BACKUP_OPERATION_NAME_BACKUP,

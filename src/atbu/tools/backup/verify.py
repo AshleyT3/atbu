@@ -33,6 +33,7 @@ from atbu.mp_pipeline.mp_pipeline import (
     MultiprocessingPipeline,
     SubprocessPipelineStage,
 )
+from atbu.mp_pipeline.mp_helper import wait_futures_to_regulate
 from atbu.common.exception import (
     CompareBytesMistmatchError,
     InvalidStateError,
@@ -352,6 +353,10 @@ class Verify:
                     is_perform_local_compare=self.local_compare,
                     local_compare_root_location=self.local_compare_root_location,
                     temp_dir=self._temp_dir,
+                )
+                wait_futures_to_regulate(
+                    fs=pending_verifications,
+                    max_allowed_pending=Verify.MAX_SIMULTANEOUS_FILES
                 )
                 future = self._subprocess_pipeline.submit(
                     work_item=BackupPipelineWorkItem(
