@@ -26,7 +26,9 @@ import re
 from atbu.common.exception import (
     InvalidStateError,
 )
-
+from atbu.common.util_helpers import (
+    iwalk_fnmatch,
+)
 from .exception import *
 from .constants import *
 from .config import (
@@ -530,32 +532,20 @@ def get_local_file_information(
         ):
             src_dir_wc = os.path.join(src_dir_wc, "**")
 
+        # If user specified a single path/file, search dir is it's dir.
+        src_dir_to_search = src_dir_no_wc
+        if os.path.isfile(src_dir_no_wc) and src_dir_no_wc == src_dir_wc:
+            src_dir_to_search, _ = os.path.split(src_dir_no_wc)
         # Search, removing anything already found.
-        discovered = set(iglob(pathname=src_dir_wc, recursive=True)).difference(
-            all_paths
-        )
-
-        # Python glob behaves differently than Python fnmatch, where glob will
-        # ignore file names beginning with period (dot) unless specifically
-        # sought. For cases where the trailing search pattern is * or **,
-        # perform a search for ".*" to pick up dot files.
-        src_dir_wc_dot_search = None
-        src_dir_wc_parent, src_dir_wc_trailing = os.path.split(src_dir_wc)
-        if src_dir_wc_trailing == "**":
-            # Append ".*" resulting in "<parents>/**/.*".
-            src_dir_wc_dot_search = os.path.join(src_dir_wc, ".*")
-        elif src_dir_wc_trailing == "*":
-            # Replace "*" resulting in "<parents>/.*".
-            src_dir_wc_dot_search = os.path.join(src_dir_wc_parent, ".*")
-        if src_dir_wc_dot_search is not None:
-            discovered.update(
-                set(
-                    iglob(pathname=src_dir_wc_dot_search, recursive=True)
-                ).difference(all_paths)
+        discovered = set(
+            iwalk_fnmatch(
+                root_no_wildcards=src_dir_to_search,
+                fnmatch_pat=src_dir_wc,
             )
+        ).difference(all_paths)
 
         # Refine further, retaining only files which are not ignored.
-        discovered = [v for v in discovered if os.path.isfile(v) and not is_ignored(v)]
+        discovered = [v for v in discovered if not is_ignored(v)]
 
         if len(discovered) == 0:
             # Nothing left, next item.
