@@ -1869,14 +1869,11 @@ class BackupResultsManager:
                     logging.info(
                         f"SpecificBackupInformation thread stop initiated. Finishing up..."
                     )
-                while True:
-                    results_available = 0
-                    with o.lock:
-                        results_available = len(o.tmp_results)
-                    if results_available > 0:
-                        o.move_results_temp_to_final_list_and_save()
-                        continue
-                    break
+                results_available = 0
+                with o.lock:
+                    results_available = len(o.tmp_results)
+                if results_available > 0:
+                    o.move_results_temp_to_final_list_and_save()
             o.save_final_revision()
         except Exception as ex:
             logging.error(
@@ -1916,7 +1913,14 @@ class BackupResultsManager:
             logging.info(
                 f"Saving in-progress backup information: {self.backup_info_file_tmp}"
             )
+            save_start = time.perf_counter()
             self.final_results.save_to_file(path=str(self.backup_info_file_tmp))
+            save_seconds = time.perf_counter() - save_start
+            logging.info(
+                f"Saving backup information complete: "
+                f"It took {save_seconds:.3f} seconds to write "
+                f"{self.backup_info_file_tmp}"
+            )
 
     def save_final_revision(self):
         logging.info(f"Saving backup info file: {self.backup_info_file}")
