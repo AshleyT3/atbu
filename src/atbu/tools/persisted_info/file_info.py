@@ -64,6 +64,7 @@ class FileInformation:
     """Each instance represents information about a file."""
 
     FILE_READ_SIZE_5MB = 1024 * 1024 * 5
+    path_stamp_failure_warning_tracker = set()
 
     def __init__(self, path: str):
         self._implicit_refresh_allowed = True
@@ -202,7 +203,7 @@ class FileInformation:
     def primary_digest_algo_name(self) -> str:
         return GlobalHasherDefinitions().get_primary_hashing_algo_name()
 
-    def _get_date_stamp_ISO8601_with_refresh(self, posix_timestamp: float, tz=None):
+    def _get_date_stamp_ISO8601(self, posix_timestamp: float, tz=None):
         if posix_timestamp is None:
             self.refresh_stat_info()
         return FileInformation.get_datetime_stamp_ISO8601(
@@ -211,26 +212,53 @@ class FileInformation:
 
     @property
     def modified_date_stamp_ISO8601_local(self):
-        return self._get_date_stamp_ISO8601_with_refresh(
-            posix_timestamp=self._modified_time_posix
+        return self._get_date_stamp_ISO8601(
+            posix_timestamp=self.modified_time_posix
         )
 
     @property
     def modified_date_stamp_ISO8601_utc(self):
-        return self._get_date_stamp_ISO8601_with_refresh(
-            posix_timestamp=self._modified_time_posix, tz=timezone.utc
-        )
+        """Obtain a textual user-friendly ISO8601 UTC stamp.
+
+        WARNING: Caller's should only use this for debugging or easy viewing of
+        time stamps in cases where the stamps are likely to be available.
+        Python can raise OSError 22 Invalid Argument if a POSIX stamp is
+        out of a certain range. For example, 130964362929 on Windows, which
+        is within the year 6000+.
+
+        Returns:
+            str: An ISO8601 UTC stamp or an error message if a failure occurs.
+        """
+        try:
+            return self._get_date_stamp_ISO8601(
+                posix_timestamp=self.modified_time_posix, tz=timezone.utc
+            )
+        except OSError as ex:
+            if self.path not in FileInformation.path_stamp_failure_warning_tracker:
+                FileInformation.path_stamp_failure_warning_tracker.add(self.path)
+                logging.warning(
+                    f"modified_date_stamp_ISO8601_utc: "
+                    f"Failed to get ISO8601 stamp. "
+                    f"You can likely ignore this warning. "
+                    f"path={self.path}: {exc_to_string(ex)}"
+                )
+            return (
+                f"failed-for-stamp:"
+                f"errno={ex.winerror},"
+                f"msg={ex.strerror},"
+                f"mt_posix={self.modified_time_posix}"
+            )
 
     @property
     def accessed_date_stamp_ISO8601_local(self):
-        return self._get_date_stamp_ISO8601_with_refresh(
-            posix_timestamp=self._accessed_time_posix
+        return self._get_date_stamp_ISO8601(
+            posix_timestamp=self.accessed_time_posix
         )
 
     @property
     def accessed_date_stamp_ISO8601_utc(self):
-        return self._get_date_stamp_ISO8601_with_refresh(
-            posix_timestamp=self._accessed_time_posix, tz=timezone.utc
+        return self._get_date_stamp_ISO8601(
+            posix_timestamp=self.accessed_time_posix, tz=timezone.utc
         )
 
     @staticmethod
@@ -360,7 +388,7 @@ class FileInformationPersistent(FileInformation):
     def modified_date_stamp_local_cached(self) -> str:
         if "lastmodified" not in self.cached_statinfo:
             raise KeyError("lastmodified not cached yet, refresh required first.")
-        return self._get_date_stamp_ISO8601_with_refresh(
+        return self._get_date_stamp_ISO8601(
             posix_timestamp=float(self.cached_statinfo["lastmodified"]),
         )
 
@@ -374,7 +402,7 @@ class FileInformationPersistent(FileInformation):
     def modified_date_stamp_local(self) -> str:
         if "lastmodified" not in self.info_current:
             raise KeyError("lastmodified not cached yet, refresh required first.")
-        return self._get_date_stamp_ISO8601_with_refresh(
+        return self._get_date_stamp_ISO8601(
             posix_timestamp=float(self.info_current["lastmodified"]),
         )
 
