@@ -1293,9 +1293,9 @@ def parse_backup_file_preamble(preamble) -> tuple[dict, int]:
         f"<{preamble_size}s", preamble, 2
     )[0]
     preamble_dict = dict(
-        kv_pair.split("=")
+        kv_pair.split(sep="=", maxsplit=1)
         for kv_pair in preamble_string_encoded.decode().split(
-            ",", _NUM_PREAMBLE_FIELDS - 1
+            sep=",", maxsplit=_NUM_PREAMBLE_FIELDS - 1
         )
     )
     if preamble_dict.get(_PREAMBLE_FIELD_COMPRESSION) is None:
