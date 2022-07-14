@@ -711,6 +711,16 @@ class BackupInformationDatabase:
             sb_fi: BackupFileInformation
             for sb_fi in sb.all_file_info:
 
+                # The backup info file currently tracks unsuccessful backups.
+                # Do not use unsuccessful backup information for indexes.
+                # Check is_unchanged_since_last because unchanged files do not
+                # track success status given no operation occurs at time of
+                # backup though they are not failed items.
+                # TODO: Review whether or not to continue to track unnsuccessful
+                # backup file information.
+                if not sb_fi.is_successful and not sb_fi.is_unchanged_since_last:
+                    continue
+
                 #
                 # Two things performed in this 'for' ...
                 #   A) try to resolve any wanting fi using this sb_fi.
