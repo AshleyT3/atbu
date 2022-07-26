@@ -1012,10 +1012,13 @@ which there are duplicates in location B.""",
     )
     parser_savedb.add_argument(
         "locations",
-        metavar="[--per-file|--pf|--per-dir|--pd|--per-both|--pb] <location1>",
+        metavar="[per-file:|pf:|per-dir:|pd:|per-both:|pb:]|<location>",
         nargs="+",
-        help=f"""The locations whose persistent file information should be placed
-into a newly saved database file.
+        help=f"""The locations whose persistent file information should be placed into a newly
+saved database .json file. Optionally prefix any location with the desired
+file info persistence to use (default is per-dir). Note, there is a space after
+per-file:, per-dir:, and any location. For example,
+    'per-file: c:\\SomeLocationThatShouldUsePerFile'.
 """,
     )
     parser_savedb.add_argument(
