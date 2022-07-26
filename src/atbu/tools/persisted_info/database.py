@@ -85,7 +85,7 @@ def file_info_list_to_digest_dict(
         list[FileInformationPersistent]
     )
     for file_info in file_info_list:
-        digest_dict[file_info.primary_digest].append(file_info)
+        digest_dict[file_info.get_current_digest()].append(file_info)
     return digest_dict
 
 

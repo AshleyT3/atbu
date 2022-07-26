@@ -179,7 +179,7 @@ class MoveFileInformationCommand(FileInformationCommandBase):
         logging.info(
             f"Moving{self.whatif_str} {file_info.path} "
             f"---to--> "
-            f"{destination_file_path} digest={file_info.get_digest()}"
+            f"{destination_file_path} digest={file_info.get_current_digest()}"
         )
         if not whatif:
             os.makedirs(os.path.split(destination_file_path)[0], exist_ok=True)
@@ -220,7 +220,7 @@ class MoveFileInformationCommand(FileInformationCommandBase):
                 f"{file_info.path} "
                 f"---to--> "
                 f"{destination_file_path} "
-                f"digest={file_info.get_digest()}"
+                f"digest={file_info.get_current_digest()}"
             )
             logging.info(
                 f"Moving{self.whatif_str} "
@@ -253,7 +253,7 @@ class MoveFileInformationCommand(FileInformationCommandBase):
         unique_file_counter_hash_set = set()
         file_info_to_process: FileInformationPersistent
         for file_info_to_process in self.file_info_to_affect:
-            unique_file_counter_hash_set.add(file_info_to_process.get_digest())
+            unique_file_counter_hash_set.add(file_info_to_process.get_current_digest())
             self.physical_files_total += 1
             is_file_moved, is_config_file_moved = self._move_file_to_dest_path(
                 file_info_to_process,
@@ -405,7 +405,7 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
                 logging.info(
                     f"Removing{self.whatif_str} "
                     f"{file_info_to_remove.path} "
-                    f"digest={file_info_to_remove.get_digest()}"
+                    f"digest={file_info_to_remove.get_current_digest()}"
                 )
                 if not is_loaded_from_db:
                     logging.info(
@@ -433,7 +433,7 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
         unique_file_counter_hash_set = set()
         file_info_to_process: FileInformationPersistent
         for file_info_to_process in self.file_info_to_affect:
-            unique_file_counter_hash_set.add(file_info_to_process.get_digest())
+            unique_file_counter_hash_set.add(file_info_to_process.get_current_digest())
             self.physical_files_total += 1
             is_file_removed, is_config_files_removed = self._remove_file_and_file_info(
                 file_info_to_remove=file_info_to_process,
@@ -455,11 +455,11 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
 def is_file_info_list_bad_state(
     primary_hasher_name, file_info_list: list[FileInformationPersistent]
 ):
-    primary_digest = file_info_list[0].get_digest(primary_hasher_name)
+    primary_digest = file_info_list[0].get_current_digest(primary_hasher_name)
     size_in_bytes = file_info_list[0].size_in_bytes
     state_error = False
     for file_info in file_info_list[1:]:
-        other_primary_digest = file_info.get_digest(primary_hasher_name)
+        other_primary_digest = file_info.get_current_digest(primary_hasher_name)
         if primary_digest != other_primary_digest:
             logging.error(
                 f"Unexpected list state error, digest mismatch "

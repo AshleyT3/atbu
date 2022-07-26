@@ -453,7 +453,7 @@ def verify_expected_vs_actual(specific_layout: SpecificLayout, info: list):
                 assert sle.config_file_path == Path(fidf.info_data_file_path)
                 assert str(sle.file_path) == fidf.path
                 assert sle.config_file_path == Path(fidf.info_data_file_path)
-            digest = fidf.get_digest()
+            digest = fidf.get_current_digest()
             verify_output_file_hash_info(
                 output_info_list=info,
                 file_path=sle.file_path,
@@ -482,7 +482,7 @@ def verify_expected_vs_actual(specific_layout: SpecificLayout, info: list):
             assert sle.file_path.exists()
             assert sl.is_config_present(sle)
             fidf = sl.get_file_info(sle=sle, is_read=True)
-            digest = fidf.get_digest()
+            digest = fidf.get_current_digest()
             verify_output_file_hash_info(
                 output_info_list=info,
                 file_path=sle.file_path,
@@ -911,7 +911,7 @@ def test_diff_with_deleted_files(
 
     sle: SpecificLayoutEntry = locA_specific_layout[9]
     file_info = locA_specific_layout.get_file_info(sle, is_read=True)
-    the_digest = file_info.get_digest()
+    the_digest = file_info.get_current_digest()
     assert is_digest_in_output(the_digest, rr.outlines)
     sle.file_path.unlink()
     locA_specific_layout.delete_config_file(sle)
@@ -919,7 +919,7 @@ def test_diff_with_deleted_files(
 
     sle: SpecificLayoutEntry = locB_specific_layout[9]
     file_info = locB_specific_layout.get_file_info(sle, is_read=True)
-    assert the_digest == file_info.get_digest()
+    assert the_digest == file_info.get_current_digest()
     sle.file_path.unlink()
     locB_specific_layout.delete_config_file(sle)
     sle.state = STATE_DELETED

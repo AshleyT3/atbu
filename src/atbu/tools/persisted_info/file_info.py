@@ -422,7 +422,7 @@ class FileInformationPersistent(FileInformation):
             self.cached_digests is not None and hashing_algo_name in self.cached_digests
         )
 
-    def get_digest(self, hashing_algo_name=None) -> str:
+    def get_current_digest(self, hashing_algo_name=None) -> str:
         if hashing_algo_name is None:
             hashing_algo_name = (
                 GlobalHasherDefinitions().get_primary_hashing_algo_name()
@@ -509,6 +509,8 @@ class FileInformationPersistent(FileInformation):
                 f"The persistent info file version is mismatched: "
                 f"v={self.version} {self.info_data_file_path}"
             )
+        self.primary_digest = self.get_current_digest()
+
 
     def write_info_data_file(self):
         cp = self._create_config_parser()
@@ -714,7 +716,7 @@ class LocationFileInfoUpdater:
                 )
                 self.total_file_info_updated += 1
             some_updating_occurred = True
-        primary_digest = file_info.get_digest(self.primary_hasher_name)
+        primary_digest = file_info.get_current_digest(self.primary_hasher_name)
         if primary_digest is None:
             self.total_files_without_primary_digest += 1
             self.skipped_files.append(
@@ -757,7 +759,7 @@ class LocationFileInfoUpdater:
                 logging.info(f"    (time not checked)")
             if file_info.has_cached_digest():
                 logging.info(f"    cur digest={file_info.get_digest_cached()}")
-                logging.info(f"    old digest={file_info.get_digest()}")
+                logging.info(f"    old digest={file_info.get_current_digest()}")
             elif self.change_detection_type != CHANGE_DETECTION_TYPE_FORCE:
                 logging.info(f"    (digest not checked)")
             if (
@@ -769,7 +771,7 @@ class LocationFileInfoUpdater:
                     file_info.size_in_bytes_cached == file_info.size_in_bytes
                     and file_info.modified_date_stamp_local_cached
                     == file_info.modified_date_stamp_local
-                    and file_info.get_digest_cached() != file_info.get_digest()
+                    and file_info.get_digest_cached() != file_info.get_current_digest()
                 ):
                     logging.warning(
                         f"WARNING: Potential bitrot or other sneaky corruption: {file_info.path}"
@@ -781,7 +783,7 @@ class LocationFileInfoUpdater:
                             cur_size_in_bytes=file_info.size_in_bytes_cached,
                             old_modified_time=file_info.modified_date_stamp_local,
                             cur_modified_time=file_info.modified_date_stamp_local_cached,
-                            old_digest=file_info.get_digest(),
+                            old_digest=file_info.get_current_digest(),
                             cur_digest=file_info.get_digest_cached(),
                         )
                     )
@@ -798,7 +800,7 @@ class LocationFileInfoUpdater:
             logging.info(f"{self.whatif_str}Updating file info for {file_info.path}...")
             if not self.whatif:
                 file_info.refresh_info_from_phys_file(self.hasher_defs.create_hasher())
-                primary_digest = file_info.get_digest(self.primary_hasher_name)
+                primary_digest = file_info.get_current_digest(self.primary_hasher_name)
                 if self.per_file_persistence:
                     file_info.write_info_data_file()
             some_updating_occurred = True
@@ -825,7 +827,7 @@ class LocationFileInfoUpdater:
                 logging.info(
                     f"The {ATBU_PERSISTENT_INFO_EXTENSION} file info was {added_changed_str}: "
                     f"path={file_info.path} "
-                    f"{file_info.primary_digest_algo_name}={file_info.primary_digest}"
+                    f"{file_info.primary_digest_algo_name}={file_info.get_current_digest()}"
                 )
                 logging.debug(
                     f"The {ATBU_PERSISTENT_INFO_EXTENSION} file info was "
@@ -835,7 +837,7 @@ class LocationFileInfoUpdater:
                 logging.info(
                     f"The file info was {added_changed_str}: "
                     f"path={file_info.path} "
-                    f"{file_info.primary_digest_algo_name}={file_info.primary_digest}"
+                    f"{file_info.primary_digest_algo_name}={file_info.get_current_digest()}"
                 )
                 logging.debug(f"The file info was {added_changed_str}: {file_info}")
         else:
@@ -843,7 +845,7 @@ class LocationFileInfoUpdater:
                 logging.info(
                     f"The {ATBU_PERSISTENT_INFO_EXTENSION} file info was up to date: "
                     f"path={file_info.path} "
-                    f"{file_info.primary_digest_algo_name}={file_info.primary_digest}"
+                    f"{file_info.primary_digest_algo_name}={file_info.get_current_digest()}"
                 )
                 logging.debug(
                     f"The {ATBU_PERSISTENT_INFO_EXTENSION} file info was up to date: {file_info}"
@@ -852,7 +854,7 @@ class LocationFileInfoUpdater:
                 logging.info(
                     f"The file info was up to date: "
                     f"path={file_info.path} "
-                    f"{file_info.primary_digest_algo_name}={file_info.primary_digest}"
+                    f"{file_info.primary_digest_algo_name}={file_info.get_current_digest()}"
                 )
                 logging.debug(f"The file info was up to date: {file_info}")
 
