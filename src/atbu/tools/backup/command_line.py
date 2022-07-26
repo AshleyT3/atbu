@@ -18,6 +18,7 @@ r"""Main entry point, argument parsing.
 import argparse
 import logging
 import multiprocessing
+import os
 from typing import Union
 
 from atbu.common.exception import (
@@ -28,6 +29,7 @@ from atbu.common.exception import (
     QueueListenerNotStarted,
     SingletonAlreadyCreated,
 )
+from atbu.common.profile import EasyProfile
 from atbu.mp_pipeline.mp_global import (
     deinitialize_logging,
     get_verbosity_level,
@@ -183,6 +185,27 @@ required to have your password and a YubiKey. This option is also used when
 setting up a backup for use with Yubikey. You must have a YubiKey and you must
 ensure yubikey-manager is installed (i.e., pip install yubikey-manager). See
 documentation for further details.
+""",
+    )
+    parser_common.add_argument(
+        "--profile",
+        action="store_true",
+        default=False,
+        help="""Run the command with an instance of cProfile.Profile() active, capturing the
+results to file when the command completes.
+""",
+    )
+    parser_common.add_argument(
+        "--profile-stats",
+        action="store_true",
+        default=False,
+        help="""When --profile is specified, display profile stats when the command completes.
+""",
+    )
+    parser_common.add_argument(
+        "--profile-file",
+        help="""When specified, write the profile stats to the specified file name. The filename
+must not already exist.
 """,
     )
 
@@ -1077,6 +1100,29 @@ def wait_for_debugger_attach(debug_server_port: Union[str, int, list]):
             f"Unexpected error. Cannot wait for debugger attach. {exc_to_string(ex)}"
         ) from ex
 
+def process_profile_arguments(args) -> EasyProfile:
+    easy_profiler = None
+    if args.profile:
+        profile_file = None
+        profile_stats = args.profile_stats
+        if hasattr(args, "profile_file") and args.profile_file is not None:
+            if os.path.exists(args.profile_file):
+                raise InvalidCommandLineArgument(
+                    f"The --profile-file file name must not already exist: "
+                    f"file={args.profile_file}"
+                )
+            profile_file = args.profile_file
+        if not profile_stats and profile_file is None:
+            raise InvalidCommandLineArgument(
+                f"Either one or both of --profile-file / --profile-stats must be specified "
+                f"when --profile is specified."
+            )
+        easy_profiler = EasyProfile(
+            log_stats=profile_stats,
+            profile_file=profile_file
+        )
+        easy_profiler.start()
+    return easy_profiler
 
 def main(argv=None):
     multiprocessing.set_start_method("spawn")
@@ -1157,9 +1203,15 @@ def main(argv=None):
                         )
                         raise
 
+            profile = process_profile_arguments(args)
+
             exit_code = args.func(args)
             if exit_code is None:
                 exit_code = 0
+
+            if profile is not None:
+                profile.stop()
+                profile = None
         else:
             print(f"I have nothing to do. Try {ATBU_PROGRAM_NAME} -h for help.")
     except AtbuException as err:
