@@ -47,7 +47,6 @@ from .common_helpers import (
     validate_backup_restore_history,
     validate_cred_export_import,
     run_atbu,
-    directories_match_entirely_by_order,
     directories_match_entirely_by_path,
 )
 

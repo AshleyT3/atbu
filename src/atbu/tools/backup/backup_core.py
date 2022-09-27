@@ -157,9 +157,9 @@ class StorageDefinition:
                     raise ValueError(
                         f"Invalid encryption key, expecting CredentialByteArray."
                     )
-                if len(self.encryption_key) * 8 not in ALLOWED_KEY_BIT_LENGTHS:
+                if len(self.encryption_key) * 8 not in ALLOWED_AES_KEY_BIT_LENGTHS:
                     raise ValueError(
-                        f"Expecting encryption key of {ALLOWED_KEY_BIT_LENGTHS}"
+                        f"Expecting encryption key of {ALLOWED_AES_KEY_BIT_LENGTHS}"
                     )
             self._encryption_used = True
         self._container_name = container_name

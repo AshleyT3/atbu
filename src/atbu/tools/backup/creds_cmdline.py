@@ -33,7 +33,7 @@ from .config import (
     parse_storage_def_specifier,
 )
 from .credentials import (
-    Credential,
+    CredentialAesKey,
     CredentialByteArray,
     prompt_for_password_with_yubikey_opt,
     set_password_to_keyring,
@@ -49,7 +49,7 @@ def handle_credential_change(
     key_to_affect: CRED_KEY_TYPE_HINT,
     atbu_cfg: AtbuConfig,
     storage_def_name: str,
-    credential: Union[str, list, Credential],
+    credential: Union[str, list, CredentialAesKey],
     debug_mode: bool = False,
 ):
     if not storage_def_name:
@@ -110,9 +110,9 @@ def handle_credential_change(
                 f"The operation '{operation}' for the '{key_to_affect}' key is unexpected."
             )
 
-        if not isinstance(credential, Credential):
+        if not isinstance(credential, CredentialAesKey):
             raise CredentialTypeNotFoundError(
-                f"A Credential type is expected when setting the '{key_to_affect}' secret"
+                f"A CredentialAesKey type is expected when setting the '{key_to_affect}' secret"
             )
 
         if operation == CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY:
@@ -120,11 +120,11 @@ def handle_credential_change(
             if not credential.is_private_key_ready:
                 raise CredentialInvalid(
                     f"Cannot set the '{key_to_affect}' key. "
-                    f"The Credential is invalid because the "
+                    f"The CredentialAesKey is invalid because the "
                     f"private key is not immediately available"
                 )
             # Direct key storage.
-            credential_bytes = credential.get_as_bytes(include_key=True)
+            credential_bytes = credential.get_unenc_key_material_as_bytes()
             if debug_mode:
                 print(f"handle_credential_change: key={credential.the_key.hex(' ')}")
                 print(f"handle_credential_change: b={credential_bytes}")
@@ -133,16 +133,10 @@ def handle_credential_change(
             if not credential.is_private_key_possible:
                 raise CredentialInvalid(
                     f"Cannot set the '{key_to_affect}' key. "
-                    f"The Credential cannot be used to derive the "
+                    f"The CredentialAesKey cannot be used to derive the "
                     f"private key and is therefore invalid."
                 )
-            credential_bytes = credential.get_as_bytes(
-                include_work_factor=True,
-                include_salt=True,
-                include_password_auth_hash=True,
-                include_IV=True,
-                include_encrypted_key=True,
-            )
+            credential_bytes = credential.get_enc_key_material_as_bytes()
             if debug_mode:
                 if credential.the_key:
                     print(
@@ -202,7 +196,7 @@ def set_encryption_password_wizard(
     encryption_already_enabled_ok: bool = False,
     debug_mode: bool = False,
 ):
-    credential: Credential = None
+    credential: CredentialAesKey = None
     if atbu_cfg.is_storage_def_configured_for_encryption(
         storage_def_name=storage_def_name
     ):
@@ -251,7 +245,7 @@ security information (i.e., private key, related info) which you can do at any t
 
     if not credential:
         print(f"Creating key...", end="")
-        credential = Credential()
+        credential = CredentialAesKey()
         credential.create_key()
         print(f"created.")
 

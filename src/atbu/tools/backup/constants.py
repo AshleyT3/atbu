@@ -171,8 +171,8 @@ PASSWORD_TYPE_CHAR_TO_TYPE = {
     ]
 }
 
-ALLOWED_KEY_BIT_LENGTHS = [128, 192, 256]
-DEFAULT_KEY_BIT_LENGTH = 256
+ALLOWED_AES_KEY_BIT_LENGTHS = [128, 192, 256]
+DEFAULT_AES_KEY_BIT_LENGTH = 256
 # On 2021 16-core / 32-thread die, 1 million takes about .5 seconds.
 # Obviously a little longer on 2017 mobile device but still acceptable
 # given the relative infrequent need for password setup.

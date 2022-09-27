@@ -40,7 +40,7 @@ from atbu.common.util_helpers import (
 from .constants import *
 from .exception import *
 from .credentials import (
-    Credential,
+    CredentialAesKey,
     CredentialByteArray,
     get_password_from_keyring,
     get_enc_credential_from_keyring,
@@ -983,7 +983,7 @@ in this backup if you delete this configuration.
 
     def get_storage_def_encryption_credential(
         self, storage_def_name, unlock=False
-    ) -> Credential:
+    ) -> CredentialAesKey:
         storage_def_encryption_key_section = (
             self.get_storage_def_keyring_mapping_encryption_key_section(
                 storage_def_name=storage_def_name

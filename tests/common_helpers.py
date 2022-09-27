@@ -46,7 +46,7 @@ from atbu.tools.backup.constants import (
     CRED_KEY_TYPE_ENCRYPTION,
     CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
 )
-from atbu.tools.backup.credentials import Credential
+from atbu.tools.backup.credentials import CredentialAesKey
 
 # Even for local-only tests, include chunk sizes for
 # max-related potential edge cases.
@@ -893,7 +893,7 @@ def validate_cred_export_import(
         credential_orig = atbu_cfg.get_storage_def_encryption_credential(
             storage_def_name=storage_def_name.lower(), unlock=True
         )
-        credential_new = Credential()
+        credential_new = CredentialAesKey()
         credential_new.create_key()
         handle_credential_change(
             operation=CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
@@ -1067,7 +1067,7 @@ def validate_backup_recovery(
         credential_orig = atbu_cfg.get_storage_def_encryption_credential(
             storage_def_name=storage_def_name.lower(), unlock=True
         )
-        credential_new = Credential()
+        credential_new = CredentialAesKey()
         credential_new.create_key()
         handle_credential_change(
             operation=CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,

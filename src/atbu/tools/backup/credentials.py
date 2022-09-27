@@ -102,13 +102,22 @@ class CredentialByteArray(bytearray):
     def from_serialization_dict(self, hex_str):
         self.fromhex(hex_str)
 
+    @staticmethod
+    def create_from_string(the_string: str):
+        return CredentialByteArray(the_string.encode("utf-8"))
 
 class Credential:
+    """A Credential instance is one credential, which can be an encryption key or
+    any other kind of secret that can be represented as bytes.
+
+    The secret, represented by Credential.the_key, can itself be password-protected
+    using key derived by PBKDF2.
+    """
 
     attr_name_list = [
         "password",
         "salt",
-        "pbkdf2",
+        "pbkdf2_result",
         "password_auth_hash",
         "key_encryption_key",
         "iv",
@@ -125,22 +134,19 @@ class Credential:
         iv: CredentialByteArray = None,
         encrypted_key: CredentialByteArray = None,
         the_key: CredentialByteArray = None,
-        key_bit_size=DEFAULT_KEY_BIT_LENGTH,
     ) -> None:
 
-        self.password = None
-        self.salt = None
-        self.password_auth_hash = None
-        self.key_encryption_key = None
-        self.iv = None
-        self.encrypted_key = None
-        self.the_key = None
-        self.key_bit_size = None
-        self.key_byte_size = None
-        self.pbkdf2 = None
-        self.work_factor = None
+        self.password = None # The password used by PBKDF2 to derive the KEK and password auth hash.
+        self.salt = None # The salt used by PBKDF2.
+        self.password_auth_hash = None # The password auth hash resulting from PBKDF2.
+        self.key_encryption_key = None # The KEK resulting from PBKDF2.
+        self.iv = None # The IV associated with encrypting/decrypting the key.
+        self.encrypted_key = None # The encrypted (protected) key.
+        self.the_key = None # The unencrypted (unprotected) key (aka "secret").
+        self.pbkdf2_result = None # The raw PBKDF2 result.
+        self.work_factor = None # The work factor used by PBKDF2.
 
-        self.clear(key_bit_size=key_bit_size)
+        self.clear()
         self.set(
             password=password,
             salt=salt,
@@ -149,7 +155,6 @@ class Credential:
             iv=iv,
             encrypted_key=encrypted_key,
             the_key=the_key,
-            key_bit_size=key_bit_size,
         )
 
     @property
@@ -185,21 +190,12 @@ class Credential:
     def is_private_key_ready(self):
         return self.the_key is not None
 
-    def _set_key_bit_size(self, key_bit_size):
-        if key_bit_size is None or key_bit_size not in ALLOWED_KEY_BIT_LENGTHS:
-            raise ValueError(
-                f"The specified key length of '{key_bit_size} is not one of the "
-                f"available choices of {ALLOWED_KEY_BIT_LENGTHS}."
-            )
-        self.key_bit_size = key_bit_size
-        self.key_byte_size = int(key_bit_size / 8)
-
     def __del__(self):
         self.clear()
         if hasattr(super(), "__del__"):
             super().__del__()
 
-    def clear(self, key_bit_size=DEFAULT_KEY_BIT_LENGTH) -> None:
+    def clear(self) -> None:
         for member in Credential.attr_name_list:
             if hasattr(self, member) and isinstance(member, CredentialByteArray):
                 cba: CredentialByteArray = getattr(self, member)
@@ -211,9 +207,9 @@ class Credential:
         self.iv = None
         self.encrypted_key = None
         self.the_key = None
-        self.pbkdf2 = None
+        self.pbkdf2_result = None
         self.work_factor = PBKDF2_WORK_FACTOR
-        self._set_key_bit_size(key_bit_size=key_bit_size)
+        self.prepare_for_new_password()
 
     def clear_password(self):
         if self.password:
@@ -229,11 +225,7 @@ class Credential:
         iv: CredentialByteArray = None,
         encrypted_key: CredentialByteArray = None,
         the_key: CredentialByteArray = None,
-        key_bit_size=None,
     ):
-        if key_bit_size is not None:
-            self._set_key_bit_size(key_bit_size=key_bit_size)
-
         if isinstance(password, str):
             password = CredentialByteArray(password.encode())
         if password is not None:
@@ -271,72 +263,10 @@ class Credential:
                 raise ValueError("The key is not a CredentialByteArray.")
             self.the_key = the_key
 
-    def create_key(
-        self,
-        password: Union[str, CredentialByteArray] = None,
-        salt: CredentialByteArray = None,
-        iv: CredentialByteArray = None,
-        the_key: CredentialByteArray = None,
-        key_bit_size=DEFAULT_KEY_BIT_LENGTH,
-    ) -> None:
-        self.clear()
-        self._set_key_bit_size(key_bit_size=key_bit_size)
-
-        #
-        # Create a password if none was provided.
-        #
-        if not password:
-            password = CredentialByteArray(os.urandom(self.key_byte_size))
-        if isinstance(password, str):
-            password = CredentialByteArray(password.encode())
-        if not isinstance(password, CredentialByteArray):
-            raise ValueError(
-                f"The password is not either str or bytes. type={type(password)}"
-            )
-        self.password = password
-
-        #
-        # Create a salt if none was provided.
-        #
-        if not salt:
-            salt = CredentialByteArray(os.urandom(self.key_byte_size))
-        if not isinstance(salt, CredentialByteArray):
-            raise ValueError(f"The salt is not bytes. type={type(salt)}")
-        self.salt = salt
-
-        #
-        # Create an IV if none was provided.
-        #
-        if not iv:
-            iv = CredentialByteArray(os.urandom(AES_CBC_Base.BLOCK_SIZE))
-        if (
-            not isinstance(iv, CredentialByteArray)
-            or len(iv) != AES_CBC_Base.BLOCK_SIZE
-        ):
-            raise ValueError(
-                f"The salt is not {AES_CBC_Base.BLOCK_SIZE} bytes. type={type(iv)}"
-            )
-        self.iv = iv
-
-        #
-        # Create a key if none was provided.
-        #
-        if not the_key:
-            the_key = CredentialByteArray(os.urandom(self.key_byte_size))
-        else:
-            if (
-                not isinstance(the_key, CredentialByteArray)
-                or len(the_key) != self.key_byte_size
-            ):
-                raise ValueError(
-                    f"The key must be the specified length of {self.key_bit_size} bits"
-                )
-        self.the_key = the_key
-
     def prepare_for_new_password(self):
         if self.salt:
             self.salt.zero_array()
-        self.salt = CredentialByteArray(os.urandom(self.key_byte_size))
+        self.salt = CredentialByteArray(os.urandom(DEFAULT_AES_KEY_BIT_LENGTH // 8))
         if self.iv:
             self.iv.zero_array()
         self.iv = CredentialByteArray(os.urandom(AES_CBC_Base.BLOCK_SIZE))
@@ -368,7 +298,7 @@ class Credential:
             raise ValueError("A salt is required to derive the key encryption key.")
         if self.work_factor is None:
             raise ValueError("A work factor is needed for PBDKF2.")
-        self.pbkdf2 = CredentialByteArray(
+        self.pbkdf2_result = CredentialByteArray(
             pbkdf2_hmac(
                 hash_name="sha512",
                 password=self.password,
@@ -377,9 +307,11 @@ class Credential:
                 dklen=int(512 / 8),
             )
         )
-        self.key_encryption_key = self.pbkdf2.get_portion(0, self.key_byte_size)
-        password_auth_hash = self.pbkdf2.get_portion(
-            self.key_byte_size, self.key_byte_size * 2
+
+        kek_byte_size = DEFAULT_AES_KEY_BIT_LENGTH // 8
+        self.key_encryption_key = self.pbkdf2_result.get_portion(0, kek_byte_size)
+        password_auth_hash = self.pbkdf2_result.get_portion(
+            kek_byte_size, kek_byte_size * 2
         )
         return password_auth_hash
 
@@ -395,7 +327,7 @@ class Credential:
     ) -> CredentialByteArray:
 
         #
-        # In the following, we ultiamtely get everything into a textual/hex format
+        # In the following, we ultimately get everything into a textual/hex format
         # where fields are separated by the equal sign (=) and commas (,). After
         # TODO: Loop back around to encode with struct pack/unpack.
         #
@@ -453,6 +385,18 @@ class Credential:
             raise ValueError(f"Requesting no secrets.")
         return r
 
+    def get_enc_key_material_as_bytes(self):
+        return self.get_as_bytes(
+            include_work_factor=True,
+            include_salt=True,
+            include_password_auth_hash=True,
+            include_IV=True,
+            include_encrypted_key=True,
+        )
+
+    def get_unenc_key_material_as_bytes(self):
+        return self.get_as_bytes(include_key=True)
+
     def set_from_bytes(self, cred_bytes: CredentialByteArray):
         cred_dict = dict(
             kv_pair.split("=") for kv_pair in cred_bytes.decode().split(",")
@@ -486,6 +430,104 @@ class Credential:
     @staticmethod
     def create_credential_from_bytes(cred_bytes: CredentialByteArray):
         c = Credential()
+        c.set_from_bytes(cred_bytes=cred_bytes)
+        return c
+
+class CredentialAesKey(Credential):
+
+    def __init__(
+        self,
+        password: Union[str, CredentialByteArray] = None,
+        salt: CredentialByteArray = None,
+        password_auth_hash: CredentialByteArray = None,
+        key_encryption_key: CredentialByteArray = None,
+        iv: CredentialByteArray = None,
+        encrypted_key: CredentialByteArray = None,
+        the_key: CredentialByteArray = None,
+        key_bit_size=DEFAULT_AES_KEY_BIT_LENGTH,
+    ) -> None:
+        super().__init__(
+            password=password,
+            salt=salt,
+            password_auth_hash=password_auth_hash,
+            key_encryption_key=key_encryption_key,
+            iv=iv,
+            encrypted_key=encrypted_key,
+            the_key=the_key,
+        )
+        self.key_bit_size = None
+        self.key_byte_size = None
+
+        self.clear(key_bit_size=key_bit_size)
+        self.set(
+            password=password,
+            salt=salt,
+            password_auth_hash=password_auth_hash,
+            key_encryption_key=key_encryption_key,
+            iv=iv,
+            encrypted_key=encrypted_key,
+            the_key=the_key,
+            key_bit_size=key_bit_size,
+        )
+
+
+    def set(
+        self,
+        password: Union[str, CredentialByteArray] = None,
+        salt: CredentialByteArray = None,
+        password_auth_hash: CredentialByteArray = None,
+        key_encryption_key: CredentialByteArray = None,
+        iv: CredentialByteArray = None,
+        encrypted_key: CredentialByteArray = None,
+        the_key: CredentialByteArray = None,
+        key_bit_size=None,
+    ):
+        super().set(
+            password=password,
+            salt=salt,
+            password_auth_hash=password_auth_hash,
+            key_encryption_key=key_encryption_key,
+            iv=iv,
+            encrypted_key=encrypted_key,
+            the_key=the_key,
+        )
+        if key_bit_size is not None:
+            self._set_key_bit_size(key_bit_size=key_bit_size)
+
+    def clear(self, key_bit_size=DEFAULT_AES_KEY_BIT_LENGTH) -> None:
+        super().clear()
+        self._set_key_bit_size(key_bit_size=key_bit_size)
+
+    def _set_key_bit_size(self, key_bit_size):
+        if key_bit_size is None or key_bit_size not in ALLOWED_AES_KEY_BIT_LENGTHS:
+            raise ValueError(
+                f"The specified key length of '{key_bit_size} is not one of the "
+                f"available choices of {ALLOWED_AES_KEY_BIT_LENGTHS}."
+            )
+        self.key_bit_size = key_bit_size
+        self.key_byte_size = int(key_bit_size / 8)
+
+    def create_key(
+        self,
+        the_key: CredentialByteArray = None,
+        key_bit_size=DEFAULT_AES_KEY_BIT_LENGTH,
+    ) -> None:
+        self.clear(key_bit_size=key_bit_size)
+        if not the_key:
+            the_key = CredentialByteArray(os.urandom(self.key_byte_size))
+        else:
+            if (
+                not isinstance(the_key, CredentialByteArray)
+                or len(the_key) != self.key_byte_size
+            ):
+                raise ValueError(
+                    f"The key must be the specified length of {self.key_bit_size} bits"
+                )
+        self.the_key = the_key
+
+    @staticmethod
+    def create_credential_from_bytes(cred_bytes: CredentialByteArray):
+        c = CredentialAesKey()
         c.set_from_bytes(cred_bytes=cred_bytes)
         return c
 
@@ -551,7 +593,7 @@ def prompt_for_password_with_yubikey_opt(
     prompt,
     prompt_again=None,
     hidden: bool = True,
-):
+) -> CredentialByteArray:
     is_password_valid_func = None
 
     while True:
@@ -632,8 +674,8 @@ def get_base64_password_from_keyring(
     return (password_type_code, password_type, cba_password_base64)
 
 
-def unlock_credential(credential: Credential):
-    """Unlock a Credential instance which is to make its private key/secret
+def unlock_credential(credential: CredentialAesKey):
+    """Unlock a CredentialAesKey instance which is to make its private key/secret
     available in the clear. If the private key is password-protected, ask
     for a password. The result of calling this function is an unlocked
     credential or an exception.
@@ -697,7 +739,7 @@ def get_password_from_keyring(
     #
     # Caller wants direct secret in the clear.
     # Secret has been base64 decoded.
-    # Enryption secrets are persisted Credential information.
+    # Enryption secrets are persisted CredentialAesKey information.
     # To give caller direct secret, perform the following...
     #
 
@@ -705,7 +747,7 @@ def get_password_from_keyring(
         username == CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION
         and password_type == CONFIG_PASSWORD_TYPE_ACTUAL
     ):
-        credential = Credential.create_credential_from_bytes(cred_bytes=cba_password)
+        credential = CredentialAesKey.create_credential_from_bytes(cred_bytes=cba_password)
         unlock_credential(credential=credential)
         cba_password = credential.the_key
         del credential
@@ -715,11 +757,11 @@ def get_password_from_keyring(
 
 def get_enc_credential_from_keyring(
     service_name: str, username: str, unlock: bool = False
-) -> Credential:
+) -> CredentialAesKey:
 
     if username != CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION:
         raise CredentialRequestInvalidError(
-            f"A request for a Credential instance is only valid for the backup encryption secret."
+            f"A request for a CredentialAesKey instance is only valid for the backup encryption secret."
         )
 
     (
@@ -734,11 +776,11 @@ def get_enc_credential_from_keyring(
     if password_type != CONFIG_PASSWORD_TYPE_ACTUAL:
         raise CredentialTypeNotFoundError(
             f"Expected credential type={CONFIG_PASSWORD_TYPE_ACTUAL} but got {password_type_code}. "
-            f"Cannot derive Credential instance."
+            f"Cannot derive CredentialAesKey instance."
         )
 
     cba_password = CredentialByteArray(base64.b64decode(cba_password_base64))
-    credential = Credential.create_credential_from_bytes(cred_bytes=cba_password)
+    credential = CredentialAesKey.create_credential_from_bytes(cred_bytes=cba_password)
     if not credential.is_private_key_possible:
         raise CredentialInvalid(
             f"The private key is not available. The credential is invalid or corrupt."
