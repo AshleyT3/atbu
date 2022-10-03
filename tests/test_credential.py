@@ -32,7 +32,9 @@ from pytest import (
     ExitCode,
 )
 import pytest
-from atbu.tools.backup.constants import DEFAULT_AES_KEY_BIT_LENGTH
+from atbu.tools.backup.constants import (
+    DEFAULT_AES_KEY_BIT_LENGTH
+)
 
 from atbu.tools.backup.exception import (
     PasswordAuthenticationFailure,
@@ -40,7 +42,7 @@ from atbu.tools.backup.exception import (
 from atbu.tools.backup.credentials import (
     CredentialByteArray,
     Credential,
-    CredentialAesKey
+    CredentialAesKey,
 )
 
 LOGGER = logging.getLogger(__name__)

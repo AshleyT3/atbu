@@ -74,6 +74,18 @@ class CredentialInvalid(AtbuException):
         super().__init__(message=message, cause=cause)
 
 
+class CredentialSetInvalid(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+
+class CredentialStateInvalid(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+
 class CredentialNotFoundError(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
@@ -189,6 +201,12 @@ class YubiKeyBackendNotAvailableError(AtbuException):
 
 
 class YubiKeyNotPressedTimeout(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+
+class ConfigMigrationError(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)

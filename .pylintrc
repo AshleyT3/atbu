@@ -106,7 +106,7 @@ disable=raw-checker-failed,
         unnecessary-lambda,
         unnecessary-pass,
         too-many-lines,
-        broad-except
+        broad-except,
 
 
 # Enable the message, report, category or checker with the given id(s). You can

@@ -33,6 +33,7 @@ r"""Credential-related classes.
     space must be kept clear of threats.
 """
 
+from abc import ABC, abstractmethod
 import base64
 import os
 from typing import Callable, Union
@@ -50,11 +51,9 @@ from atbu.common.aes_cbc import (
 from .constants import *
 from .exception import (
     CredentialNotFoundError,
-    CredentialTypeNotFoundError,
     InvalidBase64StringError,
     PasswordAuthenticationFailure,
     CredentialInvalid,
-    CredentialRequestInvalidError,
     CredentialSecretDerivationError,
 )
 from .yubikey_helpers import (
@@ -67,6 +66,10 @@ from .yubikey_helpers import (
 
 _MAX_PASSWORD = 100
 
+def zero_bytearray(ba: bytearray):
+    for v in [0xCC, 0x55, 0x00]:
+        for i, _ in enumerate(ba):
+            ba[i] = v
 
 class CredentialByteArray(bytearray):
     """A bytearray with override to allow zeroing out of bytearray
@@ -79,9 +82,7 @@ class CredentialByteArray(bytearray):
             super().__del__()
 
     def zero_array(self):
-        for v in [0xCC, 0x55, 0x00]:
-            for i, _ in enumerate(self):
-                self[i] = v
+        zero_bytearray(self)
 
     def get_portion(self, start_pos=None, end_pos=None):
         if not start_pos:
@@ -95,6 +96,13 @@ class CredentialByteArray(bytearray):
             r[idx_r] = self[i]
             idx_r += 1
         return r
+
+    def split(self, sep, maxsplit) -> list:
+        result = []
+        for ba in super().split(sep=sep, maxsplit=maxsplit):
+            result.append(CredentialByteArray(ba))
+            zero_bytearray(ba)
+        return result
 
     def to_serialization_dict(self) -> dict:
         return self.hex()
@@ -134,7 +142,10 @@ class Credential:
         iv: CredentialByteArray = None,
         encrypted_key: CredentialByteArray = None,
         the_key: CredentialByteArray = None,
+        **kwargs,
     ) -> None:
+
+        super().__init__(**kwargs)
 
         self.password = None # The password used by PBKDF2 to derive the KEK and password auth hash.
         self.salt = None # The salt used by PBKDF2.
@@ -187,6 +198,16 @@ class Credential:
         return True
 
     @property
+    def is_password_protected(self):
+        """True if the credential is protected by a password, False if not
+        protected by a password. This property indications protection regardless
+        of whether or not the key is currently unprotected (i.e., user already
+        entered password, key already decrypted). This property therefore reflects
+        generally whether or not the crednetial is password protected.
+        """
+        return self.password is not None or self.encrypted_key is not None
+
+    @property
     def is_private_key_ready(self):
         return self.the_key is not None
 
@@ -209,7 +230,7 @@ class Credential:
         self.the_key = None
         self.pbkdf2_result = None
         self.work_factor = PBKDF2_WORK_FACTOR
-        self.prepare_for_new_password()
+        self.clear_password_protection()
 
     def clear_password(self):
         if self.password:
@@ -231,6 +252,8 @@ class Credential:
         if password is not None:
             if not isinstance(password, CredentialByteArray):
                 raise ValueError("The password is not a CredentialByteArray.")
+            if self.iv is None or self.salt is None:
+                self.prepare_for_new_password()
             self.password = password
 
         if salt is not None:
@@ -264,12 +287,29 @@ class Credential:
             self.the_key = the_key
 
     def prepare_for_new_password(self):
+        self.clear_password_protection()
+        self.salt = CredentialByteArray(os.urandom(DEFAULT_AES_KEY_BIT_LENGTH // 8))
+        self.iv = CredentialByteArray(os.urandom(AES_CBC_Base.BLOCK_SIZE))
+
+    def clear_password_protection(self):
         if self.salt:
             self.salt.zero_array()
-        self.salt = CredentialByteArray(os.urandom(DEFAULT_AES_KEY_BIT_LENGTH // 8))
         if self.iv:
             self.iv.zero_array()
-        self.iv = CredentialByteArray(os.urandom(AES_CBC_Base.BLOCK_SIZE))
+        if self.password:
+            self.password.zero_array()
+        if self.password_auth_hash:
+            self.password_auth_hash.zero_array()
+        if self.key_encryption_key:
+            self.key_encryption_key.zero_array()
+        if self.encrypted_key:
+            self.encrypted_key.zero_array()
+        self.salt = None
+        self.iv = None
+        self.password = None
+        self.password_auth_hash = None
+        self.key_encryption_key = None
+        self.encrypted_key = None
 
     def encrypt_key(self):
         self.password_auth_hash = self._derive_key_encryption_key()
@@ -385,18 +425,6 @@ class Credential:
             raise ValueError(f"Requesting no secrets.")
         return r
 
-    def get_enc_key_material_as_bytes(self):
-        return self.get_as_bytes(
-            include_work_factor=True,
-            include_salt=True,
-            include_password_auth_hash=True,
-            include_IV=True,
-            include_encrypted_key=True,
-        )
-
-    def get_unenc_key_material_as_bytes(self):
-        return self.get_as_bytes(include_key=True)
-
     def set_from_bytes(self, cred_bytes: CredentialByteArray):
         cred_dict = dict(
             kv_pair.split("=") for kv_pair in cred_bytes.decode().split(",")
@@ -427,11 +455,44 @@ class Credential:
             else:
                 raise ValueError(f"Cannot interpret value code '{k}'.")
 
-    @staticmethod
-    def create_credential_from_bytes(cred_bytes: CredentialByteArray):
-        c = Credential()
+    def get_enc_key_material_as_bytes(self) -> CredentialByteArray:
+        return self.get_as_bytes(
+            include_work_factor=True,
+            include_salt=True,
+            include_password_auth_hash=True,
+            include_IV=True,
+            include_encrypted_key=True,
+        )
+
+    def get_unenc_key_material_as_bytes(self) -> CredentialByteArray:
+        return self.get_as_bytes(include_key=True)
+
+    def get_material_as_bytes(self) -> CredentialByteArray:
+        items_found = []
+        expected_items = 4
+        if self.salt is not None:
+            items_found.append("salt")
+        if self.iv is not None:
+            items_found.append("iv")
+        if self.password_auth_hash is not None:
+            items_found.append("password_auth_hash")
+        if self.encrypted_key is not None:
+            items_found.append("encrypted_key")
+        if len(items_found) != 0 and len(items_found) != expected_items:
+            raise CredentialInvalid(
+                f"The credential has partial password-protection settings: "
+                f"count={len(items_found)} expected={expected_items} items_found={items_found}"
+            )
+        if len(items_found) == 0:
+            return self.get_unenc_key_material_as_bytes()
+        return self.get_enc_key_material_as_bytes()
+
+    @classmethod
+    def create_credential_from_bytes(cls, cred_bytes: CredentialByteArray):
+        c = cls()
         c.set_from_bytes(cred_bytes=cred_bytes)
         return c
+
 
 class CredentialAesKey(Credential):
 
@@ -445,6 +506,7 @@ class CredentialAesKey(Credential):
         encrypted_key: CredentialByteArray = None,
         the_key: CredentialByteArray = None,
         key_bit_size=DEFAULT_AES_KEY_BIT_LENGTH,
+        **kwargs,
     ) -> None:
         super().__init__(
             password=password,
@@ -454,6 +516,7 @@ class CredentialAesKey(Credential):
             iv=iv,
             encrypted_key=encrypted_key,
             the_key=the_key,
+            **kwargs,
         )
         self.key_bit_size = None
         self.key_byte_size = None
@@ -469,7 +532,6 @@ class CredentialAesKey(Credential):
             the_key=the_key,
             key_bit_size=key_bit_size,
         )
-
 
     def set(
         self,
@@ -525,11 +587,303 @@ class CredentialAesKey(Credential):
                 )
         self.the_key = the_key
 
+
+class DescribedCredential:
+    def __init__(
+        self,
+        credential: Credential = None,
+        config_name: str = "unknown",
+        credential_name: str = "unknown",
+        credential_kind: str = "unknown",
+    ) -> None:
+        self.credential = credential
+        self.config_name = config_name
+        self.credential_name = credential_name
+        self.credential_kind = credential_kind
+
+    def get_credential_base64(self) -> CredentialByteArray:
+        return CredentialByteArray(
+            base64.b64encode(
+                self.credential.get_material_as_bytes()
+            )
+        )
+
     @staticmethod
-    def create_credential_from_bytes(cred_bytes: CredentialByteArray):
-        c = CredentialAesKey()
-        c.set_from_bytes(cred_bytes=cred_bytes)
-        return c
+    def create_from_base64(
+        config_name: str,
+        credential_name: str,
+        password_type_code: str,
+        cba_password_base64: CredentialByteArray,
+    ):
+        if len(password_type_code) == 0:
+            raise CredentialInvalid(
+                f"The stored credential is not in the expected format. "
+                f"The password type code is not present. "
+                f"config_name={config_name} credential_name={credential_name}"
+            )
+
+        if len(cba_password_base64) == 0:
+            raise CredentialInvalid(
+                f"The stored credential is not in the expected format. "
+                f"The password is not present. "
+                f"config_name={config_name} credential_name={credential_name}"
+            )
+
+        if not is_valid_base64_string(cba_password_base64):
+            raise InvalidBase64StringError(
+                f"Expected stored credential to be in base64 format."
+            )
+
+        if password_type_code[0] not in PASSWORD_KIND_CHAR_TO_KIND:
+            raise CredentialInvalid(
+                f"The stored credential is not in the expected format. "
+                f"The password type code '{password_type_code}' is unknown. "
+                f"config_name={config_name} credential_name={credential_name}"
+            )
+
+        password_type = PASSWORD_KIND_CHAR_TO_KIND[password_type_code[0]]
+
+        cba_password = CredentialByteArray(base64.b64decode(cba_password_base64))
+
+        if credential_name == CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION:
+            if password_type != CONFIG_PASSWORD_KIND_ACTUAL:
+                raise CredentialInvalid(
+                    f"The stored credential is type '{password_type}' when "
+                    f"'{CONFIG_PASSWORD_KIND_ACTUAL}' was expected."
+                )
+            credential = CredentialAesKey()
+            credential.set_from_bytes(cred_bytes=cba_password)
+        elif credential_name == CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD:
+            credential = Credential()
+            credential.set_from_bytes(cred_bytes=cba_password)
+
+        return DescribedCredential(
+            credential=credential,
+            config_name=config_name,
+            credential_name=credential_name,
+            credential_kind=password_type,
+        )
+
+
+def raw_cred_bytes_to_type_base64_cred_bytes(
+    cred_ascii_bytes: CredentialByteArray,
+) -> tuple[str, CredentialByteArray]:
+    """Get the password_type_code and raw credential from complete raw persisted
+    credential bytes. This can be further refined, is carried over to limit
+    refactor churn.
+    """
+    if not isinstance(cred_ascii_bytes, CredentialByteArray):
+        raise CredentialNotFoundError(
+            f"The credential was not found: "
+        )
+    password_parts = cred_ascii_bytes.split(b":", maxsplit=1)
+    if len(password_parts) != 2:
+        raise CredentialInvalid(
+            f"The stored credential is not in the expected two-part format."
+        )
+    password_type_code = str(password_parts[0], "utf-8")
+    cba_password_base64 = password_parts[1]
+    if password_type_code not in PASSWORD_KIND_CHAR_TO_KIND:
+        raise CredentialInvalid(
+            f"The credential is not in the expected format. "
+            f"The password type code '{password_type_code}' is unknown. "
+        )
+    password_type = PASSWORD_KIND_CHAR_TO_KIND[password_type_code]
+    return password_type, cba_password_base64
+
+
+class CredentialStoreProvider(ABC):
+
+    @abstractmethod
+    def set_cred_bytes(
+        self,
+        config_name: str,
+        credential_name: str,
+        cred_ascii_bytes: CredentialByteArray
+    ):
+        pass
+
+    @abstractmethod
+    def get_cred_bytes(self, config_name: str, credential_name: str) -> CredentialByteArray:
+        pass
+
+    @abstractmethod
+    def delete_cred_bytes(self, config_name: str, credential_name: str):
+        pass
+
+
+class CredentialStoreKeyringProvider(CredentialStoreProvider):
+
+    def set_cred_bytes(
+        self,
+        config_name: str,
+        credential_name: str,
+        cred_ascii_bytes: CredentialByteArray
+    ):
+        keyring.set_password(
+            service_name=config_name,
+            username=credential_name,
+            password=str(cred_ascii_bytes, "utf-8"),
+        )
+
+    def get_cred_bytes(
+        self,
+        config_name: str,
+        credential_name: str
+    ) -> CredentialByteArray:
+        return CredentialByteArray(
+            keyring.get_password(
+                service_name=config_name,
+                username=credential_name,
+            ).encode("utf-8")
+        )
+
+    def delete_cred_bytes(self, config_name: str, credential_name: str) -> None:
+        keyring.delete_password(
+            service_name=config_name,
+            username=credential_name,
+        )
+        pass
+
+
+_credential_provider_cls = CredentialStoreKeyringProvider
+
+
+class CredentialStore:
+
+    def __init__(self, provider: CredentialStoreProvider = None) -> None:
+        super().__init__()
+        if provider is None:
+            provider = _credential_provider_cls()
+        self.provider = provider
+
+    def set_credential(
+        self,
+        desc_cred: DescribedCredential
+    ) -> CredentialByteArray:
+        if not desc_cred.config_name:
+            raise CredentialInvalid(
+                f"Cannot store credential. The config_name must be a non-empty string."
+            )
+
+        if not desc_cred.credential_name:
+            raise CredentialInvalid(
+                f"Cannot store credential. The credential_name must be a non-empty string."
+            )
+
+        if not desc_cred.credential_kind:
+            raise CredentialInvalid(
+                f"Cannot store credential. The credential_type must be a non-empty string."
+            )
+
+        if desc_cred.credential_kind not in PASSWORD_KINDS:
+            raise CredentialInvalid(
+                f"Cannot store credential. "
+                f"The supplied password type '{desc_cred.credential_kind}' is invalid."
+            )
+
+        cba_password_base64 = desc_cred.get_credential_base64()
+        cred_ascii_bytes = CredentialByteArray(
+            f"{desc_cred.credential_kind[0]}:{str(cba_password_base64, 'utf-8')}".encode("utf-8")
+        )
+
+        # For any desired caller rollback, get the existing credential.
+        # This assumes no format and does not propagate failre to get any
+        # older credential beyond returning None.
+        cba_old: CredentialByteArray = None
+        try:
+            cba_old = self.provider.get_cred_bytes(
+                config_name=desc_cred.config_name,
+                credential_name=desc_cred.credential_name,
+            )
+        except Exception:
+            cba_old = None
+
+        self.provider.set_cred_bytes(
+            config_name=desc_cred.config_name,
+            credential_name=desc_cred.credential_name,
+            cred_ascii_bytes=cred_ascii_bytes,
+        )
+
+        return cba_old
+
+    def get_credential(self, config_name: str, credential_name: str) -> DescribedCredential:
+
+        cred_ascii_bytes = self.provider.get_cred_bytes(
+            config_name=config_name,
+            credential_name=credential_name,
+        )
+
+        (
+            password_type,
+            cba_password_base64,
+        ) = raw_cred_bytes_to_type_base64_cred_bytes(
+            cred_ascii_bytes=cred_ascii_bytes,
+        )
+
+        desc_cred = DescribedCredential.create_from_base64(
+            config_name=config_name,
+            credential_name=credential_name,
+            password_type_code=password_type,
+            cba_password_base64=cba_password_base64,
+        )
+
+        return desc_cred
+
+    def delete_credential(self, config_name: str, credential_name: str) -> None:
+        self.provider.delete_cred_bytes(
+            config_name=config_name,
+            credential_name=credential_name,
+        )
+
+
+def get_base64_password_from_keyring(
+    service_name: str,
+    username: str,
+) -> tuple[str, str, CredentialByteArray]:
+    raw_password = keyring.get_password(service_name=service_name, username=username)
+    if raw_password is None:
+        raise CredentialNotFoundError(
+            f"The credential was not found in the keyring: "
+            f"service_name={service_name} username={username}"
+        )
+    password_parts = raw_password.split(":", maxsplit=1)
+    if len(password_parts) != 2:
+        raise CredentialInvalid(
+            f"The stored credential is not in the expected two-part format."
+        )
+    password_type_code = password_parts[0]
+    cba_password_base64 = CredentialByteArray(password_parts[1].encode("utf-8"))
+
+    if len(password_type_code) == 0:
+        raise CredentialInvalid(
+            f"The stored credential is not in the expected format. "
+            f"The password type code is not present. "
+            f"service_name={service_name} username={username}"
+        )
+
+    if len(cba_password_base64) == 0:
+        raise CredentialInvalid(
+            f"The stored credential is not in the expected format. "
+            f"The password is not present. "
+            f"service_name={service_name} username={username}"
+        )
+
+    if not is_valid_base64_string(cba_password_base64):
+        raise InvalidBase64StringError(
+            f"Expected stored credential to be in base64 format."
+        )
+
+    if password_type_code not in PASSWORD_KIND_CHAR_TO_KIND:
+        raise CredentialInvalid(
+            f"The stored credential is not in the expected format. "
+            f"The password type code '{password_type_code}' is unknown. "
+            f"service_name={service_name} username={username}"
+        )
+
+    password_type = PASSWORD_KIND_CHAR_TO_KIND[password_type_code]
+
+    return (password_type_code, password_type, cba_password_base64)
 
 
 def default_is_password_valid(password: CredentialByteArray):
@@ -625,56 +979,7 @@ def prompt_for_password_with_yubikey_opt(
     return password
 
 
-def get_base64_password_from_keyring(
-    service_name: str,
-    username: str,
-) -> tuple[str, str, CredentialByteArray]:
-    raw_password = keyring.get_password(service_name=service_name, username=username)
-    if raw_password is None:
-        raise CredentialNotFoundError(
-            f"The credential was not found in the keyring: "
-            f"service_name={service_name} username={username}"
-        )
-    password_parts = raw_password.split(":", maxsplit=1)
-    if len(password_parts) != 2:
-        raise CredentialInvalid(
-            f"The stored credential is not in the expected two-part format."
-        )
-    password_type_code = password_parts[0]
-    cba_password_base64 = CredentialByteArray(password_parts[1].encode("utf-8"))
-
-    if len(password_type_code) == 0:
-        raise CredentialInvalid(
-            f"The stored credential is not in the expected format. "
-            f"The password type code is not present. "
-            f"service_name={service_name} username={username}"
-        )
-
-    if len(cba_password_base64) == 0:
-        raise CredentialInvalid(
-            f"The stored credential is not in the expected format. "
-            f"The password is not present. "
-            f"service_name={service_name} username={username}"
-        )
-
-    if not is_valid_base64_string(cba_password_base64):
-        raise InvalidBase64StringError(
-            f"Expected stored credential to be in base64 format."
-        )
-
-    if password_type_code not in PASSWORD_TYPE_CHAR_TO_TYPE:
-        raise CredentialInvalid(
-            f"The stored credential is not in the expected format. "
-            f"The password type code '{password_type_code}' is unknown. "
-            f"service_name={service_name} username={username}"
-        )
-
-    password_type = PASSWORD_TYPE_CHAR_TO_TYPE[password_type_code]
-
-    return (password_type_code, password_type, cba_password_base64)
-
-
-def unlock_credential(credential: CredentialAesKey):
+def prompt_for_password_unlock_credential(credential: Union[Credential, CredentialAesKey]):
     """Unlock a CredentialAesKey instance which is to make its private key/secret
     available in the clear. If the private key is password-protected, ask
     for a password. The result of calling this function is an unlocked
@@ -715,126 +1020,3 @@ def unlock_credential(credential: CredentialAesKey):
             raise CredentialSecretDerivationError(
                 "Unexpected failure, canonot access the credential."
             )
-
-
-def get_password_from_keyring(
-    service_name: str,
-    username: str,
-    keep_secret_base64_encoded: bool,
-) -> tuple[str, str, CredentialByteArray]:
-    (
-        password_type_code,
-        password_type,
-        cba_password_base64,
-    ) = get_base64_password_from_keyring(
-        service_name=service_name,
-        username=username,
-    )
-
-    if keep_secret_base64_encoded:
-        return (password_type_code, password_type, cba_password_base64)
-
-    cba_password = CredentialByteArray(base64.b64decode(cba_password_base64))
-
-    #
-    # Caller wants direct secret in the clear.
-    # Secret has been base64 decoded.
-    # Enryption secrets are persisted CredentialAesKey information.
-    # To give caller direct secret, perform the following...
-    #
-
-    if (
-        username == CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION
-        and password_type == CONFIG_PASSWORD_TYPE_ACTUAL
-    ):
-        credential = CredentialAesKey.create_credential_from_bytes(cred_bytes=cba_password)
-        unlock_credential(credential=credential)
-        cba_password = credential.the_key
-        del credential
-
-    return (password_type_code, password_type, cba_password)
-
-
-def get_enc_credential_from_keyring(
-    service_name: str, username: str, unlock: bool = False
-) -> CredentialAesKey:
-
-    if username != CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION:
-        raise CredentialRequestInvalidError(
-            f"A request for a CredentialAesKey instance is only valid for the backup encryption secret."
-        )
-
-    (
-        password_type_code,
-        password_type,
-        cba_password_base64,
-    ) = get_base64_password_from_keyring(
-        service_name=service_name,
-        username=username,
-    )
-
-    if password_type != CONFIG_PASSWORD_TYPE_ACTUAL:
-        raise CredentialTypeNotFoundError(
-            f"Expected credential type={CONFIG_PASSWORD_TYPE_ACTUAL} but got {password_type_code}. "
-            f"Cannot derive CredentialAesKey instance."
-        )
-
-    cba_password = CredentialByteArray(base64.b64decode(cba_password_base64))
-    credential = CredentialAesKey.create_credential_from_bytes(cred_bytes=cba_password)
-    if not credential.is_private_key_possible:
-        raise CredentialInvalid(
-            f"The private key is not available. The credential is invalid or corrupt."
-        )
-
-    if unlock:
-        unlock_credential(credential=credential)
-
-    return credential
-
-
-def set_password_to_keyring(
-    service_name: str,
-    username: str,
-    password_type: str,
-    password_bytes: CredentialByteArray,
-    password_is_base64: bool = False,
-) -> None:
-    if not service_name:
-        raise CredentialInvalid(
-            f"Cannot store credential. The supplied service name must be a non-empty string."
-        )
-
-    if not username:
-        raise CredentialInvalid(
-            f"Cannot store credential. The supplied user name must be a non-empty string."
-        )
-
-    if not password_type:
-        raise CredentialInvalid(
-            f"Cannot store credential. The supplied password type must be a non-empty string."
-        )
-
-    password_type_code = password_type[0]
-    if password_type_code not in PASSWORD_TYPE_CHAR_TO_TYPE:
-        raise CredentialInvalid(
-            f"Cannot store credential. The supplied password type '{password_type}' is invalid."
-        )
-
-    if not password_bytes:
-        raise CredentialInvalid(
-            f"Cannot store credential. The password was not supplied."
-        )
-
-    if not password_is_base64:
-        password_bytes = CredentialByteArray(base64.b64encode(password_bytes))
-
-    if not is_valid_base64_string(str_to_check=password_bytes):
-        raise InvalidBase64StringError(
-            f"Expected password_bytes to be a base64-encoded string."
-        )
-
-    keyring.set_password(
-        service_name=service_name,
-        username=username,
-        password=f"{password_type_code}:{str(password_bytes, 'utf-8')}",
-    )

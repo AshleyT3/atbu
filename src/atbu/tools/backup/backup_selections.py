@@ -16,7 +16,6 @@ r"""Classes/functions related to backup-related selections.
 
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase, fnmatch
-from glob import iglob
 import logging
 import os
 from pathlib import Path

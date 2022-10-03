@@ -42,10 +42,6 @@ from libcloud.storage.drivers.azure_blobs import (
     AZURE_DOWNLOAD_CHUNK_SIZE,
     AZURE_UPLOAD_CHUNK_SIZE,
 )
-from atbu.tools.backup.constants import (
-    CRED_KEY_TYPE_ENCRYPTION,
-    CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
-)
 from atbu.tools.backup.credentials import CredentialAesKey
 
 # Even for local-only tests, include chunk sizes for
@@ -56,7 +52,7 @@ from atbu.tools.backup.storage_interface.base import (
 )
 
 from atbu.tools.backup.config import AtbuConfig
-from atbu.tools.backup.creds_cmdline import handle_credential_change
+from atbu.tools.backup.storage_def_credentials import StorageDefCredentialSet
 from atbu.common.exception import InvalidStateError  # pylint: disable=unused-import
 
 
@@ -885,23 +881,27 @@ def validate_cred_export_import(
         assert rr.ret == ExitCode.OK
 
         #
-        # Change encryption key (keeping access OK) alone to observe
-        # failure afterwards.
+        # Change encryption key to observe failure afterwards.
         #
         atbu_cfg = AtbuConfig.create_from_file(path=atbu_cfg_path)
-        # This throws an exception if not found.
-        credential_orig = atbu_cfg.get_storage_def_encryption_credential(
-            storage_def_name=storage_def_name.lower(), unlock=True
+
+        #TODO: review unlock/lock state, save state, dirty.
+        cred_set = StorageDefCredentialSet(
+            storage_def_name=storage_def_name.lower(),
+            storage_def_dict=atbu_cfg.get_storage_def_dict(
+                storage_def_name=storage_def_name.lower(),
+                must_exist=True,
+            ),
         )
+        cred_set.populate()
+        cred_set.unprotect()
+        credential_orig = cred_set.get_encryption_desc_cred().credential
+        assert credential_orig.is_private_key_ready
         credential_new = CredentialAesKey()
         credential_new.create_key()
-        handle_credential_change(
-            operation=CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
-            key_to_affect=CRED_KEY_TYPE_ENCRYPTION,
-            atbu_cfg=atbu_cfg,
-            storage_def_name=storage_def_name.lower(),
-            credential=credential_new,
-        )
+        cred_set.get_encryption_desc_cred().credential = credential_new
+        cred_set.protect()
+        cred_set.save()
 
         #
         # Attempt restore without encryption key, observe failure.
@@ -1059,23 +1059,28 @@ def validate_backup_recovery(
         assert rr.ret == ExitCode.OK
 
         #
-        # Change encryption key (keeping access OK) alone to observe
-        # failure afterwards.
+        # Change encryption key to observe failure afterwards.
         #
         atbu_cfg = AtbuConfig.create_from_file(path=atbu_cfg_path)
-        # This throws an exception if not found.
-        credential_orig = atbu_cfg.get_storage_def_encryption_credential(
-            storage_def_name=storage_def_name.lower(), unlock=True
+
+        #TODO: review unlock/lock state, save state, dirty.
+        cred_set = StorageDefCredentialSet(
+            storage_def_name=storage_def_name.lower(),
+            storage_def_dict=atbu_cfg.get_storage_def_dict(
+                storage_def_name=storage_def_name.lower(),
+                must_exist=True,
+            ),
         )
+        cred_set.populate()
+        cred_set.unprotect()
+        credential_orig = cred_set.get_encryption_desc_cred().credential
+        assert credential_orig.is_private_key_ready
         credential_new = CredentialAesKey()
         credential_new.create_key()
-        handle_credential_change(
-            operation=CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
-            key_to_affect=CRED_KEY_TYPE_ENCRYPTION,
-            atbu_cfg=atbu_cfg,
-            storage_def_name=storage_def_name.lower(),
-            credential=credential_new,
-        )
+        cred_set.get_encryption_desc_cred().credential = credential_new
+        cred_set.protect()
+        cred_set.save()
+
 
         #
         # Attempt restore without encryption key, observe failure.

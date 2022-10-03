@@ -18,7 +18,6 @@ import json
 import os
 import logging
 import re
-from typing import Union
 from send2trash import send2trash
 
 from atbu.common.util_helpers import get_trash_bin_name, prompt_YN
@@ -32,11 +31,14 @@ from .config import (
     is_storage_def_name_ok,
     parse_storage_def_specifier,
 )
+from .storage_def_credentials import StorageDefCredentialSet
 from .credentials import (
+    Credential,
     CredentialAesKey,
     CredentialByteArray,
+    DescribedCredential,
+    prompt_for_password,
     prompt_for_password_with_yubikey_opt,
-    set_password_to_keyring,
 )
 from .storage_interface.base import (
     AUTO_FIND_CREATE_CONTAINER_INDICATOR_CHAR,
@@ -44,180 +46,32 @@ from .storage_interface.base import (
 )
 
 
-def handle_credential_change(
-    operation: CRED_OPERATION_HINT,
-    key_to_affect: CRED_KEY_TYPE_HINT,
-    atbu_cfg: AtbuConfig,
-    storage_def_name: str,
-    credential: Union[str, list, CredentialAesKey],
-    debug_mode: bool = False,
-):
-    if not storage_def_name:
-        raise ValueError(f"Invalid backup storage definition: {storage_def_name}")
+def password_prompt(
+    what: str = None,
+    hidden: bool = True,
+) -> CredentialByteArray:
 
-    #
-    # Given key_to_affect, the following dict provides info about what
-    # keyring username to use as well as what ATBU config nodes to affect.
-    #
-    AFFECTED_KEY_TO_INFO = {
-        CRED_KEY_TYPE_ENCRYPTION: (
-            CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION,
-            "encryption/key",
-        ),
-        CRED_KEY_TYPE_STORAGE: (
-            CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD,
-            "driver/secret",
-        ),
-    }
+    if what is None:
+        what = "password"
 
-    #
-    # Given operation, look up the password type to store.
-    #
-    OPERATION_TO_PASSWORD_TYPE = {
-        CRED_OPERATION_SET_PASSWORD: CONFIG_PASSWORD_TYPE_ACTUAL,
-        CRED_OPERATION_SET_PASSWORD_TO_FILENAME: CONFIG_PASSWORD_TYPE_FILENAME,
-        CRED_OPERATION_SET_PASSWORD_TO_ENVVAR: CONFIG_PASSWORD_TYPE_ENVVAR,
-        CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY: CONFIG_PASSWORD_TYPE_ACTUAL,
-    }
+    def _is_password_valid(password: CredentialByteArray) -> bool:
+        MAX_SIZE_IN_BYTES = 500 # Arbitrary, big enough.
+        if len(password) > MAX_SIZE_IN_BYTES:
+            print(f"The {what} you entered is too long.")
+            print(f"The maximum length is {MAX_SIZE_IN_BYTES} UTF-8 encoded bytes.")
+            return False
+        return True
 
-    #
-    # Determine username and config section given key_to_affect.
-    #
-    username = AFFECTED_KEY_TO_INFO[key_to_affect][0]
-    section_path = AFFECTED_KEY_TO_INFO[key_to_affect][1]
-    password_type = OPERATION_TO_PASSWORD_TYPE[operation]
-
-    logging.info(f"Keyring information:")
-    logging.info(f"Key={key_to_affect}")
-    logging.info(f"Service={storage_def_name}")
-    logging.info(f"Username={username}")
-    logging.debug(f"password_type={password_type}")
-    logging.debug(f"section_path={section_path}")
-
-    if key_to_affect not in [CRED_KEY_TYPE_STORAGE, CRED_KEY_TYPE_ENCRYPTION]:
-        raise UnexpectedOperation(f"The the '{key_to_affect}' key is unexpected.")
-
-    #
-    # CRED_KEY_TYPE_ENCRYPTION
-    #
-    if key_to_affect == CRED_KEY_TYPE_ENCRYPTION:
-
-        if operation not in [
-            CRED_OPERATION_SET_PASSWORD,
-            CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
-        ]:
-            raise UnexpectedOperation(
-                f"The operation '{operation}' for the '{key_to_affect}' key is unexpected."
-            )
-
-        if not isinstance(credential, CredentialAesKey):
-            raise CredentialTypeNotFoundError(
-                f"A CredentialAesKey type is expected when setting the '{key_to_affect}' secret"
-            )
-
-        if operation == CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY:
-            # Direct private key, ensure key is present.
-            if not credential.is_private_key_ready:
-                raise CredentialInvalid(
-                    f"Cannot set the '{key_to_affect}' key. "
-                    f"The CredentialAesKey is invalid because the "
-                    f"private key is not immediately available"
-                )
-            # Direct key storage.
-            credential_bytes = credential.get_unenc_key_material_as_bytes()
-            if debug_mode:
-                print(f"handle_credential_change: key={credential.the_key.hex(' ')}")
-                print(f"handle_credential_change: b={credential_bytes}")
-        elif operation == CRED_OPERATION_SET_PASSWORD:
-            # Private key will be password-protected.
-            if not credential.is_private_key_possible:
-                raise CredentialInvalid(
-                    f"Cannot set the '{key_to_affect}' key. "
-                    f"The CredentialAesKey cannot be used to derive the "
-                    f"private key and is therefore invalid."
-                )
-            credential_bytes = credential.get_enc_key_material_as_bytes()
-            if debug_mode:
-                if credential.the_key:
-                    print(
-                        f"handle_credential_change: key={credential.the_key.hex(' ')}"
-                    )
-                else:
-                    print(f"handle_credential_change: key=<none>")
-                print(f"handle_credential_change: b={credential_bytes}")
-    #
-    # CRED_KEY_TYPE_STORAGE
-    #
-    elif key_to_affect == CRED_KEY_TYPE_STORAGE:
-
-        if operation not in [
-            CRED_OPERATION_SET_PASSWORD,
-            CRED_OPERATION_SET_PASSWORD_TO_FILENAME,
-            CRED_OPERATION_SET_PASSWORD_TO_ENVVAR,
-        ]:
-            raise UnexpectedOperation(
-                f"The operation '{operation}' for the '{key_to_affect}' key is unexpected."
-            )
-
-        if not isinstance(credential, (CredentialByteArray, bytearray, bytes, str)):
-            raise CredentialInvalid(
-                f"The credential type '{type(credential)}' "
-                f"is not expected when setting the '{key_to_affect}' key."
-            )
-
-        credential_bytes = credential
-        if isinstance(credential, str):
-            credential_bytes = credential.encode("utf-8")
-    #
-    # Unexpected
-    #
-    else:
-        raise UnexpectedOperation(f"The '{key_to_affect}' is unexpected.")
-
-    set_password_to_keyring(
-        service_name=storage_def_name,
-        username=username,
-        password_type=password_type,
-        password_bytes=credential_bytes,
+    return prompt_for_password(
+        prompt=f"Enter {what}:",
+        hidden=hidden,
+        is_password_valid_func=_is_password_valid,
     )
 
-    #
-    # Update the configuration to reference the keyring data.
-    #
-    atbu_cfg.set_config_keyring_mapping(
-        storage_def_name=storage_def_name, username=username, section_path=section_path
-    )
-    atbu_cfg.save_config_file()
 
-
-def set_encryption_password_wizard(
-    atbu_cfg: AtbuConfig,
-    storage_def_name: str,
-    encryption_already_enabled_ok: bool = False,
-    debug_mode: bool = False,
-):
-    credential: CredentialAesKey = None
-    if atbu_cfg.is_storage_def_configured_for_encryption(
-        storage_def_name=storage_def_name
-    ):
-        if not encryption_already_enabled_ok:
-            raise EncryptionAlreadyEnabledError(
-                f"Encryption is already enabled for storage_def={storage_def_name}."
-            )
-        try:
-            credential = atbu_cfg.get_storage_def_encryption_credential(
-                storage_def_name=storage_def_name, unlock=True
-            )
-        except (PasswordAuthenticationFailure, CredentialSecretDerivationError) as ex:
-            if ex.message:
-                print(ex.message)
-            raise
-
-    #
-    # Generate/store random 256-bit private key.
-    # Associate the user's password with the private key.
-    #
+def backup_password_prompt_wizard()-> CredentialByteArray:
     print(
+
         """
 You can require the backup to ask for a password before starting a backup/restore,
 or you can allow a backup to proceed automatically without requiring your password.
@@ -243,19 +97,9 @@ security information (i.e., private key, related info) which you can do at any t
         choices={"p": "[P/a]", "a": "[p/A]"},
     )
 
-    if not credential:
-        print(f"Creating key...", end="")
-        credential = CredentialAesKey()
-        credential.create_key()
-        print(f"created.")
-
-    if debug_mode:
-        print(f"set_encryption_password_wizard: key={credential.the_key.hex(' ')}")
-
     if a == "a":
-        cred_operation = CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY
+        return None
     else:
-        cred_operation = CRED_OPERATION_SET_PASSWORD
         print(
             """
 You have chosen to require a password before a backup/restore can begin which requires you
@@ -266,46 +110,59 @@ to enter a password.
             prompt="Enter a password for this backup:",
             prompt_again="Enter a password for this backup again:",
         )
-        credential.prepare_for_new_password()
-        credential.set(password=password)
-        print(f"Encrypting key...", end="")
-        credential.encrypt_key()
-        print(f"encrypted.")
-        credential.clear_password()
-
-    print(f"Storing...")
-    handle_credential_change(
-        operation=cred_operation,
-        key_to_affect=CRED_KEY_TYPE_ENCRYPTION,
-        atbu_cfg=atbu_cfg,
-        storage_def_name=storage_def_name,
-        credential=credential,
-        debug_mode=debug_mode,
-    )
+    return password
 
 
 def setup_backup_encryption_wizard(
     storage_atbu_cfg: AtbuConfig, storage_def_name: str, debug_mode: bool = False
-) -> bool:
+) -> DescribedCredential:
+    """Setup a password for the backup encryption credential if desired by user.
+
+    Args:
+        storage_atbu_cfg (AtbuConfig): The configuration to use.
+        storage_def_name (str): The storage definition name.
+        debug_mode (bool, optional): Output debug info if True. Defaults to False.
+
+    Raises:
+        EncryptionAlreadyEnabledError: Encryption already enabled for the specified
+            storage definition configuration.
+
+    Returns:
+        DescribedCredential: The DescribedCredential with a credential attribute
+            that has its password in the clear if a password was specified.
+    """
     a = prompt_YN(
         prompt_msg="The destination can be encrypted.",
         prompt_question="Would you like encryption enabled?",
     )
-    is_encrypted = False
-    if a == "y":
-        set_encryption_password_wizard(
-            atbu_cfg=storage_atbu_cfg,
-            storage_def_name=storage_def_name,
-            debug_mode=debug_mode,
-        )
-        print(f"Your key is stored.")
-        is_encrypted = True
-    else:
+    credential: CredentialAesKey = None
+    if a != "y":
         print(f"Files backed up to this destination will *not* be encrypted.")
-    print(f"Saving {storage_atbu_cfg.path}")
-    storage_atbu_cfg.save_config_file()
-    print(f"{storage_atbu_cfg.path} has been saved.")
-    return is_encrypted
+        return None
+
+    if storage_atbu_cfg.is_storage_def_configured_for_encryption(
+        storage_def_name=storage_def_name
+    ):
+        raise EncryptionAlreadyEnabledError(
+            f"Encryption is already enabled for storage_def={storage_def_name}."
+        )
+    cba_password = backup_password_prompt_wizard()
+    print(f"Creating backup encryption key...", end="")
+    credential = CredentialAesKey()
+    credential.create_key()
+    print(f"created.")
+    if cba_password is not None:
+        print(f"Setting password.")
+        credential.set(password=cba_password)
+    else:
+        print(f"No password set because you want to keep the backup encryption key unencrypted.")
+
+    return DescribedCredential(
+        credential=credential,
+        config_name=storage_def_name,
+        credential_name=CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION,
+        credential_kind=CONFIG_PASSWORD_KIND_ACTUAL,
+    )
 
 
 def is_OAuth2_secret_json_file(path: str) -> bool:
@@ -445,7 +302,7 @@ def handle_create_storage_definition(
 
     other_driver_kv_pairs[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET] = secret
 
-    _, _ = atbu_cfg.create_storage_def(
+    _, storage_def_dict = atbu_cfg.create_storage_def(
         interface_type=interface,
         provider_id=provider,
         container=container,
@@ -454,42 +311,91 @@ def handle_create_storage_definition(
         include_iv=include_iv,
     )
 
-    operation = CRED_OPERATION_SET_PASSWORD
+    #
+    # Determine storage credential type (i.e., password, file, or env var file).
+    #
+
+    cred_storage_kind = CONFIG_PASSWORD_KIND_ACTUAL
     secret_str = secret.decode("utf-8")
     if os.path.isfile(secret_str) and is_OAuth2_secret_json_file(path=secret_str):
         # Yes, secret is directly an existing file name.
-        operation = CRED_OPERATION_SET_PASSWORD_TO_FILENAME
+        cred_storage_kind = CONFIG_PASSWORD_KIND_FILENAME
     else:
         # Not a direct file name.
         # Check if env var.
         ev = os.getenv(secret_str)
         if isinstance(ev, str) and is_OAuth2_secret_json_file(path=ev):
             # Yes, env var is file.
-            operation = CRED_OPERATION_SET_PASSWORD_TO_ENVVAR
+            cred_storage_kind = CONFIG_PASSWORD_KIND_ENVVAR
+
+    #
+    # Create/save the credentials.
+    #
 
     try:
-        # Save to keyring and indirect storage definition to reference the keyring creds.
-        handle_credential_change(
-            operation=operation,
-            key_to_affect=CRED_KEY_TYPE_STORAGE,
-            atbu_cfg=atbu_cfg,
-            storage_def_name=storage_def_name,
-            credential=secret,
-            debug_mode=debug_mode,
-        )
 
-        atbu_cfg.save_config_file()
+        #
+        # Create the backup encryption credential.
+        # If no encryption, desc_cred_encryption is None.
+        #
 
-        logging.info(f"Storage definition {storage_def_name} saved.")
-        logging.debug(f"Storage definition {storage_def_name} saved to {atbu_cfg.path}")
-
-        is_encrypted = setup_backup_encryption_wizard(
+        desc_cred_encryption = setup_backup_encryption_wizard(
             storage_atbu_cfg=atbu_cfg,
             storage_def_name=storage_def_name,
             debug_mode=debug_mode,
         )
 
-        if not is_encrypted:
+        #
+        # Create the storage credential.
+        # If there is an encryption credential, and it is password-protected,
+        # use the same password to protect the storage credential.
+        #
+
+        cred_storage = Credential(the_key=secret)
+        if desc_cred_encryption is not None:
+            cred_encryption = desc_cred_encryption.credential
+            if cred_encryption.is_password_protected:
+                cred_storage.set(password=cred_encryption.password)
+
+        desc_cred_storage = DescribedCredential(
+            credential=cred_storage,
+            config_name=storage_def_name,
+            credential_name=CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD,
+            credential_kind=cred_storage_kind,
+        )
+
+        #
+        # Create a credential set to hold/lock/save all credentials.
+        #
+
+        cred_set = StorageDefCredentialSet(
+            storage_def_name=storage_def_name,
+            storage_def_dict=storage_def_dict,
+        )
+        if desc_cred_encryption is not None:
+            cred_set.append(
+                desc_cred=desc_cred_encryption,
+                affected_config_path_parts=CRED_SECRET_KIND_ENCRYPTION.split("-"),
+            )
+        cred_set.append(
+            desc_cred=desc_cred_storage,
+            affected_config_path_parts=CRED_SECRET_KIND_STORAGE.split("-"),
+        )
+
+        #
+        # Lock and save all credentials.
+        #
+
+        print(f"Storing...")
+        cred_set.protect()
+        cred_set.save()
+        print(f"Credentials stored.")
+        print(f"Saving {atbu_cfg.path}")
+        atbu_cfg.save_config_file()
+        logging.info(f"Storage definition {storage_def_name} saved.")
+        logging.debug(f"Storage definition {storage_def_name} saved to {atbu_cfg.path}")
+
+        if desc_cred_encryption is None:
             logging.warning(
                 f"WARNING: The storage definition '{storage_def_name}' will *not* be encrypted."
             )
@@ -730,69 +636,72 @@ def handle_creds(args):
             backup_file_path=backup_file_path,
             prompt_if_exists=args.prompt,
         )
-    elif args.subcmd == "set-password":
-        operation = CRED_OPERATION_SET_PASSWORD
-        if args.key_type == CRED_KEY_TYPE_ENCRYPTION:
-            if args.password is not None:
-                logging.error(
-                    f"A command line password cannot be specified for {CRED_KEY_TYPE_ENCRYPTION}, "
-                    f"only for {CRED_KEY_TYPE_STORAGE}."
-                )
-                logging.info(
-                    f"To change the {CRED_KEY_TYPE_ENCRYPTION} password, do not specify a password "
-                    f"on the command line which allows a console UI to prompt you."
-                )
-                raise CredentialRequestInvalidError(
-                    f"A command line password cannot be specified for {CRED_KEY_TYPE_ENCRYPTION}."
-                )
-            set_encryption_password_wizard(
-                atbu_cfg=storage_atbu_cfg,
-                storage_def_name=storage_def_name,
-                encryption_already_enabled_ok=True,
-                debug_mode=show_secrets,
-            )
-        elif args.key_type == CRED_KEY_TYPE_STORAGE:
-            if args.password is None:
-                raise CredentialRequestInvalidError(
-                    f"A password is required to set the password for the {CRED_KEY_TYPE_STORAGE}."
-                )
-            handle_credential_change(
-                operation=operation,
-                key_to_affect=args.key_type,
-                atbu_cfg=storage_atbu_cfg,
-                storage_def_name=storage_def_name,
-                credential=args.password,
-                debug_mode=show_secrets,
-            )
-        else:
-            raise InvalidStateError(f"Unexpected key type '{args.key_type}'")
-    elif args.subcmd == "set-password-filename":
-        if args.filename is None:
-            raise CredentialRequestInvalidError(
-                f"A filename is required to set the password filename "
-                f"for the {CRED_KEY_TYPE_STORAGE}."
-            )
-        operation = CRED_OPERATION_SET_PASSWORD_TO_FILENAME
-        handle_credential_change(
-            operation=operation,
-            key_to_affect=CRED_KEY_TYPE_STORAGE,
-            atbu_cfg=storage_atbu_cfg,
+    elif args.subcmd in [CRED_OPERATION_SET_PASSWORD, CRED_OPERATION_SET_PASSWORD_ALIAS]:
+
+        switch_to_non_queued_logging()
+
+        storage_def_dict = storage_atbu_cfg.get_storage_def_dict(
             storage_def_name=storage_def_name,
-            credential=args.filename,
-            debug_mode=show_secrets,
+            must_exist=True,
         )
-    elif args.subcmd == "set-password-envvar":
-        operation = CRED_OPERATION_SET_PASSWORD_TO_ENVVAR
-        if args.key_type == CRED_KEY_TYPE_STORAGE:
-            handle_credential_change(
-                operation=operation,
-                key_to_affect=args.key_type,
-                atbu_cfg=storage_atbu_cfg,
-                storage_def_name=storage_def_name,
-                credential=args.env_var,
-                debug_mode=show_secrets,
-            )
+
+        cred_set = StorageDefCredentialSet(
+            storage_def_name=storage_def_name,
+            storage_def_dict=storage_def_dict,
+        )
+
+        cred_set.populate()
+        cred_set.unprotect()
+
+        password_type = args.password_type
+
+        if password_type == CRED_OPERATION_SET_PASSWORD_TYPE_BACKUP:
+            if args.password is not None:
+                raise CredentialRequestInvalidError(
+                    f"A command line password cannot be specified for the "
+                    f"{CRED_OPERATION_SET_PASSWORD_TYPE_BACKUP} password."
+                )
+            cba_password = backup_password_prompt_wizard()
+            cred_set.set_password(cba_password)
+        elif password_type == CRED_OPERATION_SET_PASSWORD_TYPE_STORAGE:
+            desc_cred_storage = cred_set.get_storage_desc_cred()
+            if args.password is None:
+                cba_password = password_prompt(
+                    what="storage secret",
+                    hidden=False
+                )
+            else:
+                cba_password = CredentialByteArray.create_from_string(args.password)
+            desc_cred_storage.credential.set(the_key=cba_password)
+            desc_cred_storage.credential_kind = CONFIG_PASSWORD_KIND_ACTUAL
+        elif password_type == CRED_OPERATION_SET_PASSWORD_TYPE_FILENAME:
+            desc_cred_storage = cred_set.get_storage_desc_cred()
+            if args.password is None:
+                cba_password = password_prompt(
+                    what="OAuth2 .json file path",
+                    hidden=False,
+                )
+            else:
+                cba_password = CredentialByteArray.create_from_string(args.password)
+            desc_cred_storage.credential.set(the_key=cba_password)
+            desc_cred_storage.credential_kind = CONFIG_PASSWORD_KIND_FILENAME
+        elif password_type == CRED_OPERATION_SET_PASSWORD_TYPE_ENVVAR:
+            desc_cred_storage = cred_set.get_storage_desc_cred()
+            if args.password is None:
+                cba_password = password_prompt(
+                    what="OAuth2 .json file path environment variable",
+                    hidden=False,
+                )
+            else:
+                cba_password = CredentialByteArray.create_from_string(args.password)
+            desc_cred_storage.credential.set(the_key=cba_password)
+            desc_cred_storage.credential_kind = CONFIG_PASSWORD_KIND_ENVVAR
         else:
-            raise InvalidStateError(f"Key type '{args.key_type} not allowed.'")
+            raise InvalidStateError(f"Unexpected password type '{password_type}'")
+
+        print(f"Storing credentials...")
+        cred_set.protect()
+        cred_set.save()
+        print(f"Credentials stored.")
     else:
         raise InvalidCommandLineArgument("Unknown command.")

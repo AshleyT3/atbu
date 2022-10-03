@@ -179,12 +179,12 @@ class GoogleStorageInterface(StorageInterface):
         secret = self.driver_config[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET]
         if isinstance(secret, (CredentialByteArray, bytearray, bytes)):
             secret = secret.decode("utf-8")
-        if password_type == CONFIG_PASSWORD_TYPE_FILENAME:
+        if password_type == CONFIG_PASSWORD_KIND_FILENAME:
             # For OAuth 2 .json, referencing the file location would be more likely.
             credentials = service_account.Credentials.from_service_account_file(
                 filename=secret
             )
-        elif password_type == CONFIG_PASSWORD_TYPE_ENVVAR:
+        elif password_type == CONFIG_PASSWORD_KIND_ENVVAR:
             if secret is None or secret == "":
                 raise ValueError(f"Environment variable not found")
             cred_filename = os.getenv(secret)

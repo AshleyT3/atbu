@@ -53,12 +53,9 @@ from pytest import (
 from atbu.tools.backup.constants import (
     CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD,
     CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION,
-    CONFIG_PASSWORD_TYPE_FILENAME,
-    CONFIG_PASSWORD_TYPE_ENVVAR,
-    CONFIG_PASSWORD_TYPE_ACTUAL,
+    CONFIG_PASSWORD_KIND_FILENAME,
+    CONFIG_PASSWORD_KIND_ACTUAL,
     CONFIG_VALUE_NAME_CONTAINER,
-    CRED_KEY_TYPE_ENCRYPTION,
-    CRED_OPERATION_SET_PASSWORD_TO_PRIVATE_KEY,
 )
 from atbu.tools.backup.config import AtbuConfig
 
@@ -275,7 +272,7 @@ backup_restore_parameters = [
         GOOGLE_STORAGE_SERVICE_ACCOUNT_PROJECT_ID,
         GOOGLE_STORAGE_SERVICE_ACCOUNT_CLIENT_EMAIL,
         GOOGLE_STORAGE_SERVICE_ACCOUNT_JSON_PATH,
-        CONFIG_PASSWORD_TYPE_FILENAME,
+        CONFIG_PASSWORD_KIND_FILENAME,
         id="google",
         marks=pytest.mark.skipif(
             GOOGLE_STORAGE_SERVICE_ACCOUNT_CLIENT_EMAIL == "skip",
@@ -288,7 +285,7 @@ backup_restore_parameters = [
         None,
         AZURE_BLOB_STORAGE_USERKEY,
         AZURE_BLOB_STORAGE_SECRET,
-        CONFIG_PASSWORD_TYPE_ACTUAL,
+        CONFIG_PASSWORD_KIND_ACTUAL,
         id="azure",
         marks=pytest.mark.skipif(
             AZURE_BLOB_STORAGE_USERKEY == "skip", reason="secrets not available."

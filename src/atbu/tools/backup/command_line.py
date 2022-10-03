@@ -141,12 +141,12 @@ def create_argparse():
 
     # Uncomment to allow --debug-server (for use with VS Code pydebug)
     # Activate the debug server to listen on specified port, wait for a client connect.
-    # parser.add_argument(
-    #     "--debug-server",
-    #     help=argparse.SUPPRESS,
-    #     type=int,
-    #     required=False,
-    # )
+    parser.add_argument(
+        "--debug-server",
+        help=argparse.SUPPRESS,
+        type=int,
+        required=False,
+    )
 
     #
     # Common to all parser
@@ -212,16 +212,6 @@ must not already exist.
     #############################################################################################
     #                                backup-related argparse setup                              #
     #############################################################################################
-
-    #
-    # Common credential key-type argument.
-    #
-    parser_key_type = argparse.ArgumentParser(add_help=False)
-    parser_key_type.add_argument(
-        "key_type",
-        choices=[CRED_KEY_TYPE_STORAGE, CRED_KEY_TYPE_ENCRYPTION],
-        help="What key/password to set (i.e., cloud storage, backup encryption, etc.).",
-    )
 
     #
     # Common credential filename argument.
@@ -703,40 +693,36 @@ recommended you backup configurations before overwriting them by using
     # creds set-password:
     #
     creds_set_password_parser = subparser_creds.add_parser(
-        "set-password",
-        help="Set character password for specified storage definition.",
-        parents=[parser_creds_storage_def_specifier, parser_key_type, parser_common],
+        name=CRED_OPERATION_SET_PASSWORD,
+        aliases=[CRED_OPERATION_SET_PASSWORD_ALIAS],
+        formatter_class=argparse.RawTextHelpFormatter,
+        help="Set password for the backup or storage.",
+        parents=[parser_creds_storage_def_specifier, parser_common],
+    )
+    creds_set_password_parser.add_argument(
+        "password_type",
+        choices=CRED_OPERATION_SET_PASSWORD_TYPES,
+        help=f"""What password type or secret to set (i.e., backup password, cloud storage secret, etc.).
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_BACKUP}' : Set the password for the backup as a whole. This password is used
+        to encrypt both the backup encryption key and/or storage secret.
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_STORAGE}' : Set the storage secret for the cloud backup storage definition.
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_FILENAME}' : Set the storage secret to an OAuth2 .json file path name.*
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_ENVVAR}' : Set the storage secret to an environment variable name that itself
+        points to an OAuth2 .json filename.*
+    * OAuth2 .json files in format used with a GCS service account are supported.
+""",
     )
     creds_set_password_parser.add_argument(
         "password",
-        help="The password to set.",
+        help=f"""The password value to set. If not specified, you will be prompted. The following
+are the potential values based on your selection for the above password type argument:
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_BACKUP}' : Specify a textual string password used to encrypt the backup encryption key.
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_STORAGE}' : Specify a storage secret (i.e., what you copy/paste from cloud portal).
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_FILENAME}' : Specify a path to a GCS OAuth2 service account .json file.
+    '{CRED_OPERATION_SET_PASSWORD_TYPE_ENVVAR}' : Specify an environment variable that itself points to a GCS OAuth2
+        service account .json file.
+""",
         nargs="?",
-    )
-
-    #
-    # creds set-password-filename:
-    #
-    creds_set_password_filename_parser = subparser_creds.add_parser(
-        "set-password-filename",
-        help="Set the storage provider password to the specified file name (i.e., OAuth2 .json file).",
-        parents=[parser_creds_storage_def_specifier, parser_common],
-    )
-    creds_set_password_filename_parser.add_argument(
-        "filename",
-        help="The file name to set.",
-    )
-
-    #
-    # creds set-password-envvar:
-    #
-    creds_set_password_envvar_parser = subparser_creds.add_parser(
-        "set-password-envvar",
-        help="Set password to environment variable name which will point to a file (i.e., credential .json file).",
-        parents=[parser_creds_storage_def_specifier, parser_common],
-    )
-    creds_set_password_envvar_parser.add_argument(
-        "env_var",
-        help="The environment variable name to set.",
     )
     parser_creds.set_defaults(func=handle_creds)
 

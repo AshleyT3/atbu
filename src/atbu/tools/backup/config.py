@@ -15,7 +15,6 @@ r"""ATBU Configuration-related classes/functions.
 - AtbuConfig is the primary class.
 """
 
-import base64
 import fnmatch
 import glob
 import logging
@@ -28,25 +27,26 @@ import copy
 import json
 import keyring
 
-from atbu.mp_pipeline.mp_global import get_verbosity_level
+from atbu.mp_pipeline.mp_global import (
+    get_verbosity_level,
+    switch_to_non_queued_logging,
+)
 from atbu.common.util_helpers import (
     convert_to_pathlib_path,
     deep_union_dicts,
     is_absolute_path,
-    is_valid_base64_string,
     prompt_YN,
+    create_numbered_backup_of_file,
 )
+
+from atbu.tools.backup.config_migration_helpers import upgrade_storage_definitions_from_001_to_002
 
 from .constants import *
 from .exception import *
-from .credentials import (
-    CredentialAesKey,
-    CredentialByteArray,
-    get_password_from_keyring,
-    get_enc_credential_from_keyring,
-    set_password_to_keyring,
+from .storage_def_credentials import (
+    StorageDefCredentialSet,
+    restore_keyring_secrets,
 )
-
 
 def parse_storage_def_specifier(storage_location) -> str:
     what_which = storage_location.lower().split(":", maxsplit=1)
@@ -133,10 +133,10 @@ def add_path_value(
     if section_value_path is None:
         raise ValueError(f"section_path is required")
     if isinstance(section_value_path, str):
-        section_value_path = section_value_path.split("/")
+        section_value_path = section_value_path.split("-")
     if not section_value_path or not isinstance(section_value_path, list):
         raise ValueError(
-            f"section_path must be in the format section/section/.../value_name"
+            f"section_path must be in the format section-section-...-value_name"
         )
     value_cfg = storage_def_dict
     for s in section_value_path[:-1]:
@@ -144,82 +144,6 @@ def add_path_value(
             value_cfg[s] = {}
         value_cfg = value_cfg[s]
     value_cfg[section_value_path[-1]] = value
-
-
-def prompt_user_password_file_does_not_exist(default_filename: str):
-    is_exist = default_filename is not None and os.path.isfile(default_filename)
-    print(f"Specify a path to an existing password .json file.")
-    def_qual = ""
-    if is_exist:
-        def_qual = "<ENTER> for the default, "
-        print(
-            f"If you do not specify a name and press <ENTER>, the default name will be used."
-        )
-        print(f"Default path (file exists): {default_filename}")
-    a = input(f"Enter the path, {def_qual}or 'n' to abort:")
-    if a.lower() in ["n", "no"]:
-        return None
-    if is_exist and a == "":
-        return default_filename
-    return a
-
-
-def restore_keyring_secrets(storage_def: dict):
-    keyring_section: dict = storage_def.get(CONFIG_SECTION_KEYRING_MAPPING)
-    if not keyring_section:
-        return
-    affected_config_path: str
-    for affected_config_path, keyring_lookup_info in keyring_section.items():
-        service_name = keyring_lookup_info[CONFIG_VALUE_NAME_KEYRING_SERVICE]
-        username = keyring_lookup_info[CONFIG_VALUE_NAME_KEYRING_USERNAME]
-        affected_config_path_parts = affected_config_path.split("-")
-        affected_section = storage_def
-        for section_part in affected_config_path_parts[:-1]:
-            affected_section = affected_section[section_part]
-        password_type = affected_section.get(CONFIG_PASSWORD_TYPE)
-        if password_type is None:
-            raise CredentialTypeNotFoundError(
-                f"restore_keyring_secrets: Cannot find credential type."
-            )
-        cba_password = CredentialByteArray(
-            affected_section[affected_config_path_parts[-1]].encode("utf-8")
-        )
-
-        if password_type == CONFIG_PASSWORD_TYPE_FILENAME:
-            filename = base64.b64decode(cba_password.decode("utf-8")).decode("utf-8")
-            while not os.path.isfile(filename):
-                print(f"The credential file does not exist: {filename}")
-                user_specified_filename = prompt_user_password_file_does_not_exist(
-                    filename
-                )
-                if user_specified_filename is None:
-                    raise CredentialSecretFileNotFoundError(
-                        f"An existing credential password filename was not specified, "
-                        f"aborting restore."
-                    )
-                if os.path.isfile(user_specified_filename):
-                    cba_password = CredentialByteArray(
-                        base64.b64encode(user_specified_filename.encode())
-                    )
-                    break
-                print(
-                    f"ERROR: The filename entered does not exist: {user_specified_filename}"
-                )
-                print(
-                    f"You must specify a path to an existing .json password file "
-                    f"(i.e., a service account .json OAuth2 file)."
-                )
-
-        set_password_to_keyring(
-            service_name=service_name,
-            username=username,
-            password_type=password_type,
-            password_bytes=cba_password,
-            password_is_base64=True,
-        )
-        affected_section[
-            affected_config_path_parts[-1]
-        ] = CONFIG_KEY_VALUE_KEYRING_INDIRECTION
 
 
 re_not_allowed_cfg_name = re.compile(r"[^a-z0-9_-]")
@@ -238,35 +162,6 @@ def is_existing_filesystem_storage_path(storage_location: str):
         something explicit/clear.)
     """
     return os.path.isdir(storage_location) and is_absolute_path(storage_location)
-
-
-def add_keyring_mapping(cfg: dict, section_value_path, service: str, username: str):
-    """Add a keyring mapping for section_value_path.
-    For example, if section_value_path=='encryption/key', create a 'keyring-mapping' dict named
-    'encryption-key' which itself has two values service/username for use in setting/getting from
-    the keyring.
-    """
-    if cfg is None:
-        raise ValueError(f"cfg must be specified")
-    if section_value_path is None:
-        raise ValueError(f"section_path is required")
-    if isinstance(section_value_path, str):
-        section_value_path = section_value_path.split("/")
-    if not section_value_path or not isinstance(section_value_path, list):
-        raise ValueError(
-            f"section_path must be in the format section/section/.../value_name"
-        )
-    if CONFIG_SECTION_KEYRING_MAPPING not in cfg:
-        cfg[CONFIG_SECTION_KEYRING_MAPPING] = {}
-    mapping_value_name = "-".join(section_value_path)
-    if mapping_value_name not in cfg[CONFIG_SECTION_KEYRING_MAPPING]:
-        cfg[CONFIG_SECTION_KEYRING_MAPPING][mapping_value_name] = {}
-    cfg[CONFIG_SECTION_KEYRING_MAPPING][mapping_value_name][
-        CONFIG_VALUE_NAME_KEYRING_SERVICE
-    ] = service
-    cfg[CONFIG_SECTION_KEYRING_MAPPING][mapping_value_name][
-        CONFIG_VALUE_NAME_KEYRING_USERNAME
-    ] = username
 
 
 class AtbuConfigNode:
@@ -328,6 +223,8 @@ class AtbuConfig(AtbuConfigNode):
         CONFIG_SECTION_GENERAL: {},
         CONFIG_SECTION_STORAGE_DEFINITIONS: {},
     }
+
+    always_migrate: bool = False
 
     def __init__(self, path: Union[str, Path], cfg: dict = None):
         super().__init__(cfg=cfg)
@@ -399,6 +296,14 @@ configuration, you can choose to have one created for you.
     def path(self, value):
         self._path = Path(value)
 
+    @property
+    def version(self) -> str:
+        if not self.cfg:
+            raise InvalidConfiguration(f"Cannot find the configuration.")
+        if not self.cfg.get(CONFIG_VALUE_NAME_VERSION):
+            raise InvalidConfiguration(f"Cannot find the configuration's name.")
+        return self.cfg.get(CONFIG_VALUE_NAME_VERSION)
+
     def create_default_config(self):
         if not self._path:
             raise ValueError(
@@ -407,6 +312,22 @@ configuration, you can choose to have one created for you.
         logging.info(f"Writing new configuration: {self._path}")
         self._cfg = AtbuConfig.create_starting_config()
         self.save_config_file()
+
+    def create_config_file_numbered_backup(self):
+        backup_path = create_numbered_backup_of_file(
+            path=self.path,
+            not_exist_ok=True,
+        )
+        if backup_path is None:
+            if self.path.is_file():
+                raise AtbuException(f"Unable to backup config file: {str(self.path)}")
+            logging.warning(
+                f"The config file does not exist so was not backed up: {str(self.path)}"
+            )
+            return
+        logging.info(
+            f"The config file was backed up: {str(self.path)} -> to -> {str(backup_path)}"
+        )
 
     def save_config_file(self):
         if self._path.is_file():
@@ -446,15 +367,54 @@ configuration, you can choose to have one created for you.
         ):
             logging.error(f"The config name is invalid: {self._path}")
             raise InvalidConfigurationFile(f"The config name is invalid: {self._path}")
-        if (
-            not cfg.get(CONFIG_VALUE_NAME_VERSION)
-            or cfg[CONFIG_VALUE_NAME_VERSION] != "0.01"
-        ):  # TODO change constants
-            logging.error(f"The config version is invalid: {self._path}")
+        version_str = cfg.get(CONFIG_VALUE_NAME_VERSION)
+        if version_str not in ["0.01", ATBU_CONFIG_FILE_VERSION_STRING]:
+            logging.error(f"The config version '{version_str}' is invalid: {self._path}")
             raise InvalidConfigurationFile(
-                f"The config version is invalid: {self._path}"
+                f"The config version '{version_str}' is invalid: {self._path}"
             )
+        if version_str == "0.01" and ATBU_CONFIG_FILE_VERSION_STRING == "0.02":
+            self._upgrade_version_001_to_002(cfg=cfg)
+            # Migration successful, save configuration file.
+            self._cfg = cfg
+            self.save_config_file()
         self._cfg = cfg
+
+    def _upgrade_version_001_to_002(self, cfg: dict):
+        print(f"Configuration file: {self.path}")
+        print(f"Current configuration file version: {cfg.get(CONFIG_VALUE_NAME_VERSION)}")
+        print(f"Required configuration file version: {ATBU_CONFIG_FILE_VERSION_STRING}")
+        if self.always_migrate:
+            a = 'y'
+        else:
+            a = prompt_YN(
+                prompt_msg=(
+                    f"You must upgrade your configuration file from "
+                    f"{cfg.get(CONFIG_VALUE_NAME_VERSION)} to "
+                    f"{ATBU_CONFIG_FILE_VERSION_STRING} before proceeding."
+                ),
+                prompt_question=f"Proceed with configuration upgrade?",
+                default_enter_ans="n",
+            )
+            if a != "y":
+                raise InvalidConfigurationFile(
+                    f"The configuration was not upgraded. "
+                    f"You cannot use this version of the software with your current configuration. "
+                    f"Please use the proper version of software or upgrade your configuration files. "
+                    f"Ensure you have a backup of your configuration using the older software before "
+                    f"upgrading."
+                )
+            # After accepting initial migration, accept all others.
+            # Example: The first prompt is usually to upgrade the global config
+            # file (i.e., c:\Users\SomeUser\.atbu\atbu-config.json). When performing
+            # an operation on a local file system backup, that local file system backup
+            # configuration should also be upgraded.
+            AtbuConfig.always_migrate = True
+        self.create_config_file_numbered_backup()
+        # Migrate from 0.01 to 0.02. This also updates self.cfg but does not save it.
+        upgrade_storage_definitions_from_001_to_002(cfg=cfg)
+        # Success
+        cfg[CONFIG_VALUE_NAME_VERSION] = ATBU_CONFIG_FILE_VERSION_STRING
 
     def get_general_section(self) -> dict:
         return self._get_top_section(CONFIG_SECTION_GENERAL)
@@ -467,17 +427,9 @@ configuration, you can choose to have one created for you.
             raise InvalidConfiguration(f"Cannot find the configuration's name.")
         return name
 
-    def get_version(self) -> str:
-        if not self.cfg:
-            raise InvalidConfiguration(f"Cannot find the configuration.")
-        version = self.cfg.get(CONFIG_VALUE_NAME_VERSION)
-        if not version:
-            raise InvalidConfiguration(f"Cannot find the configuration's name.")
-        return version
-
     def validate_name_version(self):
         name = self.get_name()
-        version = self.get_version()
+        version = self.version
         if name != ATBU_CONFIG_NAME:
             raise InvalidConfiguration(
                 f"Invalid config name: Expected='{ATBU_CONFIG_NAME}' but got '{name}'"
@@ -606,18 +558,24 @@ configuration, you can choose to have one created for you.
     def get_storage_def_with_resolved_secrets_deep_copy(
         self, storage_def_name: str, keep_secrets_base64_encoded: bool = False
     ) -> dict:
-        storage_def = self.get_storage_def_dict_deep_copy(
-            storage_def_name=storage_def_name
+        storage_def_dict = self.get_storage_def_dict_deep_copy(
+            storage_def_name=storage_def_name,
         )
-        if not storage_def:
+        if not isinstance(storage_def_dict, dict):
             raise StorageDefinitionNotFoundError(
                 f"Cannot find storage definition "
-                f"{storage_def_name} in config file {str(self._path)}"
+                f"{storage_def_name} in config file {str(self.path)}"
             )
-        self._resolve_keyring_secrets(
-            storage_def=storage_def, base64_encoded_secrets=keep_secrets_base64_encoded
+
+        cred_set = StorageDefCredentialSet(
+            storage_def_name=storage_def_name,
+            storage_def_dict=storage_def_dict,
         )
-        return storage_def
+        cred_set.populate()
+        cred_set.unprotect(
+            base64_encoded_secrets=keep_secrets_base64_encoded,
+        )
+        return cred_set.storage_def_dict
 
     def get_storage_def_dict(self, storage_def_name, must_exist: bool = False) -> dict:
         storage_def_dict = self.get_storage_defs_section().get(storage_def_name)
@@ -675,22 +633,6 @@ configuration, you can choose to have one created for you.
         if not storage_def:
             return None
         return storage_def.get(CONFIG_SECTION_ENCRYPTION)
-
-    def get_storage_def_keyring_mapping_section(self, storage_def_name) -> dict:
-        storage_def = self.get_storage_def_dict(storage_def_name=storage_def_name)
-        if not storage_def:
-            return None
-        return storage_def.get(CONFIG_SECTION_KEYRING_MAPPING)
-
-    def get_storage_def_keyring_mapping_encryption_key_section(
-        self, storage_def_name
-    ) -> dict:
-        keyring_mapping = self.get_storage_def_keyring_mapping_section(
-            storage_def_name=storage_def_name
-        )
-        if not keyring_mapping:
-            return None
-        return keyring_mapping.get(CONFIG_SECTION_KEYRING_MAPPING_ENCRYPTION_KEY)
 
     def is_storage_def_configured_for_encryption(self, storage_def_name):
         storage_def = self.get_storage_def_dict(storage_def_name=storage_def_name)
@@ -849,7 +791,10 @@ configuration, you can choose to have one created for you.
                 f"'{storage_def_new_name}' but observed '{storage_def_name}'."
             )
         logging.info(f"Restoring secrets from backup file to keyring.")
-        restore_keyring_secrets(storage_def=storage_def_dict)
+        restore_keyring_secrets(
+            storage_def_name=storage_def_name,
+            storage_def=storage_def_dict,
+        )
         if storage_def_new_name in self.get_storage_defs_section():
             if prompt_if_exists:
                 print(
@@ -919,132 +864,3 @@ in this backup if you delete this configuration.
             config_section = config_section[CONFIG_SECTION_STORAGE_DEFINITIONS][
                 new_storage_def_name
             ]
-        # Rename service name in any encryption mappings...
-        keyring_section: dict = config_section.get(CONFIG_SECTION_KEYRING_MAPPING)
-        if not keyring_section:
-            return
-        for keyring_lookup_info in keyring_section.values():
-            if (
-                isinstance(keyring_lookup_info, dict)
-                and CONFIG_VALUE_NAME_KEYRING_SERVICE in keyring_lookup_info
-            ):
-                keyring_lookup_info[
-                    CONFIG_VALUE_NAME_KEYRING_SERVICE
-                ] = new_storage_def_name
-
-    def _resolve_keyring_secrets(
-        self,
-        storage_def: dict,
-        base64_encoded_secrets: bool = False,
-    ):
-        # Access 'keyring-mapping' section.
-        keyring_section: dict = storage_def.get(CONFIG_SECTION_KEYRING_MAPPING)
-        if not keyring_section:
-            return
-
-        # For each 'keyring-mapping' item:
-        #    item's name:
-        #       encoded with string such as 'driver-secret' to indicate mapping
-        #       relates from secret to { ... "driver": { ... "secret": <secret> ... } ... }
-        #    items's value:
-        #       indicates keyring service/username with secret.
-        affected_config_path: str
-        for affected_config_path, keyring_lookup_info in keyring_section.items():
-            # Split item's name to get the storage definition path parts.
-            affected_config_path_parts = affected_config_path.split("-")
-
-            # Get the service/user names.
-            service_name = keyring_lookup_info[CONFIG_VALUE_NAME_KEYRING_SERVICE]
-            username = keyring_lookup_info[CONFIG_VALUE_NAME_KEYRING_USERNAME]
-
-            # Walk from top of config_section down to the second-to-last section which is
-            # where the secret goes.
-            affected_section = storage_def
-            for section_part in affected_config_path_parts[:-1]:
-                affected_section = affected_section[section_part]
-
-            # Given service/user names, get the secret.
-            (_, password_type, cba_password) = get_password_from_keyring(
-                service_name=service_name,
-                username=username,
-                keep_secret_base64_encoded=base64_encoded_secrets,
-            )
-
-            secret_for_caller = cba_password
-            if base64_encoded_secrets and isinstance(cba_password, CredentialByteArray):
-                secret_for_caller = cba_password.decode("utf-8")
-                if not is_valid_base64_string(str_to_check=secret_for_caller):
-                    raise InvalidBase64StringError(
-                        f"The secret for '{affected_config_path_parts[-1]}' is not base64 encoded."
-                    )
-
-            affected_section[affected_config_path_parts[-1]] = secret_for_caller
-            affected_section[CONFIG_PASSWORD_TYPE] = password_type
-
-    def get_storage_def_encryption_credential(
-        self, storage_def_name, unlock=False
-    ) -> CredentialAesKey:
-        storage_def_encryption_key_section = (
-            self.get_storage_def_keyring_mapping_encryption_key_section(
-                storage_def_name=storage_def_name
-            )
-        )
-        if not storage_def_encryption_key_section:
-            raise CredentialNotFoundError(
-                f"The credential for '{storage_def_name}' was not found. "
-                f"Encryption key section not found."
-            )
-        service_name = storage_def_encryption_key_section.get(
-            CONFIG_VALUE_NAME_KEYRING_SERVICE
-        )
-        username = storage_def_encryption_key_section.get(
-            CONFIG_VALUE_NAME_KEYRING_USERNAME
-        )
-        if not service_name or not username:
-            raise CredentialNotFoundError(
-                f"The credential for '{storage_def_name}' was not found. "
-                f"Keyring service and/or username not found."
-            )
-        if username != CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION:
-            raise CredentialNotFoundError(
-                f"The credential for '{storage_def_name}' was not found. "
-                f"The username is not {CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION}."
-            )
-
-        credential = get_enc_credential_from_keyring(
-            service_name=service_name, username=username, unlock=unlock
-        )
-
-        return credential
-
-    def set_config_keyring_mapping(
-        self, storage_def_name: str, username: str, section_path: str
-    ):
-        """Given a storage definition, storage_def_name, set the configuration so that the
-        credentials defined by section_path are setup to indicate they are stored in the
-        keyring under a specified service and username. The storage_def_name and username become
-        the keyring service and username respectively.
-        """
-        storage_def_dict = self.get_storage_def_dict_deep_copy(
-            storage_def_name=storage_def_name
-        )
-        if storage_def_dict is None:
-            storage_def_dict = {}
-        # Add the value keyring in the respective section_path. Later, when read, this effectively
-        # causes an indirection to the appropriate keyring section of the same config file.
-        add_path_value(
-            storage_def_dict=storage_def_dict,
-            section_value_path=section_path,
-            value="keyring",
-        )
-        # Add the keyring settings indirected by the prior change above.
-        add_keyring_mapping(
-            cfg=storage_def_dict,
-            section_value_path=section_path,
-            service=storage_def_name,
-            username=username,
-        )
-        storage_defs_update = {
-            CONFIG_SECTION_STORAGE_DEFINITIONS: {storage_def_name: storage_def_dict}
-        }
-        deep_union_dicts(dest=self.cfg, src=storage_defs_update)
