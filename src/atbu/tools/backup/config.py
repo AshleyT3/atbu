@@ -502,11 +502,20 @@ configuration, you can choose to have one created for you.
     def find_filesystem_storage_def(
         self, storage_path_to_find: Path
     ) -> tuple[str, dict]:
-        for storage_def_name, storage_def in self._cfg[
-            CONFIG_SECTION_STORAGE_DEFINITIONS
-        ].items():
-            storage_def_path = Path(storage_def[CONFIG_VALUE_NAME_CONTAINER])
-            if storage_path_to_find == storage_def_path:
+        storage_defs_section = self.get_storage_defs_section()
+        _, storage_path_to_find_wo_drive = os.path.splitdrive(storage_path_to_find)
+        for storage_def_name, storage_def in storage_defs_section.items():
+            if len(storage_defs_section) == 1:
+                # User specified file path to valid filesystem storage config file.
+                # If there's only one definition, return that.
+                return storage_def_name, storage_def
+            # If caller path without drive letter matches filesystem without drive
+            # letter, return that. (Remove drive letter because it is the original and
+            # can change.)
+            _, storage_def_path_wo_drive = os.path.splitdrive(
+                storage_def[CONFIG_VALUE_NAME_CONTAINER]
+            )
+            if storage_path_to_find_wo_drive == storage_def_path_wo_drive:
                 return storage_def_name, storage_def
         return None, None
 
