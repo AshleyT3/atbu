@@ -212,9 +212,7 @@ class FileInformation:
 
     @property
     def modified_date_stamp_ISO8601_local(self):
-        return self._get_date_stamp_ISO8601(
-            posix_timestamp=self.modified_time_posix
-        )
+        return self._get_date_stamp_ISO8601(posix_timestamp=self.modified_time_posix)
 
     @property
     def modified_date_stamp_ISO8601_utc(self):
@@ -251,9 +249,7 @@ class FileInformation:
 
     @property
     def accessed_date_stamp_ISO8601_local(self):
-        return self._get_date_stamp_ISO8601(
-            posix_timestamp=self.accessed_time_posix
-        )
+        return self._get_date_stamp_ISO8601(posix_timestamp=self.accessed_time_posix)
 
     @property
     def accessed_date_stamp_ISO8601_utc(self):
@@ -510,7 +506,6 @@ class FileInformationPersistent(FileInformation):
                 f"v={self.version} {self.info_data_file_path}"
             )
         self.primary_digest = self.get_current_digest()
-
 
     def write_info_data_file(self):
         cp = self._create_config_parser()

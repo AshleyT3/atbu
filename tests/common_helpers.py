@@ -885,7 +885,7 @@ def validate_cred_export_import(
         #
         atbu_cfg = AtbuConfig.create_from_file(path=atbu_cfg_path)
 
-        #TODO: review unlock/lock state, save state, dirty.
+        # TODO: review unlock/lock state, save state, dirty.
         cred_set = StorageDefCredentialSet(
             storage_def_name=storage_def_name.lower(),
             storage_def_dict=atbu_cfg.get_storage_def_dict(
@@ -1063,7 +1063,7 @@ def validate_backup_recovery(
         #
         atbu_cfg = AtbuConfig.create_from_file(path=atbu_cfg_path)
 
-        #TODO: review unlock/lock state, save state, dirty.
+        # TODO: review unlock/lock state, save state, dirty.
         cred_set = StorageDefCredentialSet(
             storage_def_name=storage_def_name.lower(),
             storage_def_dict=atbu_cfg.get_storage_def_dict(
@@ -1080,7 +1080,6 @@ def validate_backup_recovery(
         cred_set.get_encryption_desc_cred().credential = credential_new
         cred_set.protect()
         cred_set.save()
-
 
         #
         # Attempt restore without encryption key, observe failure.

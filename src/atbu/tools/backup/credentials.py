@@ -66,10 +66,12 @@ from .yubikey_helpers import (
 
 _MAX_PASSWORD = 100
 
+
 def zero_bytearray(ba: bytearray):
     for v in [0xCC, 0x55, 0x00]:
         for i, _ in enumerate(ba):
             ba[i] = v
+
 
 class CredentialByteArray(bytearray):
     """A bytearray with override to allow zeroing out of bytearray
@@ -114,6 +116,7 @@ class CredentialByteArray(bytearray):
     def create_from_string(the_string: str):
         return CredentialByteArray(the_string.encode("utf-8"))
 
+
 class Credential:
     """A Credential instance is one credential, which can be an encryption key or
     any other kind of secret that can be represented as bytes.
@@ -147,15 +150,15 @@ class Credential:
 
         super().__init__(**kwargs)
 
-        self.password = None # The password used by PBKDF2 to derive the KEK and password auth hash.
-        self.salt = None # The salt used by PBKDF2.
-        self.password_auth_hash = None # The password auth hash resulting from PBKDF2.
-        self.key_encryption_key = None # The KEK resulting from PBKDF2.
-        self.iv = None # The IV associated with encrypting/decrypting the key.
-        self.encrypted_key = None # The encrypted (protected) key.
-        self.the_key = None # The unencrypted (unprotected) key (aka "secret").
-        self.pbkdf2_result = None # The raw PBKDF2 result.
-        self.work_factor = None # The work factor used by PBKDF2.
+        self.password = None  # The password used by PBKDF2 to derive the KEK and password auth hash.
+        self.salt = None  # The salt used by PBKDF2.
+        self.password_auth_hash = None  # The password auth hash resulting from PBKDF2.
+        self.key_encryption_key = None  # The KEK resulting from PBKDF2.
+        self.iv = None  # The IV associated with encrypting/decrypting the key.
+        self.encrypted_key = None  # The encrypted (protected) key.
+        self.the_key = None  # The unencrypted (unprotected) key (aka "secret").
+        self.pbkdf2_result = None  # The raw PBKDF2 result.
+        self.work_factor = None  # The work factor used by PBKDF2.
 
         self.clear()
         self.set(
@@ -495,7 +498,6 @@ class Credential:
 
 
 class CredentialAesKey(Credential):
-
     def __init__(
         self,
         password: Union[str, CredentialByteArray] = None,
@@ -603,9 +605,7 @@ class DescribedCredential:
 
     def get_credential_base64(self) -> CredentialByteArray:
         return CredentialByteArray(
-            base64.b64encode(
-                self.credential.get_material_as_bytes()
-            )
+            base64.b64encode(self.credential.get_material_as_bytes())
         )
 
     @staticmethod
@@ -673,9 +673,7 @@ def raw_cred_bytes_to_type_base64_cred_bytes(
     refactor churn.
     """
     if not isinstance(cred_ascii_bytes, CredentialByteArray):
-        raise CredentialNotFoundError(
-            f"The credential was not found: "
-        )
+        raise CredentialNotFoundError(f"The credential was not found: ")
     password_parts = cred_ascii_bytes.split(b":", maxsplit=1)
     if len(password_parts) != 2:
         raise CredentialInvalid(
@@ -693,18 +691,19 @@ def raw_cred_bytes_to_type_base64_cred_bytes(
 
 
 class CredentialStoreProvider(ABC):
-
     @abstractmethod
     def set_cred_bytes(
         self,
         config_name: str,
         credential_name: str,
-        cred_ascii_bytes: CredentialByteArray
+        cred_ascii_bytes: CredentialByteArray,
     ):
         pass
 
     @abstractmethod
-    def get_cred_bytes(self, config_name: str, credential_name: str) -> CredentialByteArray:
+    def get_cred_bytes(
+        self, config_name: str, credential_name: str
+    ) -> CredentialByteArray:
         pass
 
     @abstractmethod
@@ -713,12 +712,11 @@ class CredentialStoreProvider(ABC):
 
 
 class CredentialStoreKeyringProvider(CredentialStoreProvider):
-
     def set_cred_bytes(
         self,
         config_name: str,
         credential_name: str,
-        cred_ascii_bytes: CredentialByteArray
+        cred_ascii_bytes: CredentialByteArray,
     ):
         keyring.set_password(
             service_name=config_name,
@@ -727,9 +725,7 @@ class CredentialStoreKeyringProvider(CredentialStoreProvider):
         )
 
     def get_cred_bytes(
-        self,
-        config_name: str,
-        credential_name: str
+        self, config_name: str, credential_name: str
     ) -> CredentialByteArray:
         return CredentialByteArray(
             keyring.get_password(
@@ -750,17 +746,13 @@ _credential_provider_cls = CredentialStoreKeyringProvider
 
 
 class CredentialStore:
-
     def __init__(self, provider: CredentialStoreProvider = None) -> None:
         super().__init__()
         if provider is None:
             provider = _credential_provider_cls()
         self.provider = provider
 
-    def set_credential(
-        self,
-        desc_cred: DescribedCredential
-    ) -> CredentialByteArray:
+    def set_credential(self, desc_cred: DescribedCredential) -> CredentialByteArray:
         if not desc_cred.config_name:
             raise CredentialInvalid(
                 f"Cannot store credential. The config_name must be a non-empty string."
@@ -784,7 +776,9 @@ class CredentialStore:
 
         cba_password_base64 = desc_cred.get_credential_base64()
         cred_ascii_bytes = CredentialByteArray(
-            f"{desc_cred.credential_kind[0]}:{str(cba_password_base64, 'utf-8')}".encode("utf-8")
+            f"{desc_cred.credential_kind[0]}:{str(cba_password_base64, 'utf-8')}".encode(
+                "utf-8"
+            )
         )
 
         # For any desired caller rollback, get the existing credential.
@@ -807,7 +801,9 @@ class CredentialStore:
 
         return cba_old
 
-    def get_credential(self, config_name: str, credential_name: str) -> DescribedCredential:
+    def get_credential(
+        self, config_name: str, credential_name: str
+    ) -> DescribedCredential:
 
         cred_ascii_bytes = self.provider.get_cred_bytes(
             config_name=config_name,
@@ -979,7 +975,9 @@ def prompt_for_password_with_yubikey_opt(
     return password
 
 
-def prompt_for_password_unlock_credential(credential: Union[Credential, CredentialAesKey]):
+def prompt_for_password_unlock_credential(
+    credential: Union[Credential, CredentialAesKey]
+):
     """Unlock a CredentialAesKey instance which is to make its private key/secret
     available in the clear. If the private key is password-protected, ask
     for a password. The result of calling this function is an unlocked

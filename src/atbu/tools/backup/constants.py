@@ -169,12 +169,11 @@ PASSWORD_KINDS = [
     CONFIG_PASSWORD_KIND_ENVVAR,
 ]
 
-PASSWORD_KIND_CHAR_TO_KIND = {
-    i[0]: i for i in PASSWORD_KINDS
-}
+PASSWORD_KIND_CHAR_TO_KIND = {i[0]: i for i in PASSWORD_KINDS}
 
 CRED_SECRET_KIND_STORAGE_FRIENDLY_NAME = "storage secret"
 CRED_SECRET_KIND_ENCRYPTION_FRIENDLY_NAME = "backup encryption"
+
 
 @dataclass
 class CredentialDefinition:
@@ -182,6 +181,7 @@ class CredentialDefinition:
     friendly_name: str
     store_credential_name: str
     section_path: str
+
 
 CREDENTIAL_DEFINITIONS = {
     CRED_SECRET_KIND_STORAGE_FRIENDLY_NAME: CredentialDefinition(
@@ -195,7 +195,7 @@ CREDENTIAL_DEFINITIONS = {
         friendly_name=CRED_SECRET_KIND_ENCRYPTION_FRIENDLY_NAME,
         store_credential_name=CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION,
         section_path=CRED_SECRET_KIND_ENCRYPTION,
-    )
+    ),
 }
 
 ALLOWED_AES_KEY_BIT_LENGTHS = [128, 192, 256]

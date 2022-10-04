@@ -356,7 +356,7 @@ class Verify:
                 )
                 wait_futures_to_regulate(
                     fs=pending_verifications,
-                    max_allowed_pending=Verify.MAX_SIMULTANEOUS_FILES
+                    max_allowed_pending=Verify.MAX_SIMULTANEOUS_FILES,
                 )
                 future = self._subprocess_pipeline.submit(
                     work_item=BackupPipelineWorkItem(

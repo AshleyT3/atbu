@@ -21,6 +21,7 @@ import keyring
 from atbu.common.util_helpers import (
     is_valid_base64_string,
 )
+
 # Import module to mock credentials.* once directly.
 import atbu.tools.backup.credentials as credentials
 from .constants import (
@@ -45,6 +46,7 @@ from .credentials import (
     DescribedCredential,
 )
 from .storage_def_credentials import StorageDefCredentialSet
+
 
 @dataclass
 class Version_001:
@@ -88,6 +90,7 @@ class Version_001:
     CONFIG_VALUE_NAME_ENCRYPTION_KEY = "key"
 
     CONFIG_SECTION_STORAGE_DEFINITIONS = "storage-definitions"
+
 
 def set_password_to_keyring_001(
     service_name: str,
@@ -135,6 +138,7 @@ def set_password_to_keyring_001(
         username=username,
         password=f"{password_type_code}:{str(password_bytes, 'utf-8')}",
     )
+
 
 def _get_base64_password_from_keyring(
     service_name: str,
@@ -227,6 +231,7 @@ def _unlock_credential_001(credential: CredentialAesKey):
                 "Unexpected failure, canonot access the credential."
             )
 
+
 def _get_password_from_keyring(
     service_name: str,
     username: str,
@@ -246,7 +251,9 @@ def _get_password_from_keyring(
         username == Version_001.CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION
         and password_type == Version_001.CONFIG_PASSWORD_TYPE_ACTUAL
     ):
-        credential = CredentialAesKey.create_credential_from_bytes(cred_bytes=cba_password)
+        credential = CredentialAesKey.create_credential_from_bytes(
+            cred_bytes=cba_password
+        )
         _unlock_credential_001(credential=credential)
         # The actual 0.01 code only propagates the key but migration requires
         # the CredentialAesKey instance.
@@ -256,11 +263,14 @@ def _get_password_from_keyring(
 
     return (password_type_code, password_type, cba_password)
 
+
 def _resolve_keyring_secrets(
     storage_def_dict: dict,
 ):
     # Access 'keyring-mapping' section.
-    keyring_section: dict = storage_def_dict.get(Version_001.CONFIG_SECTION_KEYRING_MAPPING)
+    keyring_section: dict = storage_def_dict.get(
+        Version_001.CONFIG_SECTION_KEYRING_MAPPING
+    )
     if not keyring_section:
         return
 
@@ -276,7 +286,9 @@ def _resolve_keyring_secrets(
         affected_config_path_parts = affected_config_path.split("-")
 
         # Get the service/user names.
-        service_name = keyring_lookup_info[Version_001.CONFIG_VALUE_NAME_KEYRING_SERVICE]
+        service_name = keyring_lookup_info[
+            Version_001.CONFIG_VALUE_NAME_KEYRING_SERVICE
+        ]
         username = keyring_lookup_info[Version_001.CONFIG_VALUE_NAME_KEYRING_USERNAME]
 
         # Walk from top of config_section down to the second-to-last section which is
@@ -339,7 +351,8 @@ def prepare_for_storage_def_migration_001(
             if not isinstance(storage_secret, CredentialByteArray):
                 raise ConfigMigrationError(
                     f"Expected storage secret to be CredentialByteArray but got "
-                    f"'{type(storage_secret)}'.")
+                    f"'{type(storage_secret)}'."
+                )
             cred_storage = Credential(the_key=storage_secret)
             cred_storage_type = storage_section.get(Version_001.CONFIG_PASSWORD_TYPE)
             if not isinstance(cred_storage_type, str) or len(cred_storage_type) == 0:
@@ -352,7 +365,9 @@ def prepare_for_storage_def_migration_001(
             print(f"No cloud storage section found for '{storage_def_name}'.")
         encryption_section = storage_def_dict.get(Version_001.CONFIG_SECTION_ENCRYPTION)
         if isinstance(encryption_section, dict):
-            cred_encryption = encryption_section.get(Version_001.CONFIG_VALUE_NAME_ENCRYPTION_KEY)
+            cred_encryption = encryption_section.get(
+                Version_001.CONFIG_VALUE_NAME_ENCRYPTION_KEY
+            )
             if not isinstance(cred_encryption, CredentialAesKey):
                 raise ConfigMigrationError(
                     f"Expected CredentialAesKey but got {type(cred_encryption)}"
@@ -409,6 +424,7 @@ def prepare_for_storage_def_migration_001(
             f"migration_items={len(migration_items)}."
         )
     return migration_items
+
 
 def upgrade_storage_definitions_from_001_to_002(
     cfg: dict,

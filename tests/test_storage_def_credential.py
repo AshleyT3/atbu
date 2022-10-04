@@ -48,7 +48,7 @@ from atbu.tools.backup.credentials import (
     CredentialByteArray,
     Credential,
     CredentialAesKey,
-    DescribedCredential
+    DescribedCredential,
 )
 from atbu.tools.backup.config import AtbuConfig
 from atbu.tools.backup.storage_def_credentials import StorageDefCredentialSet
@@ -63,11 +63,14 @@ ATBU_TEST_BACKUP_NAME = "AtbuTestBackup-5b497bb3-c9ef-48a9-af7b-2327fc17fb65"
 SIMPLE_SECRET = "secret-1234567890!"
 SIMPLE_PASSWORD = "1234567890abcdefghij$"
 
+
 def setup_module(module):  # pylint: disable=unused-argument
     pass
 
+
 def teardown_module(module):  # pylint: disable=unused-argument
     pass
+
 
 def add_encryption_credential_to_set(
     storage_def_name: str,
@@ -91,13 +94,16 @@ def add_encryption_credential_to_set(
             password=CredentialByteArray(credential_password),
         )
 
+
 def add_storage_credential_to_set(
     storage_def_name: str,
     cred_set: StorageDefCredentialSet,
     storage_secret: str,
     credential_password: CredentialByteArray = None,
 ):
-    cred_storage = Credential(the_key=CredentialByteArray(storage_secret.encode("utf-8")))
+    cred_storage = Credential(
+        the_key=CredentialByteArray(storage_secret.encode("utf-8"))
+    )
     desc_cred_encryption = cred_set.get_encryption_desc_cred()
     if desc_cred_encryption is not None:
         cred_encryption = desc_cred_encryption.credential
@@ -117,6 +123,7 @@ def add_storage_credential_to_set(
         cred_set.get_storage_desc_cred().credential.set(
             password=CredentialByteArray(credential_password),
         )
+
 
 def create_test_storage_def_credential_set(
     storage_def_name: str,
@@ -146,6 +153,7 @@ def create_test_storage_def_credential_set(
         )
 
     return cred_set
+
 
 @pytest.mark.parametrize(
     "is_storage_secret_in_config,is_populate_init,is_password_protected",
@@ -186,7 +194,7 @@ def create_test_storage_def_credential_set(
             True,
             id="secret_in_config=True,populate_init=True,password_protected=True",
         ),
-    ]
+    ],
 )
 def test_storage_def_credential_set(
     tmp_path: Path,
@@ -214,7 +222,7 @@ def test_storage_def_credential_set(
     else:
         other_kv_pairs = {
             CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY: "test-storage-key",
-            CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET: f"a:K={storage_secret.encode('utf-8').hex()}"
+            CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET: f"a:K={storage_secret.encode('utf-8').hex()}",
         }
 
     atbu_cfg.create_storage_def(
@@ -228,7 +236,9 @@ def test_storage_def_credential_set(
     if not is_populate_init:
         cred_set = create_test_storage_def_credential_set(
             storage_def_name=storage_def_name,
-            storage_def_dict=atbu_cfg.get_storage_def_dict(storage_def_name=storage_def_name),
+            storage_def_dict=atbu_cfg.get_storage_def_dict(
+                storage_def_name=storage_def_name
+            ),
             include_storage_cred=True,
             storage_secret=storage_secret,
             credential_password=credential_password,
@@ -236,7 +246,9 @@ def test_storage_def_credential_set(
     else:
         cred_set = StorageDefCredentialSet(
             storage_def_name=storage_def_name,
-            storage_def_dict=atbu_cfg.get_storage_def_dict(storage_def_name=storage_def_name),
+            storage_def_dict=atbu_cfg.get_storage_def_dict(
+                storage_def_name=storage_def_name
+            ),
         )
         cred_set.populate()
 
@@ -261,7 +273,9 @@ def test_storage_def_credential_set(
     atbu_cfg.save_config_file()
 
     atbu_cfg2 = AtbuConfig.access_default_config()
-    storage_def_dict2 = atbu_cfg2.get_storage_def_dict(storage_def_name=storage_def_name)
+    storage_def_dict2 = atbu_cfg2.get_storage_def_dict(
+        storage_def_name=storage_def_name
+    )
     cred_set = StorageDefCredentialSet(
         storage_def_name=storage_def_name,
         storage_def_dict=storage_def_dict2,
@@ -274,20 +288,38 @@ def test_storage_def_credential_set(
         CRED_SECRET_KIND_STORAGE.split("-")
     )
 
-    assert encryption_dict[encryption_key_value_name] == CONFIG_KEY_VALUE_KEYRING_INDIRECTION
-    assert storage_dict[storage_secret_value_name] == CONFIG_KEY_VALUE_KEYRING_INDIRECTION
+    assert (
+        encryption_dict[encryption_key_value_name]
+        == CONFIG_KEY_VALUE_KEYRING_INDIRECTION
+    )
+    assert (
+        storage_dict[storage_secret_value_name] == CONFIG_KEY_VALUE_KEYRING_INDIRECTION
+    )
 
     cred_set.populate()
     cred_set.unprotect(password=credential_password)
 
-    assert encryption_dict[encryption_key_value_name] != CONFIG_KEY_VALUE_KEYRING_INDIRECTION
-    assert storage_dict[storage_secret_value_name] != CONFIG_KEY_VALUE_KEYRING_INDIRECTION
-    assert encryption_dict[encryption_key_value_name] == desc_cred_encryption.credential.the_key
-    assert storage_dict[storage_secret_value_name] == desc_cred_storage.credential.the_key
+    assert (
+        encryption_dict[encryption_key_value_name]
+        != CONFIG_KEY_VALUE_KEYRING_INDIRECTION
+    )
+    assert (
+        storage_dict[storage_secret_value_name] != CONFIG_KEY_VALUE_KEYRING_INDIRECTION
+    )
+    assert (
+        encryption_dict[encryption_key_value_name]
+        == desc_cred_encryption.credential.the_key
+    )
+    assert (
+        storage_dict[storage_secret_value_name] == desc_cred_storage.credential.the_key
+    )
 
     desc_cred_encryption2 = cred_set.get_encryption_desc_cred()
     desc_cred_storage2 = cred_set.get_storage_desc_cred()
-    assert desc_cred_encryption2.credential.the_key == desc_cred_encryption.credential.the_key
+    assert (
+        desc_cred_encryption2.credential.the_key
+        == desc_cred_encryption.credential.the_key
+    )
     assert desc_cred_encryption2.config_name == desc_cred_encryption.config_name
     assert desc_cred_encryption2.credential_name == desc_cred_encryption.credential_name
     assert desc_cred_encryption2.credential_kind == desc_cred_encryption.credential_kind

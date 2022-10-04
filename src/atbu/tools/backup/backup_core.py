@@ -2960,7 +2960,9 @@ class Backup:
                         logging.info(f"Skipping unchanged file: {file_info.path}")
                         self._unchanged_skipped_files.append(file_info)
                         file_info.is_unchanged_since_last = True
-                        file_info.deduplication_option = existing_fi.deduplication_option
+                        file_info.deduplication_option = (
+                            existing_fi.deduplication_option
+                        )
                         file_info.backing_fi = existing_fi
                         # For incremental, there is only date/size check for same path
                         # to see if there is a match. When such a match occurs, set
@@ -2988,7 +2990,7 @@ class Backup:
                         )
                 wait_futures_to_regulate(
                     fs=pending_backups,
-                    max_allowed_pending=Backup.MAX_SIMULTANEOUS_FILES
+                    max_allowed_pending=Backup.MAX_SIMULTANEOUS_FILES,
                 )
                 pending_backup_fut = self._subprocess_pipeline.submit(
                     work_item=BackupPipelineWorkItem(

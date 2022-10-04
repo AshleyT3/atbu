@@ -39,7 +39,9 @@ from atbu.common.util_helpers import (
     create_numbered_backup_of_file,
 )
 
-from atbu.tools.backup.config_migration_helpers import upgrade_storage_definitions_from_001_to_002
+from atbu.tools.backup.config_migration_helpers import (
+    upgrade_storage_definitions_from_001_to_002,
+)
 
 from .constants import *
 from .exception import *
@@ -47,6 +49,7 @@ from .storage_def_credentials import (
     StorageDefCredentialSet,
     restore_keyring_secrets,
 )
+
 
 def parse_storage_def_specifier(storage_location) -> str:
     what_which = storage_location.lower().split(":", maxsplit=1)
@@ -369,7 +372,9 @@ configuration, you can choose to have one created for you.
             raise InvalidConfigurationFile(f"The config name is invalid: {self._path}")
         version_str = cfg.get(CONFIG_VALUE_NAME_VERSION)
         if version_str not in ["0.01", ATBU_CONFIG_FILE_VERSION_STRING]:
-            logging.error(f"The config version '{version_str}' is invalid: {self._path}")
+            logging.error(
+                f"The config version '{version_str}' is invalid: {self._path}"
+            )
             raise InvalidConfigurationFile(
                 f"The config version '{version_str}' is invalid: {self._path}"
             )
@@ -382,10 +387,12 @@ configuration, you can choose to have one created for you.
 
     def _upgrade_version_001_to_002(self, cfg: dict):
         print(f"Configuration file: {self.path}")
-        print(f"Current configuration file version: {cfg.get(CONFIG_VALUE_NAME_VERSION)}")
+        print(
+            f"Current configuration file version: {cfg.get(CONFIG_VALUE_NAME_VERSION)}"
+        )
         print(f"Required configuration file version: {ATBU_CONFIG_FILE_VERSION_STRING}")
         if self.always_migrate:
-            a = 'y'
+            a = "y"
         else:
             a = prompt_YN(
                 prompt_msg=(

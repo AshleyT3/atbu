@@ -30,6 +30,7 @@ from .credentials import (
     raw_cred_bytes_to_type_base64_cred_bytes,
 )
 
+
 def get_credential_class(
     store_credential_name: str,
 ):
@@ -43,9 +44,7 @@ def get_credential_class(
     elif store_credential_name == CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD:
         cls = Credential
     else:
-        raise ValueError(
-            f"Unexpected: store_credential_name={store_credential_name}"
-        )
+        raise ValueError(f"Unexpected: store_credential_name={store_credential_name}")
     return cls
 
 
@@ -65,6 +64,7 @@ class StorageDefCredentialSet:
         self.storage_def_name = storage_def_name
         self.storage_def_dict = storage_def_dict
         self.storage_def_creds = list[StorageDefCredential]()
+
     def get_affected_section(
         self,
         affected_config_path_parts: Union[str, list[str]],
@@ -87,6 +87,7 @@ class StorageDefCredentialSet:
                 affected_section[section_part] = {}
             affected_section = affected_section[section_part]
         return affected_section, affected_config_path_parts[-1]
+
     def populate(self):
         """For each credential associated with this set's storage definition,
         add the credential to the set.
@@ -97,10 +98,7 @@ class StorageDefCredentialSet:
             )
         for _, cred_def in CREDENTIAL_DEFINITIONS.items():
 
-            (
-                affected_section,
-                affected_section_key,
-            ) = self.get_affected_section(
+            (affected_section, affected_section_key,) = self.get_affected_section(
                 affected_config_path_parts=cred_def.section_path,
             )
 
@@ -140,15 +138,13 @@ class StorageDefCredentialSet:
                 desc_cred=desc_cred,
                 affected_config_path_parts=cred_def.section_path,
             )
+
     def append(
         self,
         desc_cred: DescribedCredential,
         affected_config_path_parts: Union[str, list[str]],
     ):
-        (
-            affected_section,
-            affected_section_key,
-        ) = self.get_affected_section(
+        (affected_section, affected_section_key,) = self.get_affected_section(
             affected_config_path_parts=affected_config_path_parts,
         )
         self.storage_def_creds.append(
@@ -158,6 +154,7 @@ class StorageDefCredentialSet:
                 affected_section_key=affected_section_key,
             )
         )
+
     def set_password(
         self,
         cred_password: CredentialByteArray,
@@ -174,6 +171,7 @@ class StorageDefCredentialSet:
                 credential.set(password=CredentialByteArray(cred_password))
             else:
                 credential.clear_password_protection()
+
     def unprotect(
         self,
         base64_encoded_secrets: bool = False,
@@ -191,7 +189,10 @@ class StorageDefCredentialSet:
                     )
                 password_protected_status = False
             else:
-                if password_protected_status is not None and not password_protected_status:
+                if (
+                    password_protected_status is not None
+                    and not password_protected_status
+                ):
                     # A previous credential in the set was *not* password-protected.
                     # This is currently not a use case.
                     raise CredentialSetInvalid(
@@ -241,6 +242,7 @@ class StorageDefCredentialSet:
             storage_def_cred.desc_cred.credential.encrypt_key()
             print(f"encrypted.")
             credential.clear_password()
+
     def save(self):
         rollback_info = []
         try:
@@ -274,6 +276,7 @@ class StorageDefCredentialSet:
             except BaseException as ex2:
                 print(f"Rollback error: {ex2}")
             raise
+
     def get_desc_cred(
         self,
         credential_name: str,
@@ -283,10 +286,16 @@ class StorageDefCredentialSet:
             if cred_name == credential_name:
                 return storage_def_cred.desc_cred
         return None
+
     def get_encryption_desc_cred(self):
-        return self.get_desc_cred(credential_name=CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION)
+        return self.get_desc_cred(
+            credential_name=CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION
+        )
+
     def get_storage_desc_cred(self):
-        return self.get_desc_cred(credential_name=CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD)
+        return self.get_desc_cred(
+            credential_name=CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD
+        )
 
 
 def prompt_user_password_file_does_not_exist(default_filename: str):
@@ -322,7 +331,9 @@ def restore_keyring_secrets(
         if affected_section is None or len(affected_section) == 0:
             # TODO: Consider determining from file what must be present.
             # For now, output a message to assist with refactoring verification.
-            print(f"The credential for '{cred_def_friendly_name}' not found. Continuing...")
+            print(
+                f"The credential for '{cred_def_friendly_name}' not found. Continuing..."
+            )
             continue
         password_type = affected_section.get(CONFIG_PASSWORD_TYPE)
         if password_type is None:
@@ -330,9 +341,7 @@ def restore_keyring_secrets(
                 f"restore_keyring_secrets: Cannot find credential type."
             )
         base64_cred_str = affected_section[affected_config_path_parts[-1]]
-        cba_password = CredentialByteArray(
-            base64_cred_str.encode("utf-8")
-        )
+        cba_password = CredentialByteArray(base64_cred_str.encode("utf-8"))
 
         desc_cred = DescribedCredential.create_from_base64(
             config_name=storage_def_name,
@@ -347,7 +356,9 @@ def restore_keyring_secrets(
             encrypt_key = False
             if credential.is_password_protected and not credential.is_private_key_ready:
                 print(f"An OAuth file name credential is password-protected.")
-                print(f"To validate the filename, you need to enter the backup password.")
+                print(
+                    f"To validate the filename, you need to enter the backup password."
+                )
                 prompt_for_password_unlock_credential(
                     credential=credential,
                 )
@@ -384,4 +395,6 @@ def restore_keyring_secrets(
                 credential.encrypt_key()
 
         CredentialStore().set_credential(desc_cred=desc_cred)
-        affected_section[affected_config_path_parts[-1]] = CONFIG_KEY_VALUE_KEYRING_INDIRECTION
+        affected_section[
+            affected_config_path_parts[-1]
+        ] = CONFIG_KEY_VALUE_KEYRING_INDIRECTION

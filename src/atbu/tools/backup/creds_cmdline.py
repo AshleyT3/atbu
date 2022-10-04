@@ -55,7 +55,7 @@ def password_prompt(
         what = "password"
 
     def _is_password_valid(password: CredentialByteArray) -> bool:
-        MAX_SIZE_IN_BYTES = 500 # Arbitrary, big enough.
+        MAX_SIZE_IN_BYTES = 500  # Arbitrary, big enough.
         if len(password) > MAX_SIZE_IN_BYTES:
             print(f"The {what} you entered is too long.")
             print(f"The maximum length is {MAX_SIZE_IN_BYTES} UTF-8 encoded bytes.")
@@ -69,9 +69,8 @@ def password_prompt(
     )
 
 
-def backup_password_prompt_wizard()-> CredentialByteArray:
+def backup_password_prompt_wizard() -> CredentialByteArray:
     print(
-
         """
 You can require the backup to ask for a password before starting a backup/restore,
 or you can allow a backup to proceed automatically without requiring your password.
@@ -155,7 +154,9 @@ def setup_backup_encryption_wizard(
         print(f"Setting password.")
         credential.set(password=cba_password)
     else:
-        print(f"No password set because you want to keep the backup encryption key unencrypted.")
+        print(
+            f"No password set because you want to keep the backup encryption key unencrypted."
+        )
 
     return DescribedCredential(
         credential=credential,
@@ -636,7 +637,10 @@ def handle_creds(args):
             backup_file_path=backup_file_path,
             prompt_if_exists=args.prompt,
         )
-    elif args.subcmd in [CRED_OPERATION_SET_PASSWORD, CRED_OPERATION_SET_PASSWORD_ALIAS]:
+    elif args.subcmd in [
+        CRED_OPERATION_SET_PASSWORD,
+        CRED_OPERATION_SET_PASSWORD_ALIAS,
+    ]:
 
         switch_to_non_queued_logging()
 
@@ -666,10 +670,7 @@ def handle_creds(args):
         elif password_type == CRED_OPERATION_SET_PASSWORD_TYPE_STORAGE:
             desc_cred_storage = cred_set.get_storage_desc_cred()
             if args.password is None:
-                cba_password = password_prompt(
-                    what="storage secret",
-                    hidden=False
-                )
+                cba_password = password_prompt(what="storage secret", hidden=False)
             else:
                 cba_password = CredentialByteArray.create_from_string(args.password)
             desc_cred_storage.credential.set(the_key=cba_password)

@@ -168,8 +168,12 @@ class GoogleStorageInterface(StorageInterface):
         super().__init__()
         self.storage_def: dict = storage_def
         self.driver_config: dict = self.storage_def[CONFIG_SECTION_DRIVER]
-        self.project_name = self.driver_config.get(CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT)
-        self.project_name_str = self.project_name if self.project_name is not None else "<none>"
+        self.project_name = self.driver_config.get(
+            CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT
+        )
+        self.project_name_str = (
+            self.project_name if self.project_name is not None else "<none>"
+        )
         self.scoped_credentials = self._create_credential()
 
     def _create_credential(self):

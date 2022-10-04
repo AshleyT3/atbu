@@ -54,9 +54,7 @@ Version001_storage_def_name1 = "my-cloud-backup-53fcc53f-a5a5-4939-a88a-e8ad1c95
 Version001_config = {
     "name": "ATBU Configuration",
     "version": "0.01",
-    "general": {
-        "backup-info-dir": "C:\\Users\\TestUser\\.atbu\\atbu-backup-info"
-    },
+    "general": {"backup-info-dir": "C:\\Users\\TestUser\\.atbu\\atbu-backup-info"},
     "storage-definitions": {
         Version001_storage_def_name1: {
             "interface": "someinterface",
@@ -65,23 +63,21 @@ Version001_config = {
             "driver": {
                 "key": "some-storage-key",
                 "project": "some-storage-project",
-                "secret": "keyring"
+                "secret": "keyring",
             },
             "keyring-mapping": {
                 "driver-secret": {
                     "service": Version001_storage_def_name1,
-                    "username": "ATBU-storage-password"
+                    "username": "ATBU-storage-password",
                 },
                 "encryption-key": {
                     "service": Version001_storage_def_name1,
-                    "username": "ATBU-backup-enc-key"
-                }
+                    "username": "ATBU-backup-enc-key",
+                },
             },
-            "encryption": {
-                "key": "keyring"
-            }
+            "encryption": {"key": "keyring"},
         }
-    }
+    },
 }
 
 
@@ -112,7 +108,7 @@ Version001_config = {
             False,
             id="is_backup_encryption=False,is_storage_secret=True,is_password_protected=False",
         ),
-    ]
+    ],
 )
 def test_migrate_001_to_002(
     tmp_path: Path,
@@ -139,20 +135,28 @@ def test_migrate_001_to_002(
         monkeypatch.setattr(
             credentials,
             "prompt_for_password_with_yubikey_opt",
-            mock_prompt_password_return
+            mock_prompt_password_return,
         )
 
     test_atbu_cfg_001 = copy.deepcopy(Version001_config)
-    storage_defs_section = test_atbu_cfg_001[Version_001.CONFIG_SECTION_STORAGE_DEFINITIONS]
+    storage_defs_section = test_atbu_cfg_001[
+        Version_001.CONFIG_SECTION_STORAGE_DEFINITIONS
+    ]
     storage_def_section = storage_defs_section[Version001_storage_def_name1]
-    storage_def_mapping_section = storage_def_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING]
+    storage_def_mapping_section = storage_def_section[
+        Version_001.CONFIG_SECTION_KEYRING_MAPPING
+    ]
     storage_def_driver_section = storage_def_section[Version_001.CONFIG_SECTION_DRIVER]
     if not is_backup_encryption:
         del storage_def_section[Version_001.CONFIG_SECTION_ENCRYPTION]
-        del storage_def_mapping_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING_ENCRYPTION_KEY]
+        del storage_def_mapping_section[
+            Version_001.CONFIG_SECTION_KEYRING_MAPPING_ENCRYPTION_KEY
+        ]
     if not is_storage_secret:
         del storage_def_section[Version_001.CONFIG_SECTION_DRIVER]
-        del storage_def_mapping_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING_DRIVER_SECRET]
+        del storage_def_mapping_section[
+            Version_001.CONFIG_SECTION_KEYRING_MAPPING_DRIVER_SECRET
+        ]
     if len(storage_def_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING]) == 0:
         del storage_def_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING]
     with open(atbu_cfg.path, "w", encoding="utf-8") as config_file:
@@ -180,7 +184,7 @@ def test_migrate_001_to_002(
             password_is_base64=False,
         )
         if is_password_protected:
-            cred_enc.decrypt_key() # prepare for validation below.
+            cred_enc.decrypt_key()  # prepare for validation below.
 
     if is_storage_secret:
         storage_secret = CredentialByteArray("storage-secret-abc123$".encode("utf-8"))
@@ -193,9 +197,7 @@ def test_migrate_001_to_002(
         )
 
     storage_def_dict = copy.deepcopy(
-        test_atbu_cfg_001[
-            Version_001.CONFIG_SECTION_STORAGE_DEFINITIONS
-        ][
+        test_atbu_cfg_001[Version_001.CONFIG_SECTION_STORAGE_DEFINITIONS][
             Version001_storage_def_name1
         ]
     )

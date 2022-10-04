@@ -1089,6 +1089,7 @@ def wait_for_debugger_attach(debug_server_port: Union[str, int, list]):
             f"Unexpected error. Cannot wait for debugger attach. {exc_to_string(ex)}"
         ) from ex
 
+
 def process_profile_arguments(args) -> EasyProfile:
     easy_profiler = None
     if args.profile:
@@ -1106,12 +1107,10 @@ def process_profile_arguments(args) -> EasyProfile:
                 f"Either one or both of --profile-file / --profile-stats must be specified "
                 f"when --profile is specified."
             )
-        easy_profiler = EasyProfile(
-            log_stats=profile_stats,
-            profile_file=profile_file
-        )
+        easy_profiler = EasyProfile(log_stats=profile_stats, profile_file=profile_file)
         easy_profiler.start()
     return easy_profiler
+
 
 def main(argv=None):
     multiprocessing.set_start_method("spawn")

@@ -32,9 +32,7 @@ from pytest import (
     ExitCode,
 )
 import pytest
-from atbu.tools.backup.constants import (
-    DEFAULT_AES_KEY_BIT_LENGTH
-)
+from atbu.tools.backup.constants import DEFAULT_AES_KEY_BIT_LENGTH
 
 from atbu.tools.backup.exception import (
     PasswordAuthenticationFailure,
@@ -47,19 +45,20 @@ from atbu.tools.backup.credentials import (
 
 LOGGER = logging.getLogger(__name__)
 
-ATBU_TEST_BACKUP_NAME = "AtbuTestBackup-5b497bb3-c9ef-48a9-af7b-2327fc17fb65"
-
 # import pdb; pdb.set_trace()
 # import pdb; pdb.set_trace()
 
 SIMPLE_SECRET = "secret-1234567890!"
 SIMPLE_PASSWORD = "1234567890abcdefghij$"
 
+
 def setup_module(module):  # pylint: disable=unused-argument
     pass
 
+
 def teardown_module(module):  # pylint: disable=unused-argument
     pass
+
 
 def test_credential():
     cred1 = Credential(
@@ -76,7 +75,9 @@ def test_credential():
     cred2.decrypt_key()
     assert cred1.the_key == cred2.the_key
 
-    cred2b = Credential.create_credential_from_bytes(cred2.get_unenc_key_material_as_bytes())
+    cred2b = Credential.create_credential_from_bytes(
+        cred2.get_unenc_key_material_as_bytes()
+    )
     assert isinstance(cred2b, Credential)
     assert cred2.the_key == cred2b.the_key
 
@@ -116,7 +117,9 @@ def test_credential_AES():
     cred2.decrypt_key()
     assert cred1.the_key == cred2.the_key
 
-    cred2b = CredentialAesKey.create_credential_from_bytes(cred2.get_unenc_key_material_as_bytes())
+    cred2b = CredentialAesKey.create_credential_from_bytes(
+        cred2.get_unenc_key_material_as_bytes()
+    )
     assert isinstance(cred2b, CredentialAesKey)
     assert cred2.the_key == cred2b.the_key
 
@@ -138,6 +141,7 @@ def test_credential_AES():
     assert cred1.the_key != cred4.the_key
     cred4.decrypt_key()
     assert cred1.the_key == cred4.the_key
+
 
 def test_credential_AES_create_key():
     cred1 = CredentialAesKey()
