@@ -529,7 +529,7 @@ path to file system storage location. See '{ATBU_PROGRAM_NAME} help specifiers'.
 
     # pylint: disable=unused-variable
     cred_create_storage_def_parser = subparser_creds.add_parser(
-        "create-storage-def",
+        CREDS_SUBCMD_CREATE_STORAGE_DEF,
         parents=[parser_creds_storage_def_specifier, parser_common],
         formatter_class=argparse.RawTextHelpFormatter,
         help=f"Create a backup storage definition.",

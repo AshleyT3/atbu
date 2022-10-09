@@ -56,6 +56,7 @@ from atbu.tools.backup.constants import (
     CONFIG_PASSWORD_KIND_FILENAME,
     CONFIG_PASSWORD_KIND_ACTUAL,
     CONFIG_VALUE_NAME_CONTAINER,
+    CREDS_SUBCMD_CREATE_STORAGE_DEF,
 )
 from atbu.tools.backup.config import AtbuConfig
 
@@ -149,7 +150,7 @@ def create_storage_definition_json(
         pytester,
         tmp_path,
         "creds",
-        "create-storage-def",
+        CREDS_SUBCMD_CREATE_STORAGE_DEF,
         TEST_BACKUP_NAME,
         interface,
         provider,

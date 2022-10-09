@@ -174,6 +174,7 @@ PASSWORD_KIND_CHAR_TO_KIND = {i[0]: i for i in PASSWORD_KINDS}
 CRED_SECRET_KIND_STORAGE_FRIENDLY_NAME = "storage secret"
 CRED_SECRET_KIND_ENCRYPTION_FRIENDLY_NAME = "backup encryption"
 
+CREDS_SUBCMD_CREATE_STORAGE_DEF = "create-storage-def"
 
 @dataclass
 class CredentialDefinition:

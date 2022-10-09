@@ -581,7 +581,7 @@ def handle_creds(args):
             create_if_not_exist=True,
             prompt_to_create=True,
         )
-    if args.subcmd == "create-storage-def":
+    if args.subcmd == CREDS_SUBCMD_CREATE_STORAGE_DEF:
         handle_create_storage_definition(
             storage_def_name=storage_def_name,
             interface=args.interface,
