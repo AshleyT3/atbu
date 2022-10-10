@@ -356,7 +356,7 @@ def handle_create_storage_definition(
         if desc_cred_encryption is not None:
             cred_encryption = desc_cred_encryption.credential
             if cred_encryption.is_password_protected:
-                cred_storage.set(password=cred_encryption.password)
+                cred_storage.set(password=CredentialByteArray(cred_encryption.password))
 
         desc_cred_storage = DescribedCredential(
             credential=cred_storage,
