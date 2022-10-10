@@ -196,7 +196,17 @@ class GoogleStorageInterface(StorageInterface):
                 cred_filename
             )
         else:
-            raise ValueError(f"Unknown credential type '{password_type}'.")
+            additional_msg = ""
+            if password_type is not None and password_type == CONFIG_PASSWORD_KIND_ACTUAL:
+                additional_msg = (
+                    f" The '{CONFIG_PASSWORD_KIND_ACTUAL}' credential type is not expected and may "
+                    f"be a sign you set the 'storage' secret instead of specifying a GCS service "
+                    f"account OAuth2 .json file either via use of '{CONFIG_PASSWORD_KIND_FILENAME}'"
+                    f" or '{CONFIG_PASSWORD_KIND_ENVVAR}'."
+                )
+            raise ValueError(
+                f"Unknown credential type '{password_type}'.{additional_msg}"
+            )
         scoped_credentials = credentials.with_scopes(
             ["https://www.googleapis.com/auth/devstorage.read_write"]
         )

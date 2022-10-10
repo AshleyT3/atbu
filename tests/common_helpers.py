@@ -931,6 +931,7 @@ def validate_cred_export_import(
         atbu_cfg = AtbuConfig.create_from_file(path=atbu_cfg_path)
         atbu_cfg.delete_storage_def(storage_def_name=storage_def_name)
         atbu_cfg.save_config_file()
+        atbu_cfg.delete_config_file()
 
         #
         # Attempt restore without the configuration, observe failure.
@@ -1109,6 +1110,7 @@ def validate_backup_recovery(
         atbu_cfg = AtbuConfig.create_from_file(path=atbu_cfg_path)
         atbu_cfg.delete_storage_def(storage_def_name=storage_def_name)
         atbu_cfg.save_config_file()
+        atbu_cfg.delete_config_file()
 
         #
         # Attempt restore without the configuration, observe failure.

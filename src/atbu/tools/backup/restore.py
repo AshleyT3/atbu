@@ -544,7 +544,11 @@ def handle_decrypt(args):
         parsed_name = parse_storage_def_specifier(storage_location=storage_def_name)
         if parsed_name:
             storage_def_name = parsed_name
-        storage_atbu_cfg = AtbuConfig.access_default_config()
+        storage_atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+            storage_def_name=storage_def_name,
+            must_exist=True,
+            create_if_not_exist=False,
+        )
         storage_def_dict = (
             storage_atbu_cfg.get_storage_def_with_resolved_secrets_deep_copy(
                 storage_def_name=storage_def_name,
@@ -559,7 +563,7 @@ def handle_decrypt(args):
             storage_atbu_cfg,
             storage_def_name,
             storage_def_dict,
-        ) = AtbuConfig.access_filesystem_config(
+        ) = AtbuConfig.access_filesystem_storage_config(
             storage_location_path=storage_def_name,
             resolve_storage_def_secrets=True,
             create_if_not_exist=False,

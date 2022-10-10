@@ -291,10 +291,11 @@ def test_credential_export_import(
         atbu_cfg,
         storage_def_name_from_cfg,
         storage_def,
-    ) = AtbuConfig.access_filesystem_config(
+    ) = AtbuConfig.access_filesystem_storage_config(
         storage_location_path=backup_directory,
         resolve_storage_def_secrets=False,
         create_if_not_exist=False,
+        prompt_to_create=False,
     )
     assert storage_def_name.lower() == storage_def_name_from_cfg
 
@@ -349,10 +350,11 @@ def test_credential_and_backup_info_recovery(
         atbu_cfg,
         storage_def_name_from_cfg,
         storage_def,
-    ) = AtbuConfig.access_filesystem_config(
+    ) = AtbuConfig.access_filesystem_storage_config(
         storage_location_path=backup_directory,
         resolve_storage_def_secrets=False,
         create_if_not_exist=False,
+        prompt_to_create=False,
     )
     assert storage_def_name.lower() == storage_def_name_from_cfg
 

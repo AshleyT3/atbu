@@ -164,7 +164,11 @@ class StorageInterfaceFactory:
 
     @staticmethod
     def create_factory_from_storage_def_name(storage_def_name: str):
-        atbu_cfg = AtbuConfig.access_default_config()
+        atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+            storage_def_name=storage_def_name,
+            must_exist=True,
+            create_if_not_exist=False,
+        )
         storage_def_dict = atbu_cfg.get_storage_def_with_resolved_secrets_deep_copy(
             storage_def_name=storage_def_name
         )

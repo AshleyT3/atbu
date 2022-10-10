@@ -97,11 +97,9 @@ def remove_timestamp_from_backupinfo_filename(filename: str):
 
 def handle_restore_backup_info(
     storage_def_name: str,
-    atbu_cfg: AtbuConfig = None,
+    atbu_cfg: AtbuConfig,
     prompt_if_exists: bool = True,
 ):
-    if atbu_cfg is None:
-        atbu_cfg = AtbuConfig.access_default_config()
     backup_info_dir = atbu_cfg.get_backup_info_dir()
     storage_def_dict = atbu_cfg.get_storage_def_with_resolved_secrets_deep_copy(
         storage_def_name=storage_def_name
@@ -260,8 +258,10 @@ def handle_recover(args):
     # A storage def name which is a folder is always a filesystem storage...
     if storage_def_name and os.path.isdir(storage_def_name):
         filesystem_dir = os.path.abspath(storage_def_name)
-        atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_config(
+        atbu_cfg: AtbuConfig
+        atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_storage_config(
             storage_location_path=filesystem_dir,
+            resolve_storage_def_secrets=False,
             create_if_not_exist=True,
             prompt_to_create=args.prompt,
         )
@@ -288,9 +288,17 @@ def handle_recover(args):
         )
     else:
         # Non-filesystem (cloud) case.
-        if storage_def_name is not None:
+        if storage_def_name is None:
+            atbu_stg_cfg = AtbuConfig.create_from_file(
+                path=storage_def_config_filename
+            )
+            storage_def_name = atbu_stg_cfg.storage_def_name
             storage_def_name = storage_def_name.lower()
-        atbu_cfg = AtbuConfig.access_default_config()
+        atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+            storage_def_name=storage_def_name,
+            must_exist=False,
+            create_if_not_exist=True,
+        )
         if storage_def_config_filename is not None:
             # Import config/cred file.
             storage_def_name = atbu_cfg.restore_storage_def(

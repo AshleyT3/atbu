@@ -27,7 +27,12 @@ from atbu.common.util_helpers import (
 from .constants import *
 from .exception import *
 
-from .config import AtbuConfig, is_storage_def_name_ok, parse_storage_def_specifier
+from .config import (
+    AtbuConfig,
+    get_default_backup_info_dir,
+    is_storage_def_name_ok,
+    parse_storage_def_specifier,
+)
 from .storage_def_credentials import StorageDefCredentialSet
 from .creds_cmdline import setup_backup_encryption_wizard
 from .backup_selections import get_local_file_information
@@ -53,7 +58,7 @@ def get_local_filesystem_backup_info(
         storage_atbu_cfg,
         storage_def_name,
         storage_def,
-    ) = AtbuConfig.access_filesystem_config(
+    ) = AtbuConfig.access_filesystem_storage_config(
         storage_location_path=storage_location_path,
         resolve_storage_def_secrets=resolve_storage_def_secrets,
         create_if_not_exist=create_if_not_exist,
@@ -106,10 +111,10 @@ def get_local_filesystem_backup_with_wizard(
         if len(storage_def_name) == 0:
             print(f"Using '{default_storage_def_name}'.")
             storage_def_name = default_storage_def_name
-        if storage_atbu_cfg.is_storage_def_exists(storage_def_name=storage_def_name):
+        storage_def_name = storage_def_name.lower()
+        if AtbuConfig.is_user_storage_def_exists(storage_def_name=storage_def_name):
             print(f"That name already exists, try another name.")
             continue
-        storage_def_name = storage_def_name.lower()
         if not is_storage_def_name_ok(storage_def_name=storage_def_name):
             print(f"Invalid character(s).")
             continue
@@ -182,16 +187,6 @@ def handle_new_local_filesystem_storage_def(
         debug_mode=debug_mode,
     )
 
-    general_section = atbu_cfg_to_use.get_general_section()
-    storage_backup_info_dir = general_section.get(CONFIG_VALUE_NAME_BACKUP_INFO_DIR)
-    if storage_backup_info_dir is not None:
-        storage_backup_info_dir = Path(storage_backup_info_dir)
-        if storage_backup_info_dir.is_file():
-            raise ExpectedDirectoryIsFileError(
-                f"Expected a directory but observed a file: {storage_backup_info_dir}"
-            )
-        storage_backup_info_dir.mkdir(parents=True, exist_ok=True)
-
     return atbu_cfg_to_use, storage_def_name, storage_def
 
 
@@ -226,29 +221,16 @@ def handle_backup(args):
     logging.debug(f"sneaky_corruption_detection: {sneaky_corruption_detection}")
 
     #
-    # Default config is user's configuration file located on the device.
-    # It may contain storage definitions. In addition to this device config,
-    # local filesystem storage definitions can contain their own storage
-    # location configuration. To clarity, this is the device's config. See
-    # further below for the need to access a storage location's config.
-    #
-    default_cfg = AtbuConfig.access_default_config()
-
-    #
     # The config to use is the one relating to the backup destination.
     # If it's a filesystem local disk then atbu_cfg_to_use is usually
     # the ATBU config file found in that disk's .atbu folder, otherwise
-    # it's a config in the default_cfg which is default_cfg == atbu_cfg_to_use
-    # at the start but can change below.
+    # it's a storage config in the user's default config directory.
     #
-    atbu_cfg_to_use: AtbuConfig = default_cfg
-
-    # Get/create user's backup information directory if not already created.
-    user_backup_info_dir: Path = default_cfg.get_backup_info_dir()
+    atbu_cfg_to_use: AtbuConfig = None
 
     # First in this list should be user's machine backup info dir.
     # Another can be added below for the destination where applicable.
-    backup_info_dirs: list[str] = [str(user_backup_info_dir)]
+    backup_info_dirs: list[str] = [str(get_default_backup_info_dir())]
 
     storage_def_name = parse_storage_def_specifier(storage_location=dest_location)
     if storage_def_name:
@@ -257,16 +239,17 @@ def handle_backup(args):
         # The storage_def_name may or may not exist,
         # and if it exists, may be either cloud/local.
         #
-        storage_def_dict = default_cfg.get_storage_def_dict(
-            storage_def_name=storage_def_name
+        atbu_cfg_to_use, _, storage_def_dict = AtbuConfig.access_cloud_storage_config(
+            storage_def_name=storage_def_name,
+            must_exist=False,
+            create_if_not_exist=False,
         )
-        if not storage_def_dict:
+        if not atbu_cfg_to_use or not storage_def_dict:
             # Does not exist yet.
             raise StorageDefinitionNotFoundError(
                 f"The storage definition '{storage_def_name}' was not found. "
                 f"You can create a storage definition using '{ATBU_PROGRAM_NAME} "
-                f"creds create-storage-def ...' or"
-                f"by manually editing the {default_cfg.path} config file."
+                f"creds create-storage-def."
             )
     else:
         #

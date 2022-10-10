@@ -36,7 +36,23 @@ from pytest import (
 )
 import pytest
 
-from atbu.tools.backup.config import AtbuConfig
+from atbu.tools.backup.config import (
+    AtbuConfig,
+    get_user_default_config_dir,
+    get_user_default_config_file_path,
+)
+from atbu.tools.backup.constants import (
+    ATBU_CONFIG_FILE_VERSION_STRING_CURRENT,
+    CONFIG_PASSWORD_KIND_ACTUAL,
+    CONFIG_PASSWORD_TYPE,
+    CONFIG_SECTION_DRIVER,
+    CONFIG_VALUE_NAME_CONTAINER,
+    CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY,
+    CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT,
+    CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET,
+    CONFIG_VALUE_NAME_INTERFACE_TYPE,
+    CONFIG_VALUE_NAME_PROVIDER,
+)
 from atbu.tools.backup.credentials import (
     CredentialAesKey,
     CredentialByteArray,
@@ -110,7 +126,7 @@ Version001_config = {
         ),
     ],
 )
-def test_migrate_001_to_002(
+def test_migrate_001_to_003(
     tmp_path: Path,
     pytester: Pytester,
     monkeypatch: MonkeyPatch,
@@ -118,8 +134,6 @@ def test_migrate_001_to_002(
     is_storage_secret: bool,
     is_password_protected: bool,
 ):
-    atbu_cfg = AtbuConfig.access_default_config()
-
     if is_password_protected:
 
         cred_password_str = "test-cred-password$"
@@ -159,7 +173,11 @@ def test_migrate_001_to_002(
         ]
     if len(storage_def_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING]) == 0:
         del storage_def_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING]
-    with open(atbu_cfg.path, "w", encoding="utf-8") as config_file:
+
+    get_user_default_config_dir().mkdir(parents=True, exist_ok=True)
+    user_default_config_path = get_user_default_config_file_path()
+
+    with open(user_default_config_path, "w", encoding="utf-8") as config_file:
         config_file.write(json.dumps(test_atbu_cfg_001, indent=4))
 
     cred_enc = None
@@ -221,11 +239,59 @@ def test_migrate_001_to_002(
 
     # Re-get the overwritten config to trigger the migration.
     AtbuConfig.always_migrate = True
-    atbu_cfg = AtbuConfig.access_default_config()
+
+    # Perform the same as the old way: atbu_cfg = AtbuConfig.access_default_config()
+    atbu_cfg = AtbuConfig(path=get_user_default_config_file_path())
+    atbu_cfg.check_upgrade_default_config()
+
+    atbu_cfg2: AtbuConfig
+    atbu_cfg2, storage_def_name2, storage_def_dict2 = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=Version001_storage_def_name1,
+        must_exist=True,
+    )
+
+    assert atbu_cfg2 is not None
+    assert storage_def_name2 is not None
+    assert storage_def_dict2 is not None
+    assert atbu_cfg2.version == ATBU_CONFIG_FILE_VERSION_STRING_CURRENT
+    assert storage_def_name2 == Version001_storage_def_name1
+    assert (
+        storage_def_section[CONFIG_VALUE_NAME_INTERFACE_TYPE]
+        == storage_def_dict2[CONFIG_VALUE_NAME_INTERFACE_TYPE]
+    )
+    assert (
+        storage_def_section[CONFIG_VALUE_NAME_PROVIDER]
+        == storage_def_dict2[CONFIG_VALUE_NAME_PROVIDER]
+    )
+    assert (
+        storage_def_section[CONFIG_VALUE_NAME_CONTAINER]
+        == storage_def_dict2[CONFIG_VALUE_NAME_CONTAINER]
+    )
+    driver_section = storage_def_section.get(CONFIG_SECTION_DRIVER)
+    driver_section2 = storage_def_dict2.get(CONFIG_SECTION_DRIVER)
+    if is_storage_secret:
+        assert isinstance(driver_section, dict)
+        assert isinstance(driver_section2, dict)
+        assert (
+            driver_section[CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY]
+            == driver_section2[CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY]
+        )
+        assert (
+            driver_section[CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT]
+            == driver_section2[CONFIG_VALUE_NAME_DRIVER_STORAGE_PROJECT]
+        )
+        assert (
+            driver_section[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET]
+            == driver_section2[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET]
+        )
+        assert driver_section2[CONFIG_PASSWORD_TYPE] == CONFIG_PASSWORD_KIND_ACTUAL
+    else:
+        assert driver_section is None
+        assert driver_section2 is None
 
     cred_set = StorageDefCredentialSet(
         storage_def_name=Version001_storage_def_name1,
-        storage_def_dict=atbu_cfg.get_storage_def_dict(
+        storage_def_dict=atbu_cfg2.get_storage_def_dict(
             storage_def_name=Version001_storage_def_name1,
             must_exist=True,
         ),

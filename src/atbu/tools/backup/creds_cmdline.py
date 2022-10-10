@@ -195,14 +195,11 @@ def is_OAuth2_secret_json_file(path: str) -> bool:
 def handle_container_auto_creation(
     storage_def_name: str, try_create_if_not_autofind: bool
 ) -> bool:
-    atbu_config = AtbuConfig.access_default_config()
-    storage_def_dict = atbu_config.get_storage_def_dict(
-        storage_def_name=storage_def_name
+    atbu_config, _, storage_def_dict = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=True,
+        create_if_not_exist=False,
     )
-    if storage_def_dict is None:
-        raise StorageDefinitionNotFoundError(
-            f"Cannot find storage defintion '{storage_def_name}'."
-        )
     container_name = storage_def_dict[CONFIG_VALUE_NAME_CONTAINER]
     auto_find_name = container_name[-1] == AUTO_FIND_CREATE_CONTAINER_INDICATOR_CHAR
     if not auto_find_name and not try_create_if_not_autofind:
@@ -263,12 +260,11 @@ def handle_create_storage_definition(
     # logging is in sync with print statements.
     switch_to_non_queued_logging()
 
-    atbu_cfg = AtbuConfig.access_default_config()
-
     if not storage_def_name:
         raise ValueError(
             f"Invalid name storage_def_name '{storage_def_name}' specified."
         )
+    storage_def_name = storage_def_name.lower()
     if not interface:
         raise ValueError(f"Invalid name interface '{interface}' specified.")
     if not provider:
@@ -278,18 +274,28 @@ def handle_create_storage_definition(
     if not driver_params:
         raise ValueError(f"Invalid name container '{driver_params}' specified.")
 
-    if atbu_cfg.is_storage_def_exists(storage_def_name=storage_def_name):
+    atbu_cfg: AtbuConfig
+    atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=False,
+        create_if_not_exist=False,
+    )
+
+    if atbu_cfg is not None:
         raise StorageDefinitionAlreadyExists(
             f"The storage definition '{storage_def_name}' already exists. "
             f"Delete it first, or choose a different name."
         )
 
-    storage_def_name = storage_def_name.lower()
     if not is_storage_def_name_ok(storage_def_name=storage_def_name):
         raise InvalidStorageDefinitionName(
             f"The name '{storage_def_name}' is invalid. Allowed characters: "
             f"lowercase alphanumeric, underscore, hyphen/dash."
         )
+
+    atbu_cfg = AtbuConfig.create_cloud_storage_def_config(
+        storage_def_name=storage_def_name,
+    )
 
     secret = CredentialByteArray()
     m = re.match(r".*,secret=([^,]+)", driver_params)
@@ -394,6 +400,7 @@ def handle_create_storage_definition(
         print(f"Saving {atbu_cfg.path}")
         atbu_cfg.save_config_file()
         logging.info(f"Storage definition {storage_def_name} saved.")
+        # Test log line: The following is used by tests:
         logging.debug(f"Storage definition {storage_def_name} saved to {atbu_cfg.path}")
 
         if desc_cred_encryption is None:
@@ -452,8 +459,14 @@ def handle_delete_storage_definition(
     """
     switch_to_non_queued_logging()
     bin_name = get_trash_bin_name()
-    atbu_cfg = AtbuConfig.access_default_config()
-    if not atbu_cfg.is_storage_def_exists(storage_def_name=storage_def_name):
+
+    atbu_cfg: AtbuConfig
+    atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=False,
+        create_if_not_exist=False,
+    )
+    if atbu_cfg is None:
         print(f"The storage definition '{storage_def_name}' does not exist.")
         return
 
@@ -537,8 +550,7 @@ that newly imported configuration.
             delete_backup_info = a == "y"
     logging.info(f"Deleting storage definition '{storage_def_name}'...")
     atbu_cfg.delete_storage_def(storage_def_name=storage_def_name)
-    logging.info(f"Saving configuration file {atbu_cfg.path}...")
-    atbu_cfg.save_config_file()
+    atbu_cfg.delete_config_file()
     if delete_backup_info:
         logging.info("Deleting backup information...")
         for bip in existing_backup_info:
@@ -569,15 +581,20 @@ def handle_creds(args):
         # Resolve to a storage_def_name...
         #
         parsed_name = parse_storage_def_specifier(storage_location=storage_def_name)
-        if parsed_name:
+        if parsed_name is not None:
             storage_def_name = parsed_name
-        storage_atbu_cfg = AtbuConfig.access_default_config()
+        storage_atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+            storage_def_name=storage_def_name,
+            must_exist=False,
+            create_if_not_exist=False,
+        )
     else:
         #
         # Filesystem storage.
         #
-        storage_atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_config(
+        storage_atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_storage_config(
             storage_location_path=storage_def_name,
+            resolve_storage_def_secrets=False,
             create_if_not_exist=True,
             prompt_to_create=True,
         )
@@ -599,6 +616,10 @@ def handle_creds(args):
             delete_backup_info=args.delete_backup_info,
         )
     elif args.subcmd == "export":
+        if storage_atbu_cfg is None:
+            raise StorageDefinitionNotFoundError(
+                f"The storage definition '{storage_def_name}' was not found."
+            )
         backup_file_path = args.filename
         if not backup_file_path:
             raise InvalidCommandLineArgument(
@@ -632,6 +653,13 @@ def handle_creds(args):
             raise InvalidCommandLineArgument(
                 f"The file does not exist: {backup_file_path}"
             )
+
+        if storage_atbu_cfg is None:
+            storage_atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+                storage_def_name=storage_def_name,
+                must_exist=False,
+                create_if_not_exist=True,
+            )
         storage_atbu_cfg.restore_storage_def(
             storage_def_new_name=storage_def_name,
             backup_file_path=backup_file_path,
@@ -641,8 +669,12 @@ def handle_creds(args):
         CRED_OPERATION_SET_PASSWORD,
         CRED_OPERATION_SET_PASSWORD_ALIAS,
     ]:
-
         switch_to_non_queued_logging()
+
+        if storage_atbu_cfg is None:
+            raise StorageDefinitionNotFoundError(
+                f"The storage definition '{storage_def_name}' was not found."
+            )
 
         storage_def_dict = storage_atbu_cfg.get_storage_def_dict(
             storage_def_name=storage_def_name,

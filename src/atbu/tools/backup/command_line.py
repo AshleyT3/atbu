@@ -668,11 +668,12 @@ will be skipped (i.e., user only prompted once re storage defintiion).
             parser_common,
         ],
     )
+    # TODO: Remove if ultimately unused:
     cred_import_cred_parser.add_argument(
         "--create-config",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help=f"""Create a {ATBU_DEFAULT_CONFIG_FILE_NAME} configuration if one does not exist.""",
+        help=f"""Create a {ATBU_USER_DEFAULT_CONFIG_FILE_NAME} configuration if one does not exist.""",
     )
     cred_import_cred_parser.add_argument(
         "--prompt",

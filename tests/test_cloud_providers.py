@@ -110,18 +110,17 @@ def get_storage_factory(storage_def_name: str) -> StorageInterfaceFactory:
 
 
 def get_storage_def_dict(storage_def_name: str) -> dict:
-    cfg = AtbuConfig.access_default_config(create_if_not_exist=False)
-    return cfg.get_storage_def_dict(storage_def_name=storage_def_name)
-
-
-def get_all_storage_defs_section() -> dict:
-    cfg = AtbuConfig.access_default_config(create_if_not_exist=False)
-    return cfg.get_storage_defs_section()
+    cfg: AtbuConfig
+    cfg, _, storage_def_dict = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=True,
+        create_if_not_exist=False,
+    )
+    return storage_def_dict
 
 
 def get_all_storage_def_names() -> list[str]:
-    cfg = AtbuConfig.access_default_config(create_if_not_exist=False)
-    return [k for k, v in cfg.get_storage_defs_section().items()]
+    return AtbuConfig.get_user_storage_def_names()
 
 
 def get_container_name(storage_def_name: str) -> str:
@@ -169,7 +168,12 @@ def create_storage_definition_json(
     storage_def_name = last_save[0]
     atbu_cfg_path = last_save[1]
 
-    cfg = AtbuConfig.access_default_config(create_if_not_exist=False)
+    cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=True,
+        create_if_not_exist=False,
+    )
+
     container_name = cfg.get_storage_def_dict(storage_def_name=storage_def_name)[
         CONFIG_VALUE_NAME_CONTAINER
     ]
@@ -321,7 +325,11 @@ def test_create_storage_definition_json(
     assert storage_def_name == TEST_BACKUP_NAME
     assert os.path.isfile(atbu_cfg_path)
 
-    cfg = AtbuConfig.access_default_config(create_if_not_exist=False)
+    cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=True,
+        create_if_not_exist=False,
+    )
     storage_def_dict = cfg.get_storage_def_with_resolved_secrets_deep_copy(
         storage_def_name=TEST_BACKUP_NAME, keep_secrets_base64_encoded=False
     )

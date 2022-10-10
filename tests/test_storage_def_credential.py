@@ -208,8 +208,16 @@ def test_storage_def_credential_set(
     This scenario initializes the StorageDefCredentialSet by building the credentials
     manually in code, and not deriving some/all from the configuration file.
     """
-    atbu_cfg = AtbuConfig.access_default_config()
     storage_def_name = "test_storage_def_credential_set"
+    atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=False,
+        create_if_not_exist=False,
+    )
+    assert atbu_cfg is None
+    atbu_cfg = AtbuConfig.create_cloud_storage_def_config(
+        storage_def_name=storage_def_name,
+    )
     credential_password = None
     if is_password_protected:
         credential_password = CredentialByteArray("test-cred-pwd$".encode("utf-8"))
@@ -272,7 +280,11 @@ def test_storage_def_credential_set(
     cred_set.save()
     atbu_cfg.save_config_file()
 
-    atbu_cfg2 = AtbuConfig.access_default_config()
+    atbu_cfg2, _, _ = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=True,
+        create_if_not_exist=False,
+    )
     storage_def_dict2 = atbu_cfg2.get_storage_def_dict(
         storage_def_name=storage_def_name
     )

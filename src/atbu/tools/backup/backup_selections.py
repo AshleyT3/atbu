@@ -84,7 +84,6 @@ class StorageSelectionInfo:
     location_derivation_source_arg: str
     storage_def_name: str
     storage_def: dict
-    storage_atbu_cfg: AtbuConfig
     backup_info_dir: Path
     selection_patterns: list[SelectionPattern]
 
@@ -106,7 +105,6 @@ def parse_storage_def_specifiers_patterns(
 ) -> list[StorageSelectionInfo]:
     sel_info_dict: dict[str, StorageSelectionInfo] = {}
     result: list[StorageSelectionInfo] = []
-    default_cfg = AtbuConfig.access_default_config()
     cur_storage_selections: list[StorageSelectionInfo] = None
     for raw_arg in raw_arguments:
         if SelectionPattern.is_valid_selection_pattern(arg_to_test=raw_arg):
@@ -137,7 +135,7 @@ def parse_storage_def_specifiers_patterns(
 
         storage_specifiers = [
             f"{CONFIG_SECTION_STORAGE_DEFINITION_SPECIFIER_PREFIX}:{n}"
-            for n in default_cfg.get_storage_def_names(fnmatch_pattern=storage_pattern)
+            for n in AtbuConfig.get_user_storage_def_names(fnmatch_pattern=storage_pattern)
         ]
 
         if not storage_specifiers:
@@ -167,7 +165,7 @@ def parse_storage_def_specifiers_patterns(
                 atbu_cfg_to_use,
                 storage_def_name,
                 storage_def_dict,
-            ) = default_cfg.resolve_storage_location(
+            ) = AtbuConfig.resolve_storage_location(
                 storage_location=storage_specifier,
                 resolve_storage_def_secrets=resolve_storage_def_secrets,
                 create_if_not_exist=False,
@@ -188,7 +186,6 @@ def parse_storage_def_specifiers_patterns(
                     location_derivation_source_arg=raw_arg,
                     storage_def_name=storage_def_name,
                     storage_def=storage_def,
-                    storage_atbu_cfg=default_cfg,
                     backup_info_dir=atbu_cfg_to_use.get_backup_info_dir(),
                     selection_patterns=[],
                 )
