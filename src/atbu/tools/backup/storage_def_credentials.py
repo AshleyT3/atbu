@@ -27,7 +27,6 @@ from .credentials import (
     CredentialStore,
     DescribedCredential,
     prompt_for_password_unlock_credential,
-    raw_cred_bytes_to_type_base64_cred_bytes,
 )
 
 
@@ -64,7 +63,8 @@ class StorageDefCredentialSet:
         self.storage_def_name = storage_def_name
         self.storage_def_dict = storage_def_dict
         self.storage_def_creds = list[StorageDefCredential]()
-
+    def clear(self):
+        self.storage_def_creds.clear()
     def get_affected_section(
         self,
         affected_config_path_parts: Union[str, list[str]],
@@ -118,16 +118,12 @@ class StorageDefCredentialSet:
                 cls = get_credential_class(
                     store_credential_name=cred_def.store_credential_name,
                 )
-                cred_ascii_bytes = CredentialByteArray(raw_cred_value.encode("utf-8"))
-                (
-                    password_type,
-                    cba_password_base64,
-                ) = raw_cred_bytes_to_type_base64_cred_bytes(
-                    cred_ascii_bytes=cred_ascii_bytes,
-                )
                 credential = cls.create_credential_from_bytes(
-                    cred_bytes=cba_password_base64
+                    cred_bytes=CredentialByteArray(
+                        base64.b64decode(raw_cred_value.encode("utf-8"))
+                    )
                 )
+                password_type = affected_section[CONFIG_PASSWORD_TYPE]
                 desc_cred = DescribedCredential(
                     credential=credential,
                     config_name=self.storage_def_name,
@@ -200,7 +196,10 @@ class StorageDefCredentialSet:
                     )
                 password_protected_status = True
                 if password is None:
-                    prompt_for_password_unlock_credential(credential=credential)
+                    prompt_for_password_unlock_credential(
+                        credential=credential,
+                        prompt=f"Enter the password for '{self.storage_def_name}':"
+                    )
                     password = credential.password
                 else:
                     credential.set(password=CredentialByteArray(password))

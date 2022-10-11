@@ -38,8 +38,6 @@ import pytest
 
 from atbu.tools.backup.config import (
     AtbuConfig,
-    get_user_default_config_dir,
-    get_user_default_config_file_path,
 )
 from atbu.tools.backup.constants import (
     ATBU_CONFIG_FILE_VERSION_STRING_CURRENT,
@@ -174,8 +172,8 @@ def test_migrate_001_to_003(
     if len(storage_def_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING]) == 0:
         del storage_def_section[Version_001.CONFIG_SECTION_KEYRING_MAPPING]
 
-    get_user_default_config_dir().mkdir(parents=True, exist_ok=True)
-    user_default_config_path = get_user_default_config_file_path()
+    AtbuConfig.get_user_default_config_dir().mkdir(parents=True, exist_ok=True)
+    user_default_config_path = AtbuConfig.get_user_default_config_file_path()
 
     with open(user_default_config_path, "w", encoding="utf-8") as config_file:
         config_file.write(json.dumps(test_atbu_cfg_001, indent=4))
@@ -241,7 +239,7 @@ def test_migrate_001_to_003(
     AtbuConfig.always_migrate = True
 
     # Perform the same as the old way: atbu_cfg = AtbuConfig.access_default_config()
-    atbu_cfg = AtbuConfig(path=get_user_default_config_file_path())
+    atbu_cfg = AtbuConfig(path=AtbuConfig.get_user_default_config_file_path())
     atbu_cfg.check_upgrade_default_config()
 
     atbu_cfg2: AtbuConfig

@@ -465,6 +465,7 @@ def handle_delete_storage_definition(
         storage_def_name=storage_def_name,
         must_exist=False,
         create_if_not_exist=False,
+        storage_def_dict_not_exist_ok=True,
     )
     if atbu_cfg is None:
         print(f"The storage definition '{storage_def_name}' does not exist.")
@@ -569,35 +570,9 @@ def handle_creds(args):
     logging.debug(f"handle_creds")
     storage_def_name = args.storage_def
     orig_storage_def_name = storage_def_name  # pylint: disable=unused-variable
-    storage_atbu_cfg: AtbuConfig
     show_secrets = False
     if hasattr(args, "show_secrets"):
         show_secrets = args.show_secrets
-    if not is_existing_filesystem_storage_path(storage_location=storage_def_name):
-        #
-        # Storage definition is not a filesystem storage.
-        # It must therefore be a storage-def-specifier or
-        # simply/directly the storage_def_name itself.
-        # Resolve to a storage_def_name...
-        #
-        parsed_name = parse_storage_def_specifier(storage_location=storage_def_name)
-        if parsed_name is not None:
-            storage_def_name = parsed_name
-        storage_atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
-            storage_def_name=storage_def_name,
-            must_exist=False,
-            create_if_not_exist=False,
-        )
-    else:
-        #
-        # Filesystem storage.
-        #
-        storage_atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_storage_config(
-            storage_location_path=storage_def_name,
-            resolve_storage_def_secrets=False,
-            create_if_not_exist=True,
-            prompt_to_create=True,
-        )
     if args.subcmd == CREDS_SUBCMD_CREATE_STORAGE_DEF:
         handle_create_storage_definition(
             storage_def_name=storage_def_name,
@@ -616,6 +591,32 @@ def handle_creds(args):
             delete_backup_info=args.delete_backup_info,
         )
     elif args.subcmd == "export":
+        storage_atbu_cfg: AtbuConfig
+        if not is_existing_filesystem_storage_path(storage_location=storage_def_name):
+            #
+            # Storage definition is not a filesystem storage.
+            # It must therefore be a storage-def-specifier or
+            # simply/directly the storage_def_name itself.
+            # Resolve to a storage_def_name...
+            #
+            parsed_name = parse_storage_def_specifier(storage_location=storage_def_name)
+            if parsed_name is not None:
+                storage_def_name = parsed_name
+            storage_atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+                storage_def_name=storage_def_name,
+                must_exist=False,
+                create_if_not_exist=False,
+            )
+        else:
+            #
+            # Filesystem storage.
+            #
+            storage_atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_storage_config(
+                storage_location_path=storage_def_name,
+                resolve_storage_def_secrets=False,
+                create_if_not_exist=True,
+                prompt_to_create=True,
+            )
         if storage_atbu_cfg is None:
             raise StorageDefinitionNotFoundError(
                 f"The storage definition '{storage_def_name}' was not found."
@@ -637,6 +638,33 @@ def handle_creds(args):
             storage_def_name=storage_def_name, backup_file_path=backup_file_path
         )
     elif args.subcmd == "import":
+        storage_atbu_cfg: AtbuConfig
+        if not is_existing_filesystem_storage_path(storage_location=storage_def_name):
+            #
+            # Storage definition is not a filesystem storage.
+            # It must therefore be a storage-def-specifier or
+            # simply/directly the storage_def_name itself.
+            # Resolve to a storage_def_name...
+            #
+            parsed_name = parse_storage_def_specifier(storage_location=storage_def_name)
+            if parsed_name is not None:
+                storage_def_name = parsed_name
+            storage_atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+                storage_def_name=storage_def_name,
+                must_exist=False,
+                create_if_not_exist=False,
+                storage_def_dict_not_exist_ok=True,
+            )
+        else:
+            #
+            # Filesystem storage.
+            #
+            storage_atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_storage_config(
+                storage_location_path=storage_def_name,
+                resolve_storage_def_secrets=False,
+                create_if_not_exist=True,
+                prompt_to_create=True,
+            )
         switch_to_non_queued_logging()
         # TODO: Handle args.create_config
         backup_file_path = args.filename
@@ -669,6 +697,33 @@ def handle_creds(args):
         CRED_OPERATION_SET_PASSWORD,
         CRED_OPERATION_SET_PASSWORD_ALIAS,
     ]:
+        storage_atbu_cfg: AtbuConfig
+        if not is_existing_filesystem_storage_path(storage_location=storage_def_name):
+            #
+            # Storage definition is not a filesystem storage.
+            # It must therefore be a storage-def-specifier or
+            # simply/directly the storage_def_name itself.
+            # Resolve to a storage_def_name...
+            #
+            parsed_name = parse_storage_def_specifier(storage_location=storage_def_name)
+            if parsed_name is not None:
+                storage_def_name = parsed_name
+            storage_atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+                storage_def_name=storage_def_name,
+                must_exist=False,
+                create_if_not_exist=False,
+            )
+        else:
+            #
+            # Filesystem storage.
+            #
+            storage_atbu_cfg, storage_def_name, _ = AtbuConfig.access_filesystem_storage_config(
+                storage_location_path=storage_def_name,
+                resolve_storage_def_secrets=False,
+                create_if_not_exist=True,
+                prompt_to_create=True,
+            )
+
         switch_to_non_queued_logging()
 
         if storage_atbu_cfg is None:

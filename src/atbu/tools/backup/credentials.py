@@ -50,6 +50,7 @@ from atbu.common.aes_cbc import (
 
 from .constants import *
 from .exception import (
+    AtbuException,
     CredentialNotFoundError,
     InvalidBase64StringError,
     PasswordAuthenticationFailure,
@@ -697,7 +698,7 @@ class CredentialStoreProvider(ABC):
         config_name: str,
         credential_name: str,
         cred_ascii_bytes: CredentialByteArray,
-    ):
+    ) -> None:
         pass
 
     @abstractmethod
@@ -707,7 +708,7 @@ class CredentialStoreProvider(ABC):
         pass
 
     @abstractmethod
-    def delete_cred_bytes(self, config_name: str, credential_name: str):
+    def delete_cred_bytes(self, config_name: str, credential_name: str) -> None:
         pass
 
 
@@ -717,7 +718,7 @@ class CredentialStoreKeyringProvider(CredentialStoreProvider):
         config_name: str,
         credential_name: str,
         cred_ascii_bytes: CredentialByteArray,
-    ):
+    ) -> None:
         keyring.set_password(
             service_name=config_name,
             username=credential_name,
@@ -739,10 +740,94 @@ class CredentialStoreKeyringProvider(CredentialStoreProvider):
             service_name=config_name,
             username=credential_name,
         )
-        pass
 
 
-_credential_provider_cls = CredentialStoreKeyringProvider
+class ProviderCannotHandleException(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)
+
+
+class CredentialStoreProviderList(CredentialStoreProvider):
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.factory_list: list[Callable] = []
+
+    def get_factory_list(self) -> list[Callable]:
+        return self.factory_list
+
+    def append(self, provider_factory: Callable):
+        self.factory_list.append(provider_factory)
+
+    def append_default_factories(self) -> None:
+        self.append(provider_factory=CredentialStoreKeyringProvider)
+
+    def set_cred_bytes(
+        self,
+        config_name: str,
+        credential_name: str,
+        cred_ascii_bytes: CredentialByteArray,
+    ) -> None:
+        for provider_factory in self.factory_list:
+            try:
+                provider: CredentialStoreProvider = provider_factory()
+                provider.set_cred_bytes(
+                    config_name=config_name,
+                    credential_name=credential_name,
+                    cred_ascii_bytes=cred_ascii_bytes,
+                )
+                return
+            except ProviderCannotHandleException:
+                # A non-error indicating the provider cannot handle the request
+                # for normal reasons (i.e., it does not represent the storage
+                # definition (aka config_name) requested). All other exceptions
+                # are considered abnormal.
+                # Try the next provider.
+                pass
+
+    def get_cred_bytes(
+        self, config_name: str, credential_name: str
+    ) -> CredentialByteArray:
+        for provider_factory in self.factory_list:
+            try:
+                provider: CredentialStoreProvider = provider_factory()
+                return provider.get_cred_bytes(
+                    config_name=config_name,
+                    credential_name=credential_name,
+                )
+            except ProviderCannotHandleException:
+                # A non-error indicating the provider cannot handle the request
+                # for normal reasons (i.e., it does not represent the storage
+                # definition (aka config_name) requested). All other exceptions
+                # are considered abnormal.
+                # Try the next provider.
+                pass
+
+    def delete_cred_bytes(self, config_name: str, credential_name: str):
+        for provider_factory in self.factory_list:
+            try:
+                provider: CredentialStoreProvider = provider_factory()
+                provider.delete_cred_bytes(
+                    config_name=config_name,
+                    credential_name=credential_name,
+                )
+                return
+            except ProviderCannotHandleException:
+                # A non-error indicating the provider cannot handle the request
+                # for normal reasons (i.e., it does not represent the storage
+                # definition (aka config_name) requested). All other exceptions
+                # are considered abnormal.
+                # Try the next provider.
+                pass
+
+
+_credential_provider_cls: CredentialStoreProvider = CredentialStoreKeyringProvider
+
+
+def set_credential_store(store_cls: Callable):
+    global _credential_provider_cls
+    _credential_provider_cls = store_cls
 
 
 class CredentialStore:
@@ -976,7 +1061,8 @@ def prompt_for_password_with_yubikey_opt(
 
 
 def prompt_for_password_unlock_credential(
-    credential: Union[Credential, CredentialAesKey]
+    credential: Union[Credential, CredentialAesKey],
+    prompt: str = None
 ):
     """Unlock a CredentialAesKey instance which is to make its private key/secret
     available in the clear. If the private key is password-protected, ask
@@ -989,6 +1075,8 @@ def prompt_for_password_unlock_credential(
             is not available despite having been decrypted (likely a program bug or
             something esoteric such as system corruption).
     """
+    if prompt is None:
+        prompt = "Enter the password for this backup:"
     if not credential.is_private_key_possible:
         raise CredentialInvalid(
             f"The private key is not available. "
@@ -1001,7 +1089,7 @@ def prompt_for_password_unlock_credential(
             attempts = 5
             while True:
                 password = prompt_for_password_with_yubikey_opt(
-                    prompt="Enter the password for this backup:"
+                    prompt=prompt
                 )
                 credential.set(password=password)
                 try:

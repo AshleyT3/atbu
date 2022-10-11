@@ -156,7 +156,7 @@ def create_storage_definition_json(
         f"{TEST_CONTAINER_BASE_NAME}*",
         driver_arg,
         stdin=stdin_resp_enable_enc_pwd_not_req,
-        log_base_name="create-storage-def-json",
+        log_base_name=f"{CREDS_SUBCMD_CREATE_STORAGE_DEF}-json",
     )
     assert rr.ret == ExitCode.OK
 

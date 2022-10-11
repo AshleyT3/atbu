@@ -17,6 +17,7 @@
 # pylint: disable=unused-import
 # pylint: disable=wrong-import-position
 
+import base64
 import os
 from pathlib import Path
 import logging
@@ -38,6 +39,7 @@ from atbu.tools.backup.constants import (
     CONFIG_KEYRING_USERNAME_BACKUP_ENCRYPTION,
     CONFIG_KEYRING_USERNAME_STORAGE_PASSWORD,
     CONFIG_PASSWORD_KIND_ACTUAL,
+    CONFIG_PASSWORD_TYPE,
     CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY,
     CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET,
     CRED_SECRET_KIND_ENCRYPTION,
@@ -230,7 +232,10 @@ def test_storage_def_credential_set(
     else:
         other_kv_pairs = {
             CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY: "test-storage-key",
-            CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET: f"a:K={storage_secret.encode('utf-8').hex()}",
+            CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET: base64.b64encode(
+                f"K={storage_secret.encode('utf-8').hex()}".encode("utf-8")
+            ).decode("utf-8"),
+            CONFIG_PASSWORD_TYPE: "actual",
         }
 
     atbu_cfg.create_storage_def(

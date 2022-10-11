@@ -42,14 +42,18 @@ from atbu.mp_pipeline.mp_global import (
 from atbu.common.hasher import (
     DEFAULT_HASH_ALGORITHM,
 )
+from atbu.tools.backup.config import (
+    register_storage_def_config_override,
+)
 
 
 from .constants import *
-from .exception import YubiKeyBackendNotAvailableError
+from .exception import CredentialSecretFileNotFoundError, YubiKeyBackendNotAvailableError
 from .global_hasher import GlobalHasherDefinitions
 from .backup_core import (
     BACKUP_COMPRESSION_CHOICES,
     BACKUP_COMPRESSION_DEFAULT,
+    BACKUP_INFO_EXTENSION,
 )
 from .backup_cmdline import handle_backup
 from .restore import handle_restore, handle_decrypt
@@ -116,8 +120,232 @@ storage_def_specifier_help = """
                 - files:*.txt will select all files ending with ".txt"
 """
 
+backup_information_switch_help = f"""
+IMPORTANT: This information below is prelim and subject to change. In fact, changes
+are expected to simplify concerns mentioned below. The below is an initial revision
+allowing flexibility to an advanced user. Do not use the below information unless
+you know what you are doing.
+
+You do not need to keep backup information (BI) offline (discussed below) in order
+to use the new --config-file switch. The below information shows one way to use
+--config-file along with the BI location switches in order to keep *all* backup
+information, configuration, secrets offline when backup operations are not in-progress.
+
+The below is more complex than a simpler approach which only keeps the backup
+config/secrets offline (keeping backup information in the usual HOME .atbu location).
+
+Therefore, you can avoid the BI switches discussed below if you do not care to keep
+that BI info offline. By simply using the --config-file alone (easier), you can keep
+a backup config and related credentials offline, bringing them onlin and specifying
+--config-file when performing operations.
+
+Briefly, keep in mind the below is outlining nuances of two other switches related
+to BI information which are not directly tied to --config-file.
+
+Backup Information (BI) Location Switches
+=========================================
+Backup information (BI) is the information that {ATBU_PROGRAM_NAME} stores during and at the end of a
+backup. It is contained in *{BACKUP_INFO_EXTENSION} files which are stored in BI directories.
+
+This section discusses BI, BI-related files and locations. The switches and discussion
+below are for advanced users only. Do not use options mentioned below unless you know
+what you are doing.
+
+By default, {ATBU_PROGRAM_NAME} has a user BI directory located under your HOME directory in
+<HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}. By default, both cloud and local backup information
+are stored in this directory.
+
+In addition to that above default location used for both cloud/local destination,
+backups to local destinations also, by default, store a copy of their BI to the backup
+target storage location under a directory named {ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}.
+
+An aside: While the above locations are where direct copies of *{BACKUP_INFO_EXTENSION} files are
+stored, {ATBU_PROGRAM_NAME} also backs up copies of these files to your cloud and local target
+storage locations. This happens after each backup. These backed up copies are not for
+everyday use but are there for use with the "{ATBU_PROGRAM_NAME} recover" option. These copies are not
+the focus of this documentation but worth mentioning briefly in this context. If you
+zap all of your local BI, you can use recover to restore backed up copies from either
+cloud or local backup storage so long as the backup itself is intact and you have a
+good export of your backup credentials/configuration.
+
+The following switches allow you to control how {ATBU_PROGRAM_NAME} stores BI:
+
+    --use-default-binf ......... enable/disable storing BI in <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+    (or --no-use-default-binf)
+
+    --use-config-binf .......... enable/disable storing BI in the "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" (see below)
+    (or --no-use-config-binf)
+
+The <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR} location was already discussed further above. The
+"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" location has not been discussed yet.
+
+The "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" location is a secondary location that can be specified
+in a storage definition configuration. If specified, it is in the following storage
+def config location:
+
+    \"{CONFIG_SECTION_GENERAL}\": {{ \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": <backup_info_location> }}
+
+If "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" is not specified, a default location will be used as follows:
+
+    For local file system storage locations, the secondary location will default to
+        <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+    where <config> is the location of the storage definition configuration file
+    (typically on the target storage device, hard drive, external drive, etc.).
+
+    For cloud storage definitions, the secondary location will not be used because a
+    cloud storage destination is remote to the backup client. Note, though, as mentioned
+    above, BI is always backed up to the target storage at the end of the backup, and
+    this includes cloud storage definition backups.
+
+Since the local file system configuration is located on the target storage device, the
+default of <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR} is on the target backup storage device.
+
+Given the above, the default setup will store backup information *{BACKUP_INFO_EXTENSION} files locally
+as follows:
+
+    Local file system storage backups:
+        Primary: <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+        Secondary: <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+        (Also always backed up to the target file system storage.)
+
+    Cloud storage backups:
+        Primary: <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+        Secondary: None
+        (Also always backed up to the target cloud storage.)
+
+Primary/Secondary above are copies of the *{BACKUP_INFO_EXTENSION} files on your local system and/or
+local backup storage device. The copies backed up to the target storage device are an
+additional copy used for recovery as needed (not the main discussion here).
+
+For various reasons, you may wish to avoid storing backup information on your local system.
+To disable storing backup information in the default HOME location, use --no-use-default-binf
+but beware of pitfalls, some of which are outlined below.
+
+The --use-default-binf switch will work immediately for a file system storage backup but
+not for a cloud storage backup. This is because a cloud storage backup does not a have a
+secondary location configured by default. You must have at least one local location to
+store backup information, and if you use --use-default-binf without specifying a secondary
+non-default location, the backup will not start, you will receive an error. 
+
+The "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" setting allows you to setup a non-default backup information location
+to use with your backup configuration. This is a setting in your backup configuration file.
+It is specified in the following storage definition config location:
+
+    ...
+    \"{CONFIG_SECTION_GENERAL}\": {{
+        \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": <backup_info_location>
+    }}
+    ...
+
+where <backup_info_location> is a path to the backup information directory. You can specify
+an explicit directory, but more likely you will use one of the following replacement paths:
+
+    "{{DEFAULT_CONFIG_DIR}}": The <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME} location. 
+    "{{CONFIG_DIR}}": The <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME} location.
+
+For example, given the following...
+
+        \"{CONFIG_SECTION_GENERAL}\": {{
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": "{{CONFIG_DIR}}/atbu-backup-info"
+        }}
+
+... {ATBU_PROGRAM_NAME} will replace {{CONFIG_DIR}} with the directory containing the configuration file itself.
+It will then append "/atbu-backup-info". If the config file were located on a USB drive at the
+following location...
+
+    "F:\\Config\\atbu-stgdef--my-backup.json" then
+
+...then the so-called "config backup information" directory will be located here...
+
+    "F:\\Config\\atbu-backup-info"
+
+To use the above "config BI" secondary backup information location, specify --use-config-binf on the
+command line.
+
+If it were a cloud backup and you did not want to use the default HOME location, but instead use 
+some other drive, you would configure the backup-info-dir value per above and specify --no-use-default-binf
+and --use-config-binf. This stop use of the default system HOME location, and forces use of the
+configured BI location.
+
+The other replacement value, "{{DEFAULT_CONFIG_DIR}}", is replaced with the {ATBU_PROGRAM_NAME} user default of
+<HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}. Typically, you will use "{{CONFIG_DIR}}" to keep backup credentials/configuration
+and backup information on an offline storage device, such as a USB drive or other device. The
+"{{DEFAULT_CONFIG_DIR}}" is perhaps less useful.
+
+One way in which the above can be used is to keep your backup configuration, secrets/crednetials, and 
+backup information (BI) offline, perhaps on a portable SSD or USB Drive by employing the following
+general steps (assume F: is a portable SSD):
+
+    1. atbu creds export storage-def:my-cloud-backup F:\\B\\my-cloud-backup-config.json.
+
+    2. Edit F:\\B\\my-cloud-backup-config.json, adding a {CONFIG_VALUE_NAME_BACKUP_INFO_DIR} configuration:
+        ...
+        \"{CONFIG_SECTION_GENERAL}\": {{
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": "{{CONFIG_DIR}}/atbu-backup-info"
+        }}
+        ...
+
+    3. Perform a backup. Examples:
+        a) atbu backup C:\\MyFiles storage-def:my-cloud-backup --full --use-config-binf --config-file F:\\B\\my-cloud-backup-config.json
+        b) atbu backup C:\\MyFiles storage-def:my-cloud-backup --full --no-default-binf --use-config-binf --config-file F:\\B\\my-cloud-backup-config.json
+
+The above steps generally do the following:
+
+    Step 1 exports the configuration for "my-cloud-backup" to a USB drive located on the F:\\ drive.
+
+    Step 2 edits the exported configuration to specify a secondary or "config backup information"
+    location (meaning a BI location relative to the configuration file).
+
+    Step 3a performs a backup which stores backup information to both the <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME} location
+    as well as to "F:\\B\\atbu-backup-info".
+
+    Step 3b is the same as step 3a except that it disables storing backup information in <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME},
+    and only stores backup information to the "F:\\B\\atbu-backup-info" USB drive location.
+
+IMPORTANT
+=========
+Generally you should always use consistent settings for both --use-default-binf and
+--use-config-binf. Failure to do so can cause unexpected results if one location has more up to
+date backup information than another location, where you switch locations arbitrarily. Be consistent
+in your use or non-use of these switches.
+
+Generally, the switches you use, and locations for BI should never change for a particular
+configuration after you establish them unless you are certain to ensure any new setup, config,
+or locations specified contain the latest copies of the configuration's backup information.
+If you fail to do this, you may end up causing {ATBU_PROGRAM_NAME} to perform a backup that
+creates new BI files, or updates older BI files than the latest, and your backup history will
+be incomplete.
+
+Always start a backup with the latest backup information in the first directory specified. If
+you use the default HOME location, that should have the latest. It is considered the main
+location unless disabled.
+
+If you disable the HOME location via --no-use-default-binf, then the config-specified location
+becomes the main location.
+
+If both the default (HOME) and config locations are specified, the default HOME is the main
+location, and the config location is the secondary. When {ATBU_PROGRAM_NAME} performs a backup
+it uses the main location as the latest backup information. This means, when you have two locations
+specified (i.e., default and config), the default is the main location, the secondary is merely
+backup.
+
+As you can see, care must be taken to not switch around the configuration arbitrarily. The main
+location must be setup properly so {ATBU_PROGRAM_NAME} uses the latest BI information in order to
+maintain a good backup history. That is by, by default, {ATBU_PROGRAM_NAME} uses the HOME default
+location for all main backup information for both cloud and local. This ensures the latest is stored
+in one well-known location (a location you can easily backup).
+
+Using the switches in this section are for esoteric setups, such as keeping all information off
+the client except during backup.
+
+Given the sensitivity with these settings, future changes are likely to have configuration file
+settings that remove the need for the command line switches. The config file should drive these
+setting firmly.
+"""
+
 extra_help_subjects = {
     "specifiers": storage_def_specifier_help,
+    "backup-info": backup_information_switch_help,
 }
 
 console_formatter = logging.Formatter("%(asctime)-15s %(threadName)s %(message)s")
@@ -214,12 +442,39 @@ must not already exist.
     #############################################################################################
 
     #
-    # Common credential filename argument.
+    # Common credential filename argument (currently used for import/export of credentials).
     #
-    parser_credential_filename = argparse.ArgumentParser(add_help=False)
-    parser_credential_filename.add_argument(
+    parser_credential_filename_positional = argparse.ArgumentParser(add_help=False)
+    parser_credential_filename_positional.add_argument(
         "filename",
         help="The path to the credential file.",
+    )
+
+    #
+    # An optional explicit configuration file which is searched for credentials.
+    #
+    parser_credential_filename_optional = argparse.ArgumentParser(add_help=False)
+    parser_credential_filename_optional.add_argument(
+        "--config-file", "-c",
+        help=f"""The path to the credential configuration file. When specified, this config file is
+the first "credential store" that is searched. To use this, use "{ATBU_PROGRAM_NAME} creds export..."
+to export a backup storage definition configuration to a .json file. You can then
+specify that json file as the argument to --config-file when you run backup, restore,
+etc. commands.
+
+When running a backup command with --config-file specified, ATBU will consider
+credentials in that file for the storage definition in question. You can delete
+the credentials from your local system's keystore and thereby keep your storage
+config and credentials offline when not backing up.
+
+When performing "{ATBU_PROGRAM_NAME} creds export...", if your secrets are password-protected,
+the password-protection status will persist in the exported .json file. When you
+use --config-file with a .json containing a password-protected backup config, you
+will still be prompted for your password. This means if you keep the config on
+removeable media which is lost, the credentials require a password to unlock.
+IMPORTANT: Do not use a credential .json on a USB Drive as your main exported
+config/secrets backup. Keep other copies in safe places!
+""",
     )
 
     #
@@ -256,7 +511,7 @@ must not already exist.
         "backup",
         formatter_class=argparse.RawTextHelpFormatter,
         help="Backup files to a local file system folder or the cloud.",
-        parents=[parser_common],
+        parents=[parser_common, parser_credential_filename_optional],
     )
     group_backup_operation = parser_backup.add_mutually_exclusive_group(required=True)
     group_backup_operation.add_argument(
@@ -359,6 +614,29 @@ same since the last backup, but the digests are different.""",
         help=f"""Set the backup compression level. The default is '{BACKUP_COMPRESSION_DEFAULT}'.
 """,
     )
+    parser_backup.add_argument(
+        "--use-default-binf",
+        "--use-def-bi",
+        help=f"""By default, both local and cloud storage defintions are configured to store backup
+information in a system location under the {ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}. Specify
+--no-use-default-binf (--no-def-bi) to disable this default behavior.
+See "{ATBU_PROGRAM_NAME} help backup-info" for more information.
+""",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser_backup.add_argument(
+        "--use-config-binf",
+        "--use-cfg-bi",
+        help=f"""Specify this to force using the storage definition configuration's "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}"
+as a location to store the backup information. By default, cloud storage definitions
+do *not* use this location, while local file system storage definitions *do* use this
+location. See "{ATBU_PROGRAM_NAME} help backup-info" for more information.
+""",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+
     parser_backup.set_defaults(func=handle_backup)
 
     #
@@ -367,7 +645,7 @@ same since the last backup, but the digests are different.""",
     parser_restore = subparsers.add_parser(
         "restore",
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common],
+        parents=[parser_common, parser_credential_filename_optional],
         help="Restore selected files from a backup.",
         description=f"""Restore selected files from a backup.
 
@@ -437,7 +715,7 @@ To learn more about specifying a storage definitions, backups,
 and files, see '{ATBU_PROGRAM_NAME} help specifiers'
 """,
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common],
+        parents=[parser_common, parser_credential_filename_optional],
     )
     parser_verify.add_argument(
         "source_storage_specifiers",
@@ -474,7 +752,7 @@ backup location is used.
     parser_list = subparsers.add_parser(
         "list",
         help="List storage definitions, backups, and files relating to backups.",
-        parents=[parser_common],
+        parents=[parser_common, parser_credential_filename_optional],
     )
     parser_list.add_argument(
         "specifiers",
@@ -530,7 +808,7 @@ path to file system storage location. See '{ATBU_PROGRAM_NAME} help specifiers'.
     # pylint: disable=unused-variable
     cred_create_storage_def_parser = subparser_creds.add_parser(
         CREDS_SUBCMD_CREATE_STORAGE_DEF,
-        parents=[parser_creds_storage_def_specifier, parser_common],
+        parents=[parser_creds_storage_def_specifier, parser_credential_filename_optional, parser_common],
         formatter_class=argparse.RawTextHelpFormatter,
         help=f"Create a backup storage definition.",
         description=f"""where
@@ -550,8 +828,8 @@ arguments you wish.
 
 Examples:
 
-    {ATBU_PROGRAM_NAME} creds create-storage-def my-cloud-backup libcloud azure_blobs key=<key>,secret=<secret>
-    {ATBU_PROGRAM_NAME} creds create-storage-def my-cloud-backup google google_storage key=<client_email>,secret=<path_to_OAuth2.json>
+    {ATBU_PROGRAM_NAME} creds {CREDS_SUBCMD_CREATE_STORAGE_DEF} my-cloud-backup libcloud azure_blobs key=<key>,secret=<secret>
+    {ATBU_PROGRAM_NAME} creds {CREDS_SUBCMD_CREATE_STORAGE_DEF} my-cloud-backup google google_storage key=<client_email>,secret=<path_to_OAuth2.json>
 
 """,
     )
@@ -650,7 +928,7 @@ will be skipped (i.e., user only prompted once re storage defintiion).
         help="Export a storage definition and its secrets to a text file (WARNING: clear text file!).",
         parents=[
             parser_creds_storage_def_specifier,
-            parser_credential_filename,
+            parser_credential_filename_positional,
             parser_file_ovewrite,
             parser_common,
         ],
@@ -664,7 +942,7 @@ will be skipped (i.e., user only prompted once re storage defintiion).
         help="Import a storage definition and its secrets from a text file.",
         parents=[
             parser_creds_storage_def_specifier,
-            parser_credential_filename,
+            parser_credential_filename_positional,
             parser_common,
         ],
     )
@@ -728,11 +1006,11 @@ are the potential values based on your selection for the above password type arg
     parser_creds.set_defaults(func=handle_creds)
 
     #
-    # 'restore' subparser.
+    # 'recover' subparser.
     #
     parser_recover = subparsers.add_parser(
         "recover",
-        parents=[parser_common],
+        parents=[parser_common, parser_credential_filename_optional],
         formatter_class=argparse.RawTextHelpFormatter,
         help="""Recover your backup information files.""",
         description=f"""
@@ -793,7 +1071,7 @@ recommended you backup configurations before overwriting them by using
     parser_decrypt = subparsers.add_parser(
         "decrypt",
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common],
+        parents=[parser_common, parser_credential_filename_optional],
         help="Decrypt storage files directly.",
         description=f"""Decrypt storage files directly. This is generally a command used by someone with technical expertise who may have
 a need to decrypt backup storage files without needing to download them. For normal usage/users, this command can
@@ -1168,6 +1446,19 @@ def main(argv=None):
 
     exit_code = 1
     try:
+        if hasattr(args, 'config_file') and args.config_file is not None:
+            if not os.path.isfile(args.config_file):
+                raise CredentialSecretFileNotFoundError(
+                    f"The credential configuration file was not found: {args.config_file}",
+                )
+            #
+            # Register the storage definition configuration if one is not already present.
+            #
+            register_storage_def_config_override(
+                storage_def_config_path=args.config_file,
+                only_if_not_already_present=True,
+            )
+
         if hasattr(args, "func"):
             remove_created_logging_handlers()
             remove_root_stream_handlers()
