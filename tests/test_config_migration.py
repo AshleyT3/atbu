@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 import logging
+from uuid import uuid4
 from pytest import (
     LogCaptureFixture,
     CaptureFixture,
@@ -50,6 +51,7 @@ from atbu.tools.backup.constants import (
     CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET,
     CONFIG_VALUE_NAME_INTERFACE_TYPE,
     CONFIG_VALUE_NAME_PROVIDER,
+    CONFIG_VALUE_NAME_STORAGE_DEF_UNIQUE_ID,
 )
 from atbu.tools.backup.credentials import (
     CredentialAesKey,
@@ -240,7 +242,8 @@ def test_migrate_001_to_003(
 
     # Perform the same as the old way: atbu_cfg = AtbuConfig.access_default_config()
     atbu_cfg = AtbuConfig(path=AtbuConfig.get_user_default_config_file_path())
-    atbu_cfg.check_upgrade_default_config()
+    # pylint: disable=protected-access
+    atbu_cfg._check_upgrade_default_config()
 
     atbu_cfg2: AtbuConfig
     atbu_cfg2, storage_def_name2, storage_def_dict2 = AtbuConfig.access_cloud_storage_config(
@@ -253,6 +256,8 @@ def test_migrate_001_to_003(
     assert storage_def_dict2 is not None
     assert atbu_cfg2.version == ATBU_CONFIG_FILE_VERSION_STRING_CURRENT
     assert storage_def_name2 == Version001_storage_def_name1
+    assert isinstance(storage_def_dict2[CONFIG_VALUE_NAME_STORAGE_DEF_UNIQUE_ID], str)
+    assert (len(storage_def_dict2[CONFIG_VALUE_NAME_STORAGE_DEF_UNIQUE_ID]) == len(str(uuid4())))
     assert (
         storage_def_section[CONFIG_VALUE_NAME_INTERFACE_TYPE]
         == storage_def_dict2[CONFIG_VALUE_NAME_INTERFACE_TYPE]

@@ -728,12 +728,16 @@ class CredentialStoreKeyringProvider(CredentialStoreProvider):
     def get_cred_bytes(
         self, config_name: str, credential_name: str
     ) -> CredentialByteArray:
-        return CredentialByteArray(
-            keyring.get_password(
-                service_name=config_name,
-                username=credential_name,
-            ).encode("utf-8")
+        password_str = keyring.get_password(
+            service_name=config_name,
+            username=credential_name,
         )
+        if password_str is None:
+            raise CredentialNotFoundError(
+                f"The credential was not found: "
+                f"config_name={config_name} credential_name={credential_name}"
+            )
+        return CredentialByteArray(password_str.encode("utf-8"))
 
     def delete_cred_bytes(self, config_name: str, credential_name: str) -> None:
         keyring.delete_password(

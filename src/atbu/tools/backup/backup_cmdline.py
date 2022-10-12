@@ -227,10 +227,6 @@ def handle_backup(args):
     #
     atbu_cfg_to_use: AtbuConfig = None
 
-    # First in this list should be user's machine backup info dir.
-    # Another can be added below for the destination where applicable.
-    backup_info_dirs: list[str] = []
-
     storage_def_name = parse_storage_def_specifier(storage_location=dest_location)
     if storage_def_name:
         #
@@ -250,29 +246,6 @@ def handle_backup(args):
                 f"You can create a storage definition using '{ATBU_PROGRAM_NAME} "
                 f"creds {CREDS_SUBCMD_CREATE_STORAGE_DEF}...'."
             )
-
-        #
-        # For cloud storage def, always use system HOME location for backup information
-        # unless explicitly requested otherwise.
-        # Do not do this if False: --no-use-default-binf
-        #
-        if args.use_default_binf is None or args.use_default_binf:
-            backup_info_dirs.append(str(AtbuConfig.get_default_backup_info_dir()))
-
-        #
-        # For cloud storage def, use config file "backup-info-dir" setting only if
-        # explicitly requested.
-        # Do not do this if False: --no-use-config-binf
-        #
-        atbu_cfg_bid = atbu_cfg_to_use.get_backup_info_dir()
-        # Pay close attention, this logic is slightly different than for local file
-        # storage def below.
-        if (
-            args.use_config_binf is not None # If specified *and* True
-            and args.use_config_binf
-            and AtbuConfig.get_default_backup_info_dir() != atbu_cfg_bid
-        ):
-            backup_info_dirs.append(str(atbu_cfg_bid))
     else:
         #
         # Local filesystem storage:
@@ -281,34 +254,7 @@ def handle_backup(args):
             default_storage_def_name=None, storage_location=dest_location
         )
 
-        #
-        # For local file system storage def, always use system HOME location for backup
-        # information unless explicitly requested otherwise.
-        # Do not do this if False: --no-use-default-binf
-        #
-        if args.use_default_binf is None or args.use_default_binf:
-            backup_info_dirs.append(str(AtbuConfig.get_default_backup_info_dir()))
-
-        #
-        # For local file system storage def, always use file system storage config
-        # location for backup information unless explicitly requested otherwise.
-        # Do not do this if False: --no-use-config-binf
-        #
-        atbu_cfg_bid = atbu_cfg_to_use.get_backup_info_dir()
-        if (
-            args.use_config_binf is None # If *not* specified *or* True
-            or args.use_config_binf
-            and AtbuConfig.get_default_backup_info_dir() != atbu_cfg_bid
-        ):
-            backup_info_dirs.append(str(atbu_cfg_bid))
-
-    if len(backup_info_dirs) == 0:
-        raise InvalidConfiguration(
-            f"You specified options that disable all backup information locations. "
-            f"Fix your specified options. Be careful when overriding backup info locations. "
-            f"Consistency with options, or knowing what you are doing, across backups is "
-            f"imperative. See \"{ATBU_PROGRAM_NAME} help backup-info\" for more information."
-        )
+    backup_info_dirs: list[str] = [str(bid) for bid in atbu_cfg_to_use.get_backup_info_dirs()]
 
     storage_def_dict = atbu_cfg_to_use.get_storage_def_with_resolved_secrets_deep_copy(
         storage_def_name=storage_def_name

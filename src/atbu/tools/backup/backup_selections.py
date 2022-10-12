@@ -186,7 +186,7 @@ def parse_storage_def_specifiers_patterns(
                     location_derivation_source_arg=raw_arg,
                     storage_def_name=storage_def_name,
                     storage_def=storage_def,
-                    backup_info_dir=atbu_cfg_to_use.get_backup_info_dir(),
+                    backup_info_dir=atbu_cfg_to_use.get_primary_backup_info_dir(),
                     selection_patterns=[],
                 )
                 # Add to ordered list of StorageSelectionInfo instance results.

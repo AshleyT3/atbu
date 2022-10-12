@@ -16,7 +16,6 @@ r"""ATBU Configuration-related classes/functions.
 """
 
 import fnmatch
-from genericpath import isfile
 import glob
 import logging
 import os
@@ -25,6 +24,7 @@ import re
 from typing import Union
 import copy
 import json
+from uuid import uuid4
 import keyring
 from send2trash import send2trash
 
@@ -33,6 +33,7 @@ from atbu.mp_pipeline.mp_global import (
 )
 from atbu.common.util_helpers import (
     convert_to_pathlib_path,
+    pathlib_splitdrive,
     deep_union_dicts,
     is_absolute_path,
     prompt_YN,
@@ -42,11 +43,6 @@ from atbu.common.util_helpers import (
 
 from atbu.tools.backup.config_migration_helpers import (
     upgrade_storage_definitions_from_001_to_002,
-)
-from atbu.tools.backup.credentials import (
-    CredentialByteArray,
-    CredentialStoreProvider,
-    ProviderCannotHandleException,
 )
 
 from .constants import *
@@ -235,8 +231,11 @@ class AtbuConfig(AtbuConfigNode):
 
     def __init__(self, path: Union[str, Path], cfg: dict = None):
         super().__init__(cfg=cfg)
-        self.is_default_cfg = False
         self._path = convert_to_pathlib_path(path)
+
+    @staticmethod
+    def _get_new_unique_id():
+        return str(uuid4())
 
     @staticmethod
     def create_starting_config():
@@ -249,14 +248,19 @@ class AtbuConfig(AtbuConfigNode):
         return atbu_cfg
 
     @staticmethod
-    def check_upgrade_default_config():
+    def _check_upgrade_default_config() -> None:
+        """Trigger upgrade by loading the default <HOME>/<USER>/... configuration.
+        This is not used after the <HOME>/<UESR> configuration is upgraded/removed
+        and split into individual configuration files.
+        """
         default_config_path = AtbuConfig.get_user_default_config_file_path()
         if not default_config_path.is_file():
             return
         cfg = AtbuConfig(path=AtbuConfig.get_user_default_config_file_path())
-        cfg.is_default_cfg = True
         cfg.load_config_file(create_if_not_exist=False)
-        return cfg
+        # Upgrade successful, default config is now seperate per-storage-def config
+        # files. Delete default configuration which is no longer needed.
+        cfg.delete_config_file()
 
     @staticmethod
     def access_cloud_storage_config(
@@ -265,7 +269,7 @@ class AtbuConfig(AtbuConfigNode):
         create_if_not_exist: bool = False,
         storage_def_dict_not_exist_ok: bool = False,
     ) -> tuple[object, str, dict]:
-        AtbuConfig.check_upgrade_default_config()
+        AtbuConfig._check_upgrade_default_config()
         config_path = AtbuConfig.get_user_storage_def_config_file_path(
             storage_def_name=storage_def_name,
         )
@@ -323,16 +327,49 @@ configuration, you can choose to have one created for you.
                 )
         storage_atbu_cfg: AtbuConfig = AtbuConfig(path=storage_atbu_cfg_path)
         storage_atbu_cfg.load_config_file(create_if_not_exist=create_if_not_exist)
-        storage_def_name, storage_def = storage_atbu_cfg.find_filesystem_storage_def(
+        storage_def_name, storage_def_dict = storage_atbu_cfg.find_filesystem_storage_def(
             storage_path_to_find=storage_location_path
         )
-        if resolve_storage_def_secrets and storage_def_name and storage_def:
-            storage_def = (
-                storage_atbu_cfg.get_storage_def_with_resolved_secrets_deep_copy(
-                    storage_def_name=storage_def_name
-                )
+        if (
+            storage_atbu_cfg.is_filesystem_backup_config()
+            and storage_def_name is not None
+            and storage_def_dict is not None
+        ):
+            #
+            # Existing (not new) filesystem storage definition.
+            #
+
+            override_config_path = AtbuConfig.get_storage_def_config_file_path_override(
+                storage_def_name=storage_def_name,
             )
-        return storage_atbu_cfg, storage_def_name, storage_def
+
+            if override_config_path is not None:
+                override_atbu_cfg = AtbuConfig(path=override_config_path)
+                override_atbu_cfg.load_config_file(create_if_not_exist=False)
+                override_atbu_cfg.set_storage_container(
+                    container_name=storage_atbu_cfg.get_storage_container()
+                )
+                if override_atbu_cfg.storage_def_id != storage_atbu_cfg.storage_def_id:
+                    raise InvalidConfiguration(
+                        f"The storage definition IDs do not match: "
+                        f"discovered={storage_atbu_cfg.storage_def_id} "
+                        f"override={override_atbu_cfg.storage_def_id} "
+                        f"discovered path={storage_atbu_cfg.path} "
+                        f"override path={override_atbu_cfg.path}"
+                    )
+                storage_atbu_cfg = override_atbu_cfg
+
+            # pylint: disable=protected-access
+            storage_atbu_cfg._remap_filesystem_storage_backup_info_dirs()
+
+            if resolve_storage_def_secrets:
+                storage_def_dict = (
+                    storage_atbu_cfg.get_storage_def_with_resolved_secrets_deep_copy(
+                        storage_def_name=storage_def_name
+                    )
+                )
+
+        return storage_atbu_cfg, storage_def_name, storage_def_dict
 
     @property
     def path(self):
@@ -433,23 +470,18 @@ configuration, you can choose to have one created for you.
             )
         if version_str == ATBU_CONFIG_FILE_VERSION_STRING_0_01:
             self._upgrade_version_001_to_002(cfg=cfg)
-            # Migration successful, save configuration file.
-            self._cfg = cfg
-            self.save_config_file()
         version_str = cfg.get(CONFIG_VALUE_NAME_VERSION)
         if version_str == ATBU_CONFIG_FILE_VERSION_STRING_0_02:
-            self._upgrade_version_002_to_003(cfg=cfg, is_default=self.is_default_cfg)
-            # Migration successful, save configuration file.
+            self._upgrade_version_002_to_003(cfg=cfg)
+        else:
             self._cfg = cfg
-            self.delete_config_file()
-        self._cfg = cfg
 
     def _upgrade_version_001_to_002(self, cfg: dict):
         print(f"Configuration file: {self.path}")
         print(
             f"Current configuration file version: {cfg.get(CONFIG_VALUE_NAME_VERSION)}"
         )
-        print(f"Required configuration file version: {ATBU_CONFIG_FILE_VERSION_STRING_0_02}")
+        print(f"Required configuration file version: {ATBU_CONFIG_FILE_VERSION_STRING_CURRENT}")
         if self.always_migrate:
             a = "y"
         else:
@@ -457,7 +489,7 @@ configuration, you can choose to have one created for you.
                 prompt_msg=(
                     f"You must upgrade your configuration file from "
                     f"{cfg.get(CONFIG_VALUE_NAME_VERSION)} to "
-                    f"{ATBU_CONFIG_FILE_VERSION_STRING_0_02} before proceeding."
+                    f"{ATBU_CONFIG_FILE_VERSION_STRING_CURRENT} before proceeding."
                 ),
                 prompt_question=f"Proceed with configuration upgrade?",
                 default_enter_ans="n",
@@ -480,8 +512,11 @@ configuration, you can choose to have one created for you.
         upgrade_storage_definitions_from_001_to_002(cfg=cfg)
         # Success
         cfg[CONFIG_VALUE_NAME_VERSION] = ATBU_CONFIG_FILE_VERSION_STRING_0_02
+        # Migration successful, save configuration file.
+        self._cfg = cfg
+        self.save_config_file()
 
-    def _upgrade_version_002_to_003(self, cfg: dict, is_default: bool):
+    def _upgrade_version_002_to_003(self, cfg: dict):
         print(f"Configuration file: {self.path}")
         print(f"Current configuration file version: {cfg.get(CONFIG_VALUE_NAME_VERSION)}")
         print(f"Required configuration file version: {ATBU_CONFIG_FILE_VERSION_STRING_0_03}")
@@ -501,37 +536,45 @@ configuration, you can choose to have one created for you.
                 raise InvalidConfigurationFile(
                     f"The configuration was not upgraded. "
                     f"You cannot use this version of the software with your current configuration. "
-                    f"Please use the proper version of software or upgrade your configuration files. "
-                    f"Ensure you have a backup of your configuration using the older software before upgrading."
+                    f"Please use the proper version of software or upgrade your configuration "
+                    f"files. Ensure you have a backup of your configuration using the older "
+                    f"software before upgrading."
                 )
             # After accepting initial migration, accept all others.
             AtbuConfig.always_migrate = True
         self.create_config_file_numbered_backup()
         # Migrate from 0.02 to 0.03.
-        storage_definitions = cfg[CONFIG_SECTION_STORAGE_DEFINITIONS]
-        if not is_default:
-            if len(storage_definitions) > 1:
-                raise InvalidConfigurationFile(
-                    f"The non-default configuration should only have one storage definition: ",
-                    f"is_default={is_default} length={len(storage_definitions)}",
-                )
-            # Non-default configurations do not require changes beyond version.
-            cfg[CONFIG_VALUE_NAME_VERSION] = ATBU_CONFIG_FILE_VERSION_STRING_0_03
-            return
+
         #
-        # From the default configuration, extract individual storage definitions into their own
+        # From the configuration, extract individual storage definitions into their own
         # configuration files.
         #
         cfg_dir = self._path.parent
         storage_def_name: str
         storage_def_dict: dict
+        storage_definitions = cfg[CONFIG_SECTION_STORAGE_DEFINITIONS]
+        is_filesystem = False
         for storage_def_name, storage_def_dict in storage_definitions.items():
             print(f"Processing storage definition: {storage_def_name}...")
-            new_cfg_path = (
-                cfg_dir / AtbuConfig.get_user_storage_def_config_file_name(
-                    storage_def_name=storage_def_name
+            interface_type = storage_def_dict.get(CONFIG_VALUE_NAME_INTERFACE_TYPE)
+            is_filesystem = False
+            if interface_type == CONFIG_INTERFACE_TYPE_FILESYSTEM:
+                is_filesystem = True
+            if is_filesystem:
+                # Overwrite same file.
+                new_cfg_path = self._path
+                if len(storage_definitions) != 1:
+                    raise InvalidConfiguration(
+                        f"Expecting file system config to only have a single storage definition: "
+                        f"len(storage_definitions)={len(storage_definitions)}"
+                    )
+            else:
+                # Make new separate file.
+                new_cfg_path = (
+                    cfg_dir / AtbuConfig.get_user_storage_def_config_file_name(
+                        storage_def_name=storage_def_name
+                    )
                 )
-            )
             if new_cfg_path.is_file():
                 new_cfg_path_backup = create_numbered_backup_of_file(
                     path=new_cfg_path,
@@ -544,10 +587,22 @@ configuration, you can choose to have one created for you.
                 )
             new_cfg_dict = copy.deepcopy(cfg)
             new_cfg_dict[CONFIG_VALUE_NAME_VERSION] = ATBU_CONFIG_FILE_VERSION_STRING_CURRENT
-            if CONFIG_VALUE_NAME_BACKUP_INFO_DIR in new_cfg_dict[CONFIG_SECTION_GENERAL]:
-                del new_cfg_dict[CONFIG_SECTION_GENERAL][CONFIG_VALUE_NAME_BACKUP_INFO_DIR]
+            new_cfg_gen_sec = new_cfg_dict[CONFIG_SECTION_GENERAL]
+            if CONFIG_VALUE_NAME_BACKUP_INFO_DIR in new_cfg_gen_sec:
+                # For prior version, CONFIG_VALUE_NAME_BACKUP_INFO_DIR was a str.
+                # Going forward, CONFIG_VALUE_NAME_BACKUP_INFO_DIR is an array/list.
+                new_cfg_gen_sec[CONFIG_VALUE_NAME_BACKUP_INFO_DIR] = [
+                    new_cfg_gen_sec[CONFIG_VALUE_NAME_BACKUP_INFO_DIR]
+                ]
+            else:
+                new_cfg_gen_sec[CONFIG_VALUE_NAME_BACKUP_INFO_DIR] = []
+            new_storage_def_dict = copy.deepcopy(storage_def_dict)
+            if not new_storage_def_dict.get(CONFIG_VALUE_NAME_STORAGE_DEF_UNIQUE_ID):
+                new_storage_def_dict[
+                    CONFIG_VALUE_NAME_STORAGE_DEF_UNIQUE_ID
+                ] = AtbuConfig._get_new_unique_id()
             new_cfg_dict[CONFIG_SECTION_STORAGE_DEFINITIONS] = {
-                storage_def_name: copy.deepcopy(storage_def_dict),
+                storage_def_name: new_storage_def_dict,
             }
             new_cfg = AtbuConfig(
                 path=new_cfg_path,
@@ -555,9 +610,16 @@ configuration, you can choose to have one created for you.
             )
             print(f"Saving {storage_def_name}: {new_cfg.path}")
             new_cfg.save_config_file()
-        cfg[CONFIG_SECTION_STORAGE_DEFINITIONS] = {}
-        # Success
-        cfg[CONFIG_VALUE_NAME_VERSION] = ATBU_CONFIG_FILE_VERSION_STRING_0_03
+            if is_filesystem:
+                break
+        if is_filesystem:
+            # File system's update without changing the file name so self is
+            # the updated file system configuration. Simply reload self.
+            self.load_config_file()
+        else:
+            cfg[CONFIG_SECTION_STORAGE_DEFINITIONS] = {}
+            cfg[CONFIG_VALUE_NAME_VERSION] = ATBU_CONFIG_FILE_VERSION_STRING_0_03
+            self._cfg = cfg
 
     def get_general_section(self) -> dict:
         return self._get_top_section(CONFIG_SECTION_GENERAL)
@@ -599,6 +661,14 @@ configuration, you can choose to have one created for you.
         return f"{ATBU_STGDEF_CONFIG_FILE_NAME_PREFIX}{storage_def_name}.json"
 
     @staticmethod
+    def get_storage_def_config_file_path_override(
+        storage_def_name: str,
+    ) -> Path:
+        if storage_def_name in _STORAGE_DEFINITION_CONFIG_OVERRIDES:
+            return Path(_STORAGE_DEFINITION_CONFIG_OVERRIDES[storage_def_name])
+        return None
+
+    @staticmethod
     def get_user_storage_def_config_file_path(
         storage_def_name: str,
         with_overrides: bool = True,
@@ -612,6 +682,17 @@ configuration, you can choose to have one created for you.
 
     @staticmethod
     def get_default_backup_info_dir() -> Path:
+        """Get the original ATBU default configuration backup information directory.
+        This directory was subordinate to the older default configuration file folder.
+        It continues to be the default primary backup information directory but can be
+        overridden and not used.
+
+        Raises:
+            InvalidConfiguration: If the default location cannot be a directory.
+
+        Returns:
+            Path: The default backup information directory.
+        """
         bid = AtbuConfig.get_user_default_config_dir() / ATBU_DEFAULT_BACKUP_INFO_SUBDIR
         if bid.is_file():
             raise InvalidConfiguration(
@@ -620,6 +701,17 @@ configuration, you can choose to have one created for you.
             )
         bid.mkdir(parents=True, exist_ok=True)
         return bid
+
+    def get_config_backup_info_dir(self) -> Path:
+        """Get the configuration file's backup information directory. The configuration
+        backup information directory is the ./backup-info-dir subordinate to the storage
+        definition configuration file. This directory may or may not be in the default
+        HOME ATBU configuration directory.
+
+        Returns:
+            Path: The config backup information directory.
+        """
+        return self._path.parent / ATBU_DEFAULT_BACKUP_INFO_SUBDIR
 
     re_extract_storage_def_name = re.compile(
         rf".*\{os.sep}{ATBU_STGDEF_CONFIG_FILE_NAME_PREFIX}([^\s\.]+).json"
@@ -634,7 +726,7 @@ configuration, you can choose to have one created for you.
     def get_user_storage_def_config_path_info(
         glob_pattern="*"
     ) -> list[StorageDefConfigPathInfo]:
-        AtbuConfig.check_upgrade_default_config()
+        AtbuConfig._check_upgrade_default_config()
         glob_pattern = (
             AtbuConfig.get_user_default_config_dir() /
             f"{ATBU_STGDEF_CONFIG_FILE_NAME_PREFIX}{str(glob_pattern)}.json"
@@ -666,7 +758,7 @@ configuration, you can choose to have one created for you.
 
     @staticmethod
     def get_user_storage_def_names(fnmatch_pattern="*") -> list[str]:
-        AtbuConfig.check_upgrade_default_config()
+        AtbuConfig._check_upgrade_default_config()
         return [
             cpi.storage_def_name
             for cpi in AtbuConfig.get_user_storage_def_config_path_info()
@@ -677,65 +769,279 @@ configuration, you can choose to have one created for you.
     def is_user_storage_def_exists(storage_def_name: str) -> bool:
         return len(AtbuConfig.get_user_storage_def_names(fnmatch_pattern=storage_def_name)) != 0
 
+    def get_filesystem_storage_def_root_dir(self) -> Path:
+        """Get the file system storage definition's root directory. This method
+        assumes the storage definition's container is accurate/resolved.
+
+        Raises:
+            InvalidConfiguration: Raised if not a file system storage definition.
+
+        Returns:
+            Path: The Path object to the root of the file system storage definition.
+        """
+        if not self.is_filesystem_backup_config():
+            raise InvalidConfiguration(
+                f"Configuration is not a filesystem storage definition. "
+                f"Cannot get filesystem storage definition root directory: "
+                f"path={self.path}"
+            )
+        return Path(self.get_storage_container())
+
+    def get_filesystem_storage_def_config_dir(self) -> Path:
+        return self.get_filesystem_storage_def_root_dir() / ATBU_DEFAULT_CONFIG_DIR_NAME
+
+    def get_filesystem_storage_def_backup_info_dir(self) -> Path:
+        return self.get_filesystem_storage_def_config_dir() / ATBU_DEFAULT_BACKUP_INFO_SUBDIR
+
+    @staticmethod
+    def _has_replacement_root(path: Path):
+        path_str = str(path)
+        for rep_field in REPLACEMENT_FIELDS:
+            if path_str.startswith(rep_field):
+                return True
+        return False
+
+    def _remap_filesystem_storage_backup_info_dirs(self):
+        """For all backup information directories defined by this configuration,
+        remap any such directories to the current file system storage drive.
+        """
+        if not self.is_filesystem_backup_config():
+            return
+        fs_sd_root = self.get_filesystem_storage_def_root_dir()
+        fs_sd_drive, fs_sd_root_wo_drive = pathlib_splitdrive(fs_sd_root)
+        bid_list = self.get_config_backup_info_dirs()
+        if not bid_list:
+            return
+        remapped_bid_list: list[Path] = []
+        for bid in bid_list:
+            bid_drive, bid_path_wo_drive = pathlib_splitdrive(bid)
+            if fs_sd_root_wo_drive not in bid_path_wo_drive.parents:
+                remapped_bid_list.append(bid)
+            if fs_sd_drive != bid_drive and not AtbuConfig._has_replacement_root(bid_path_wo_drive):
+                bid = fs_sd_drive / bid_path_wo_drive
+            remapped_bid_list.append(bid)
+        self.set_config_backup_info_dirs(remapped_bid_list)
+
     def find_filesystem_storage_def(
         self, storage_path_to_find: Path
     ) -> tuple[str, dict]:
-        storage_defs_section = self.get_storage_defs_section()
-        _, storage_path_to_find_wo_drive = os.path.splitdrive(storage_path_to_find)
-        for storage_def_name, storage_def in storage_defs_section.items():
-            if len(storage_defs_section) == 1:
-                # User specified file path to valid filesystem storage config file.
-                # If there's only one definition, return that.
-                return storage_def_name, storage_def
-            # If caller path without drive letter matches filesystem without drive
-            # letter, return that. (Remove drive letter because it is the original and
-            # can change.)
-            _, storage_def_path_wo_drive = os.path.splitdrive(
-                storage_def[CONFIG_VALUE_NAME_CONTAINER]
-            )
-            if storage_path_to_find_wo_drive == storage_def_path_wo_drive:
-                return storage_def_name, storage_def
-        return None, None
+        if not self.is_filesystem_backup_config():
+            return None, None
+        storage_def_name, storage_def_dict = self.get_only_storage_def_dict()
+        if storage_def_dict is None:
+            return None, None
+        actual_drive, storage_path_to_find_wo_drive = os.path.splitdrive(storage_path_to_find)
+        config_drive, storage_def_path_wo_drive = os.path.splitdrive(
+            storage_def_dict[CONFIG_VALUE_NAME_CONTAINER]
+        )
+        if storage_path_to_find_wo_drive != storage_def_path_wo_drive:
+            return None, None
+        if actual_drive != config_drive:
+            storage_def_dict[CONFIG_VALUE_NAME_CONTAINER] = str(storage_path_to_find)
+        return storage_def_name, storage_def_dict
 
-    def get_backup_info_dir(self) -> Path:
-        backup_info_dir = self._path.parent / ATBU_DEFAULT_BACKUP_INFO_SUBDIR
-        backup_info_dir = backup_info_dir.resolve()
-        g = self.get_general_section()
-        cfg_bid = g.get(CONFIG_VALUE_NAME_BACKUP_INFO_DIR)
-        if isinstance(cfg_bid, str):
-            use_override = (
-                cfg_bid.find(REPLACEMENT_FIELD_DEFAULT_CONFIG_DIR) != -1
-                or cfg_bid.find(REPLACEMENT_FIELD_CONFIG_DIR) != -1
+    @staticmethod
+    def _get_config_of_type(
+        section: dict,
+        key_name: str,
+        expected_type: type,
+        default_value = None,
+    ):
+        if section is None:
+            return default_value
+        value = section.get(key_name)
+        if value is None:
+            return default_value
+        if not isinstance(value, expected_type):
+            raise InvalidConfiguration(
+                f"{key_name} must be a {expected_type} but is "
+                f"type={type(value)} value={value}"
             )
-            cfg_bid = cfg_bid.replace(
+        return value
+
+    @staticmethod
+    def _get_config_string(
+        section: dict,
+        key_name: str,
+        default_value: str = None,
+    ) -> str:
+        return AtbuConfig._get_config_of_type(
+            section=section,
+            key_name=key_name,
+            expected_type=str,
+            default_value=default_value,
+        )
+
+    @staticmethod
+    def _get_config_list(
+        section: dict,
+        key_name: str,
+        default_value: list = None,
+    ) -> list:
+        return AtbuConfig._get_config_of_type(
+            section=section,
+            key_name=key_name,
+            expected_type=list,
+            default_value=default_value,
+        )
+
+    @staticmethod
+    def _get_config_bool(
+        section: dict,
+        key_name: str,
+        default_value: bool = None,
+    ) -> bool:
+        return AtbuConfig._get_config_of_type(
+            section=section,
+            key_name=key_name,
+            expected_type=bool,
+            default_value=default_value,
+        )
+
+    @property
+    def storage_def_name(self) -> str:
+        return self.get_only_storage_def_dict()[0]
+
+    @property
+    def storage_def_id(self) -> str:
+        _, storage_def_dict = self.get_only_storage_def_dict()
+        return storage_def_dict.get(CONFIG_VALUE_NAME_STORAGE_DEF_UNIQUE_ID)
+
+    def get_storage_container(self) -> str:
+        _, storage_def_dict = self.get_only_storage_def_dict(not_exist_ok=False)
+        return storage_def_dict.get(CONFIG_VALUE_NAME_CONTAINER)
+
+    def set_storage_container(self, container_name):
+        _, storage_def_dict = self.get_only_storage_def_dict(not_exist_ok=False)
+        storage_def_dict[CONFIG_VALUE_NAME_CONTAINER] = container_name
+
+    def get_interface_type(self) -> str:
+        storage_def_name, storage_def_dict = self.get_only_storage_def_dict()
+        if storage_def_name is None or storage_def_dict is None:
+            return None
+        interface_type = storage_def_dict.get(CONFIG_VALUE_NAME_INTERFACE_TYPE)
+        if not interface_type:
+            raise InvalidConfiguration(
+                f"Cannot find '{CONFIG_VALUE_NAME_INTERFACE_TYPE}' in the storage "
+                f"definition dictionary."
+            )
+        return interface_type
+
+    def is_filesystem_backup_config(self):
+        return self.get_interface_type() == CONFIG_INTERFACE_TYPE_FILESYSTEM
+
+    def get_config_backup_info_dirs(self) -> list[Path]:
+        gen_sec = self.get_general_section()
+        if gen_sec is None:
+            return []
+        if not isinstance(gen_sec, dict):
+            raise InvalidConfiguration(
+                f"The {CONFIG_SECTION_GENERAL} section should be a dictionary."
+            )
+        bid_list = AtbuConfig._get_config_list(gen_sec, CONFIG_VALUE_NAME_BACKUP_INFO_DIR)
+        if bid_list is None:
+            return []
+        if not isinstance(bid_list, list):
+            raise InvalidConfiguration(
+                f"Expected {CONFIG_VALUE_NAME_BACKUP_INFO_DIR} to be a list and not a "
+                f"{type(bid_list)}."
+            )
+        return [Path(bidstr) for bidstr in bid_list]
+
+    def set_config_backup_info_dirs(self, bid_list: list[Union[str,Path]]):
+        gen_sec = self.get_general_section()
+        if not isinstance(gen_sec, dict):
+            raise InvalidConfiguration(
+                f"The {CONFIG_SECTION_GENERAL} section should be a dictionary."
+            )
+        gen_sec[CONFIG_VALUE_NAME_BACKUP_INFO_DIR] = [str(bid) for bid in bid_list]
+
+    def get_resolved_config_backup_info_dirs(self) -> list[Path]:
+        cfg_bids_resolved: list[Path] = []
+        cfg_bids = self.get_config_backup_info_dirs()
+        for cfg_bid in cfg_bids:
+            cfg_bid_str = str(cfg_bid)
+            cfg_bid_str = cfg_bid_str.replace(
                 REPLACEMENT_FIELD_DEFAULT_CONFIG_DIR,
                 str(AtbuConfig.get_user_default_config_dir()),
             )
-            cfg_bid = cfg_bid.replace(
+            cfg_bid_str = cfg_bid_str.replace(
                 REPLACEMENT_FIELD_CONFIG_DIR,
                 str(self._path.parent),
             )
-            cfg_bid = Path(cfg_bid).resolve()
-            cfg_bid_wo_d = Path(os.path.splitdrive(str(cfg_bid))[1])
-            bid_wo_d = Path(os.path.splitdrive(str(backup_info_dir))[1])
-            if use_override or cfg_bid_wo_d != bid_wo_d:
-                # If user has replacement variable in config file value, it is the new use case so
-                # override is certain. In all other cases, only override if resolved paths without
-                # drive letter do not match.
-                backup_info_dir = cfg_bid
-        if not backup_info_dir.exists():
-            backup_info_dir.mkdir(parents=True, exist_ok=True)
-        if not backup_info_dir.is_dir():
-            raise BackupInformationDirectoryNotFound(
-                f"The backup information directory was not found: {str(backup_info_dir)}"
-            )
-        return backup_info_dir
+            cfg_bid = Path(cfg_bid_str).resolve()
+            cfg_bids_resolved.append(cfg_bid)
+        return cfg_bids_resolved
 
-    def get_backup_info_file_paths(
+    def get_backup_info_dirs(self) -> list[Path]:
+        """Get the backup information directories for this configuration.
+        This will return a list of Path objects, each of which is a backup
+        information directory.
+
+        The first Path in the returned list is the "primary" backup information
+        directory, and is the one expected to contain the latest backup information,
+        where the other Path objects (other than the first one) are considered
+        secondary and therefore backup copies of the primary backup information.
+
+
+        Raises:
+            BackupInformationDirectoryNotFound: Raised if a backup information
+                directory Path cannot be a directory (i.e., storage medium is
+                offline or the Path is to a file), or if no backup information
+                directories could be deduced by the user's configuration. There
+                must always be at least one (primary) backup information directory.
+
+        Returns:
+            list[Path]: The list of backup information directories, the first of
+                which is considered the "primary" backup information directory.
+        """
+        default_bid = AtbuConfig.get_default_backup_info_dir().resolve()
+        cfg_bids_resolved = self.get_resolved_config_backup_info_dirs()
+        cfg_no_default_bid = AtbuConfig._get_config_bool(
+            self.get_general_section(),
+            CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS,
+            False,
+        )
+        if not cfg_no_default_bid:
+            # Original and still the current default behavior, if not overridden using the
+            # CONFIG_VALUE_NAME_NO_DEFAULT_BACKUP_INFO_DIR setting, is for the user's HOME
+            # .atbu/backup-info-dir to be the primary backup info dir.
+            cfg_bids_resolved.insert(0, default_bid)
+            # ...and for filesystem storage definitions, the secondary backup information
+            # directory is in the target storage configuration directory (aka the "config"
+            # backup information directory).
+            if self.is_filesystem_backup_config():
+                cfg_bids_resolved.insert(1, self.get_filesystem_storage_def_backup_info_dir())
+        cfg_bid_resolved_str_set: set[str] = set()
+        cfg_bids_final: list[Path] = []
+        for cfg_bid in cfg_bids_resolved:
+            if not str(cfg_bid) in cfg_bid_resolved_str_set:
+                cfg_bids_final.append(cfg_bid)
+                cfg_bid_resolved_str_set.add(str(cfg_bid))
+        for cfg_bid in cfg_bids_final:
+            if not cfg_bid.exists():
+                cfg_bid.mkdir(parents=True, exist_ok=True)
+            if not cfg_bid.is_dir():
+                raise BackupInformationDirectoryNotFound(
+                    f"The backup information directory was not found: {str(cfg_bid)}"
+                )
+        if not cfg_bids_final:
+            raise BackupInformationDirectoryNotFound(
+                f"No backup information directories were found. "
+                f"There must be at least one backup information directory. "
+                f"Your configuration is invalid. "
+                f"Please review your configuration's backup information directory settings."
+            )
+        return cfg_bids_final
+
+    def get_primary_backup_info_dir(self) -> Path:
+        return self.get_backup_info_dirs()[0]
+
+    def get_primary_backup_info_file_paths(
         self,
         storage_def_name: str,
     ) -> list[str]:
-        pattern = self.get_backup_info_dir() / f"{storage_def_name}*"
+        pattern = self.get_primary_backup_info_dir() / f"{storage_def_name}*"
         return glob.glob(pathname=str(pattern))
 
     @staticmethod
@@ -842,10 +1148,15 @@ configuration, you can choose to have one created for you.
             )
         return storage_def_dict
 
-    def get_only_storage_def_dict(self) -> tuple[str, dict]:
+    def get_only_storage_def_dict(self, not_exist_ok: bool = True) -> tuple[str, dict]:
         storage_def_section: dict = self.get_storage_defs_section()
         if len(storage_def_section) != 1:
-            return None
+            if not_exist_ok:
+                return None, None
+            raise InvalidConfiguration(
+                f"One storage definition was not found: "
+                f"len(storage_def_section)={len(storage_def_section)}"
+            )
         storage_def_name, storage_def_dict = list(storage_def_section.items())[0]
         return storage_def_name, storage_def_dict
 
@@ -856,10 +1167,6 @@ configuration, you can choose to have one created for you.
                 f"Expected one storage definition configuration but observed :"
                 f"{len(storage_def_section)}."
             )
-
-    @property
-    def storage_def_name(self) -> str:
-        return self.get_only_storage_def_dict()[0]
 
     def is_storage_def_exists(self, storage_def_name) -> bool:
         return self.get_storage_def_dict(storage_def_name=storage_def_name) is not None
@@ -997,6 +1304,9 @@ configuration, you can choose to have one created for you.
             CONFIG_SECTION_DRIVER: {},
         }
         storage_def_dict = self.get_storage_defs_section()[unique_storage_def_name]
+        storage_def_dict[
+            CONFIG_VALUE_NAME_STORAGE_DEF_UNIQUE_ID
+        ] = AtbuConfig._get_new_unique_id()
         driver_section = storage_def_dict[CONFIG_SECTION_DRIVER]
         if storage_key:
             driver_section[CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY] = storage_key
@@ -1032,14 +1342,6 @@ configuration, you can choose to have one created for you.
             container=str(storage_location_path),
             unique_storage_def_name=unique_storage_def_name,
         )
-
-    def is_filesystem_storage_def(self, storage_def_name: str) -> bool:
-        sdd = self.get_storage_def_dict(storage_def_name=storage_def_name)
-        if sdd is None:
-            raise StorageDefinitionNotFoundError(
-                f"The storage definition '{storage_def_name}' was not found."
-            )
-        return sdd[CONFIG_VALUE_NAME_INTERFACE_TYPE] == CONFIG_INTERFACE_TYPE_FILESYSTEM
 
     def save_storage_def_with_cleartext_secrets(
         self, storage_def_name: Union[str, list], backup_file_path: str
@@ -1117,10 +1419,6 @@ in this backup if you delete this configuration.
             storage_def_name=storage_def_name,
             storage_def=storage_def_dict,
         )
-        g = atbu_stg_cfg.get_general_section()
-        if CONFIG_VALUE_NAME_BACKUP_INFO_DIR in g:
-            # Retained for legacy purposes, has no effect, but cleaner not to import it.
-            del g[CONFIG_VALUE_NAME_BACKUP_INFO_DIR]
         # Merge 'general' and 'storage-definitions' sections from import to dest config.
         deep_union_dicts(
             dest=self.get_storage_defs_section(),

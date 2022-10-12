@@ -19,6 +19,7 @@ import argparse
 import logging
 import multiprocessing
 import os
+import sys
 from typing import Union
 
 from atbu.common.exception import (
@@ -121,226 +122,205 @@ storage_def_specifier_help = """
 """
 
 backup_information_switch_help = f"""
-IMPORTANT: This information below is prelim and subject to change. In fact, changes
-are expected to simplify concerns mentioned below. The below is an initial revision
-allowing flexibility to an advanced user. Do not use the below information unless
-you know what you are doing.
-
-You do not need to keep backup information (BI) offline (discussed below) in order
-to use the new --config-file switch. The below information shows one way to use
---config-file along with the BI location switches in order to keep *all* backup
-information, configuration, secrets offline when backup operations are not in-progress.
-
-The below is more complex than a simpler approach which only keeps the backup
-config/secrets offline (keeping backup information in the usual HOME .atbu location).
-
-Therefore, you can avoid the BI switches discussed below if you do not care to keep
-that BI info offline. By simply using the --config-file alone (easier), you can keep
-a backup config and related credentials offline, bringing them onlin and specifying
---config-file when performing operations.
-
-Briefly, keep in mind the below is outlining nuances of two other switches related
-to BI information which are not directly tied to --config-file.
-
-Backup Information (BI) Location Switches
-=========================================
+Backup Information (BI)
+=======================
 Backup information (BI) is the information that {ATBU_PROGRAM_NAME} stores during and at the end of a
-backup. It is contained in *{BACKUP_INFO_EXTENSION} files which are stored in BI directories.
+backup. It is contained in *{BACKUP_INFO_EXTENSION} files which are stored in BI directories. This
+section discusses BI, BI-related files and locations.
 
-This section discusses BI, BI-related files and locations. The switches and discussion
-below are for advanced users only. Do not use options mentioned below unless you know
-what you are doing.
+By default, {ATBU_PROGRAM_NAME} stores BI in the following locations:
 
-By default, {ATBU_PROGRAM_NAME} has a user BI directory located under your HOME directory in
-<HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}. By default, both cloud and local backup information
-are stored in this directory.
-
-In addition to that above default location used for both cloud/local destination,
-backups to local destinations also, by default, store a copy of their BI to the backup
-target storage location under a directory named {ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}.
-
-An aside: While the above locations are where direct copies of *{BACKUP_INFO_EXTENSION} files are
-stored, {ATBU_PROGRAM_NAME} also backs up copies of these files to your cloud and local target
-storage locations. This happens after each backup. These backed up copies are not for
-everyday use but are there for use with the "{ATBU_PROGRAM_NAME} recover" option. These copies are not
-the focus of this documentation but worth mentioning briefly in this context. If you
-zap all of your local BI, you can use recover to restore backed up copies from either
-cloud or local backup storage so long as the backup itself is intact and you have a
-good export of your backup credentials/configuration.
-
-The following switches allow you to control how {ATBU_PROGRAM_NAME} stores BI:
-
-    --use-default-binf ......... enable/disable storing BI in <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
-    (or --no-use-default-binf)
-
-    --use-config-binf .......... enable/disable storing BI in the "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" (see below)
-    (or --no-use-config-binf)
-
-The <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR} location was already discussed further above. The
-"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" location has not been discussed yet.
-
-The "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" location is a secondary location that can be specified
-in a storage definition configuration. If specified, it is in the following storage
-def config location:
-
-    \"{CONFIG_SECTION_GENERAL}\": {{ \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": <backup_info_location> }}
-
-If "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" is not specified, a default location will be used as follows:
-
-    For local file system storage locations, the secondary location will default to
-        <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
-    where <config> is the location of the storage definition configuration file
-    (typically on the target storage device, hard drive, external drive, etc.).
-
-    For cloud storage definitions, the secondary location will not be used because a
-    cloud storage destination is remote to the backup client. Note, though, as mentioned
-    above, BI is always backed up to the target storage at the end of the backup, and
-    this includes cloud storage definition backups.
-
-Since the local file system configuration is located on the target storage device, the
-default of <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR} is on the target backup storage device.
-
-Given the above, the default setup will store backup information *{BACKUP_INFO_EXTENSION} files locally
-as follows:
-
-    Local file system storage backups:
-        Primary: <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
-        Secondary: <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
-        (Also always backed up to the target file system storage.)
-
-    Cloud storage backups:
+    For cloud storage definitions:
         Primary: <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
         Secondary: None
-        (Also always backed up to the target cloud storage.)
 
-Primary/Secondary above are copies of the *{BACKUP_INFO_EXTENSION} files on your local system and/or
-local backup storage device. The copies backed up to the target storage device are an
-additional copy used for recovery as needed (not the main discussion here).
+    For file system storage definitions:
+        Primary: <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+        Secondary: <backup-dest>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+        (Basically, file system storage backups store a copy on the destination storage media.)
 
-For various reasons, you may wish to avoid storing backup information on your local system.
-To disable storing backup information in the default HOME location, use --no-use-default-binf
-but beware of pitfalls, some of which are outlined below.
-
-The --use-default-binf switch will work immediately for a file system storage backup but
-not for a cloud storage backup. This is because a cloud storage backup does not a have a
-secondary location configured by default. You must have at least one local location to
-store backup information, and if you use --use-default-binf without specifying a secondary
-non-default location, the backup will not start, you will receive an error. 
-
-The "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}" setting allows you to setup a non-default backup information location
-to use with your backup configuration. This is a setting in your backup configuration file.
-It is specified in the following storage definition config location:
+You can override the defaults by specifying configuration settings in your backup's storage definition
+configuration .json file. You can specify backup information directory configuration information in
+the .json configuration's {CONFIG_SECTION_GENERAL} section. For example, consider the following "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}"
+setting:
 
     ...
-    \"{CONFIG_SECTION_GENERAL}\": {{
-        \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": <backup_info_location>
+    "{CONFIG_SECTION_GENERAL}": {{
+        "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}": [
+            "F:\\MyBackupInfo"
+        ]
     }}
     ...
 
-where <backup_info_location> is a path to the backup information directory. You can specify
-an explicit directory, but more likely you will use one of the following replacement paths:
+If the above were added to a cloud storage definition configuration, {ATBU_PROGRAM_NAME} would end up using
+the following backup information directories...
+
+    For cloud storage definitions:
+        Primary: <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}
+        Secondary: F:\\MyBackupInfo
+
+Notice that the default primary is still the same but now there is a secondary when before there was
+not. With a secondary backup information location in place, during backup {ATBU_PROGRAM_NAME} save the
+primary copy to the primary location, and it will then copy that to the secondary location of
+F:\\MyBackupInfo.
+
+You can instruct {ATBU_PROGRAM_NAME} to not use any default backup information directories by specifying
+the {CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS} setting. For example:
+
+    ...
+    "{CONFIG_SECTION_GENERAL}": {{
+        "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS}": true,
+        "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}": [
+            "F:\\\\MyBackupInfo"
+        ]
+    }}
+    ...
+
+With the above {CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS}=true setting in place, {ATBU_PROGRAM_NAME} will use the following
+backup information directory:
+
+    Primary: F:\\MyBackupInfo
+
+Notice the HOME directory location is no longer utilized. The only backup information directory is
+F:\\MyBackupInfo which is now also the primary backup information directory.
+
+Using Offline Config and BI
+===========================
+You can store a backup storage definition configuration and its secrets, along with all backup
+information, offline on a removable drive, where the drive is only inserted into the client during
+the time when backup operations are taking place. The following outlines how this can be accomplished.
+
+You can use the {ATBU_PROGRAM_NAME} --config-file switch to reference a backup storage definition configuration
+and its credentials as stored in a .json file. The .json file can be created by exporting your
+backup storage definition using the "{ATBU_PROGRAM_NAME} creds export..." command.
+
+After exporting to .json, you can then use "{ATBU_PROGRAM_NAME} <command_and_options> --config-file <json_file>"
+to perform a backup/restore or other operations, where {ATBU_PROGRAM_NAME} will use the .json file's contents
+to access the configuration, including its credentials/secrets. If the .json file was created from a
+password-protected storage configuration, you will likewise be prompted to enter the password when
+using --config-file to reference the .json backup storage definition configuration ("{ATBU_PROGRAM_NAME} creds export..."
+exports password-protected credentials.).
+
+By using an exported configuration, you can keep a configuration and its secrets off a client system,
+and only make them available when performing backup operations. For example:
+
+    1. atbu creds export storage-def:my-cloud-backup F:\\B\\my-cloud-backup-config.json, where F:
+       is a USB Drive.
+
+    2. Insert the USB Drive and perform a backup, referencing the F: .json config file.
+       Example:
+           atbu backup C:\\MyFiles storage-def:my-cloud-backup --full --config-file F:\\B\\my-cloud-backup-config.json
+
+When you run the backup command in step 2, {ATBU_PROGRAM_NAME} will use the backup storage definition configuration
+information, including secrets, stored in the "F:\\B\\my-cloud-backup-config.json" file.
+
+Even though the above keeps the credentials stored offline, the backup information is still stored
+in the default locations (i.e., the backup information is still stored on the local drive). To keep
+the backup information offline (along with the storage definition configuration) you can perform the
+following general steps:
+
+    1. atbu creds export storage-def:my-cloud-backup F:\\B\\my-cloud-backup-config.json.
+
+    2. Edit F:\\B\\my-cloud-backup-config.json, adding the following settings:
+        ...
+        \"{CONFIG_SECTION_GENERAL}\": {{
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS}\": true,
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": [
+                "{{CONFIG_DIR}}/atbu-backup-info"
+            ]
+        }}
+        ...
+
+    3. Perform a backup.
+       Example:
+           atbu backup C:\\MyFiles storage-def:my-cloud-backup --full --config-file F:\\B\\my-cloud-backup-config.json
+
+The above 3 steps are similar to the prior example except that a new step #2 has been inserted. This
+new step #2 modifies the exported .json configuration to disable default backup information
+directories, while also specifying the primary (and only) backup information directory should be
+"{{CONFIG_DIR}}/atbu-backup-info".
+
+The "{{CONFIG_DIR}}" string is replaced with the directory where the configuration file itself is
+located, F:\\B\\my-cloud-backup-config.json. Given this, the location of the backup information
+directory would be "F:\\B\\atbu-backup-info\\...".
+
+IMPORTANT: For large backups, ensure the location of any backup information directory is well-performing.
+If you use a very slow USB Drive, reading/writing large backup information files can be time consuming.
+
+In addition to "{{CONFIG_DIR}}", you can also specify "{{DEFAULT_CONFIG_DIR}}" which is the default
+HOME {ATBU_DEFAULT_CONFIG_DIR_NAME} configuration directory.
+
+Here is a summary of the replacements:
 
     "{{DEFAULT_CONFIG_DIR}}": The <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME} location. 
     "{{CONFIG_DIR}}": The <config>/{ATBU_DEFAULT_CONFIG_DIR_NAME} location.
 
-For example, given the following...
+If you want to add multiple backup information directories to your configuration, simply add an
+element to the .json array. For example:
 
-        \"{CONFIG_SECTION_GENERAL}\": {{
-            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": "{{CONFIG_DIR}}/atbu-backup-info"
-        }}
-
-... {ATBU_PROGRAM_NAME} will replace {{CONFIG_DIR}} with the directory containing the configuration file itself.
-It will then append "/atbu-backup-info". If the config file were located on a USB drive at the
-following location...
-
-    "F:\\Config\\atbu-stgdef--my-backup.json" then
-
-...then the so-called "config backup information" directory will be located here...
-
-    "F:\\Config\\atbu-backup-info"
-
-To use the above "config BI" secondary backup information location, specify --use-config-binf on the
-command line.
-
-If it were a cloud backup and you did not want to use the default HOME location, but instead use 
-some other drive, you would configure the backup-info-dir value per above and specify --no-use-default-binf
-and --use-config-binf. This stop use of the default system HOME location, and forces use of the
-configured BI location.
-
-The other replacement value, "{{DEFAULT_CONFIG_DIR}}", is replaced with the {ATBU_PROGRAM_NAME} user default of
-<HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME}. Typically, you will use "{{CONFIG_DIR}}" to keep backup credentials/configuration
-and backup information on an offline storage device, such as a USB drive or other device. The
-"{{DEFAULT_CONFIG_DIR}}" is perhaps less useful.
-
-One way in which the above can be used is to keep your backup configuration, secrets/crednetials, and 
-backup information (BI) offline, perhaps on a portable SSD or USB Drive by employing the following
-general steps (assume F: is a portable SSD):
-
-    1. atbu creds export storage-def:my-cloud-backup F:\\B\\my-cloud-backup-config.json.
-
-    2. Edit F:\\B\\my-cloud-backup-config.json, adding a {CONFIG_VALUE_NAME_BACKUP_INFO_DIR} configuration:
         ...
         \"{CONFIG_SECTION_GENERAL}\": {{
-            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": "{{CONFIG_DIR}}/atbu-backup-info"
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS}\": true,
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": [
+                "{{CONFIG_DIR}}/atbu-backup-info",
+                "G:\\\\B\\\\atbu-backup-info"
+            ]
         }}
         ...
 
-    3. Perform a backup. Examples:
-        a) atbu backup C:\\MyFiles storage-def:my-cloud-backup --full --use-config-binf --config-file F:\\B\\my-cloud-backup-config.json
-        b) atbu backup C:\\MyFiles storage-def:my-cloud-backup --full --no-default-binf --use-config-binf --config-file F:\\B\\my-cloud-backup-config.json
+Because \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS}\" is set to true, there are no defaults implicitly inserted,
+so the primary backup information directory is therefore the first one explicitly configured, which
+in this case is "{{CONFIG_DIR}}/atbu-backup-info". Additionally, there is one secondary backup
+information directory specified. All together, the BI directory configuration ends up being as
+follows:
 
-The above steps generally do the following:
+    Primary: "{{CONFIG_DIR}}/atbu-backup-info"
+    Secondary #1: "G:\\B\\atbu-backup-info"
 
-    Step 1 exports the configuration for "my-cloud-backup" to a USB drive located on the F:\\ drive.
+Consider the following configuration that does not disable default backup information directories:
+        ...
+        \"{CONFIG_SECTION_GENERAL}\": {{
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR_NO_DEFAULTS}\": false,
+            \"{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}\": [
+                "{{CONFIG_DIR}}/atbu-backup-info",
+                "G:\\\\B\\\\atbu-backup-info"
+            ]
+        }}
+        ...
 
-    Step 2 edits the exported configuration to specify a secondary or "config backup information"
-    location (meaning a BI location relative to the configuration file).
+The result would be the following:
 
-    Step 3a performs a backup which stores backup information to both the <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME} location
-    as well as to "F:\\B\\atbu-backup-info".
+    Primary: "{{DEFAULT_CONFIG_DIR}}/atbu-backup-info"
+    Secondary #1: "{{CONFIG_DIR}}/atbu-backup-info"
+    Secondary #2: "G:\\B\\atbu-backup-info"
 
-    Step 3b is the same as step 3a except that it disables storing backup information in <HOME>/{ATBU_DEFAULT_CONFIG_DIR_NAME},
-    and only stores backup information to the "F:\\B\\atbu-backup-info" USB drive location.
+The above result is because, with defaults active, the primary is always implicitly the default HOME
+{ATBU_DEFAULT_CONFIG_DIR_NAME} configuration directory. This means the two directories explicitly specified become secondary
+backup information directories.
 
-IMPORTANT
-=========
-Generally you should always use consistent settings for both --use-default-binf and
---use-config-binf. Failure to do so can cause unexpected results if one location has more up to
-date backup information than another location, where you switch locations arbitrarily. Be consistent
-in your use or non-use of these switches.
+Additional Information
+======================
+The {ATBU_PROGRAM_NAME} command uses local copies of *{BACKUP_INFO_EXTENSION} to understand the history of what is been backed
+up. There must always be a "primary" backup information directory which contains the latest backup
+information. The other BI directories than the primary are secondary and merely backup copies in
+case the primary copies are unavailable. Having backup copies can allow for easier recovery or
+browsing in certain cases, where it is desired to mitigate the need to use "{ATBU_PROGRAM_NAME} recover..." for
+a full recovery. Recovery is generally used when all local copies of the latest backup information
+have been lost or destroyed.
 
-Generally, the switches you use, and locations for BI should never change for a particular
-configuration after you establish them unless you are certain to ensure any new setup, config,
-or locations specified contain the latest copies of the configuration's backup information.
-If you fail to do this, you may end up causing {ATBU_PROGRAM_NAME} to perform a backup that
-creates new BI files, or updates older BI files than the latest, and your backup history will
-be incomplete.
+VERY IMPORTANT: Do not arbitrarily change a storage definition's backup information directory
+configuration. Care must be taken to ensure, if you ever change a configuration's primary backup
+information directory, you ensure that directory is populated with the latest copies of backup
+information *{BACKUP_INFO_EXTENSION} files. You would do this by copying to the new location, or perhaps using
+the "{ATBU_PROGRAM_NAME} recover..." command. Generally, once you establish backup information directories,
+you should stick with the current settings unless changes are truly reasonable.
 
-Always start a backup with the latest backup information in the first directory specified. If
-you use the default HOME location, that should have the latest. It is considered the main
-location unless disabled.
-
-If you disable the HOME location via --no-use-default-binf, then the config-specified location
-becomes the main location.
-
-If both the default (HOME) and config locations are specified, the default HOME is the main
-location, and the config location is the secondary. When {ATBU_PROGRAM_NAME} performs a backup
-it uses the main location as the latest backup information. This means, when you have two locations
-specified (i.e., default and config), the default is the main location, the secondary is merely
-backup.
-
-As you can see, care must be taken to not switch around the configuration arbitrarily. The main
-location must be setup properly so {ATBU_PROGRAM_NAME} uses the latest BI information in order to
-maintain a good backup history. That is by, by default, {ATBU_PROGRAM_NAME} uses the HOME default
-location for all main backup information for both cloud and local. This ensures the latest is stored
-in one well-known location (a location you can easily backup).
-
-Using the switches in this section are for esoteric setups, such as keeping all information off
-the client except during backup.
-
-Given the sensitivity with these settings, future changes are likely to have configuration file
-settings that remove the need for the command line switches. The config file should drive these
-setting firmly.
+Regardless of any BI directory configuration options discussed in this help, {ATBU_PROGRAM_NAME} always backs
+up *{BACKUP_INFO_EXTENSION} files at the end of each backup. These backup copies of *{BACKUP_INFO_EXTENSION} files are not
+stored directly as *{BACKUP_INFO_EXTENSION}, but are instead encrypted (if encryption is enabled) and
+stored as backup files for use primarily by the "{ATBU_PROGRAM_NAME} recover..." command during disaster
+recovery. These backup copies of the *{BACKUP_INFO_EXTENSION} files are unrelated to the copies stored locally
+at the client which is the primary subject of the above documentation.
 """
 
 extra_help_subjects = {
@@ -614,29 +594,6 @@ same since the last backup, but the digests are different.""",
         help=f"""Set the backup compression level. The default is '{BACKUP_COMPRESSION_DEFAULT}'.
 """,
     )
-    parser_backup.add_argument(
-        "--use-default-binf",
-        "--use-def-bi",
-        help=f"""By default, both local and cloud storage defintions are configured to store backup
-information in a system location under the {ATBU_DEFAULT_CONFIG_DIR_NAME}/{ATBU_DEFAULT_BACKUP_INFO_SUBDIR}. Specify
---no-use-default-binf (--no-def-bi) to disable this default behavior.
-See "{ATBU_PROGRAM_NAME} help backup-info" for more information.
-""",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-    )
-    parser_backup.add_argument(
-        "--use-config-binf",
-        "--use-cfg-bi",
-        help=f"""Specify this to force using the storage definition configuration's "{CONFIG_VALUE_NAME_BACKUP_INFO_DIR}"
-as a location to store the backup information. By default, cloud storage definitions
-do *not* use this location, while local file system storage definitions *do* use this
-location. See "{ATBU_PROGRAM_NAME} help backup-info" for more information.
-""",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-    )
-
     parser_backup.set_defaults(func=handle_backup)
 
     #
@@ -1468,6 +1425,8 @@ def main(argv=None):
                 verbosity_level=verbosity_level,
                 log_console_detail=log_console_detail,
             )
+            debug_argv = argv if argv is not None else sys.argv
+            logging.debug(f"argv={'None' if debug_argv is None else ' '.join([*debug_argv])}")
 
             if hasattr(args, "yk"):
                 if not isinstance(args.yk, bool):

@@ -34,6 +34,8 @@ from atbu.common.util_helpers import prompt_YN
 from atbu.mp_pipeline.mp_global import (
     get_process_pool_exec_init_func,
     get_process_pool_exec_init_args,
+    switch_to_non_queued_logging,
+    reinitialize_logging,
 )
 from atbu.mp_pipeline.mp_pipeline import (
     MultiprocessingPipeline,
@@ -100,14 +102,14 @@ def handle_restore_backup_info(
     atbu_cfg: AtbuConfig,
     prompt_if_exists: bool = True,
 ):
-    backup_info_dir = atbu_cfg.get_backup_info_dir()
+    backup_info_dir = atbu_cfg.get_primary_backup_info_dir()
     storage_def_dict = atbu_cfg.get_storage_def_with_resolved_secrets_deep_copy(
         storage_def_name=storage_def_name
     )
     sd = StorageDefinition.storage_def_from_dict(
         storage_def_name=storage_def_name, storage_def_dict=storage_def_dict
     )
-    existing_backup_info = atbu_cfg.get_backup_info_file_paths(
+    existing_backup_info = atbu_cfg.get_primary_backup_info_file_paths(
         storage_def_name=storage_def_name
     )
     if prompt_if_exists and len(existing_backup_info) > 0:
@@ -236,6 +238,9 @@ listed above. If you are uncertain, you may want to backup those files before pr
 
 
 def handle_recover(args):
+
+    switch_to_non_queued_logging()
+
     logging.debug(f"handle_recover")
     storage_def_name = None
     storage_def_config_filename = None
@@ -280,6 +285,9 @@ def handle_recover(args):
             raise StorageDefinitionNotFoundError(
                 f"The storage definition was not found: {storage_def_name}"
             )
+
+        reinitialize_logging()
+
         # Restore backup information.
         handle_restore_backup_info(
             storage_def_name=storage_def_name,
@@ -298,6 +306,7 @@ def handle_recover(args):
             storage_def_name=storage_def_name,
             must_exist=False,
             create_if_not_exist=True,
+            storage_def_dict_not_exist_ok=True,
         )
         if storage_def_config_filename is not None:
             # Import config/cred file.
@@ -314,6 +323,9 @@ def handle_recover(args):
             raise StorageDefinitionNotFoundError(
                 f"The storage definition was not found: {storage_def_name}"
             )
+
+        reinitialize_logging()
+
         handle_restore_backup_info(
             storage_def_name=storage_def_name,
             atbu_cfg=atbu_cfg,

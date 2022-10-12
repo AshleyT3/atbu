@@ -471,7 +471,7 @@ def handle_delete_storage_definition(
         print(f"The storage definition '{storage_def_name}' does not exist.")
         return
 
-    existing_backup_info = atbu_cfg.get_backup_info_file_paths(
+    existing_backup_info = atbu_cfg.get_primary_backup_info_file_paths(
         storage_def_name=storage_def_name
     )
 
@@ -527,7 +527,10 @@ it up if you are uncertain.
 
 If you choose 'y' below to delete the above files, they will no longer be
 available. This app will attempt to send the files to the {bin_name},
-so you may be able to recover them from there if needed.
+so you may be able to recover them from there if needed. Choosing 'y' will
+only delete backup information files in the primary backup information
+directory. Information files in the secondary backup information locations,
+if any, will not be deleted (you will have to do so manually, if desired).
 
 If you choose *not* to delete these files along with the storage definition,
 and you later attempt import/recovery of a storage definition of the same name,

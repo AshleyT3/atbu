@@ -247,7 +247,6 @@ class StorageDefCredentialSet:
         try:
             for storage_def_cred in self.storage_def_creds:
                 desc_cred = storage_def_cred.desc_cred
-                # TODO: Save store and file.
                 cba_old = CredentialStore().set_credential(desc_cred=desc_cred)
                 if cba_old is not None:
                     rollback_info.append(
@@ -390,7 +389,7 @@ def restore_keyring_secrets(
                 )
             print(f"The OAuth file exists: {filename}")
             if encrypt_key:
-                print(f"Re-encrypting filename crednetial.")
+                print(f"Re-encrypting filename credential.")
                 credential.encrypt_key()
 
         CredentialStore().set_credential(desc_cred=desc_cred)

@@ -1134,7 +1134,7 @@ def validate_backup_recovery(
                 di1=source_dir_info, di2=restore3_dir_info
             )
 
-        backup_info_dir = atbu_cfg.get_backup_info_dir()
+        backup_info_dir = atbu_cfg.get_primary_backup_info_dir()
         shutil.rmtree(backup_info_dir, ignore_errors=False, onerror=None)
         assert not os.path.exists(backup_info_dir)
 
