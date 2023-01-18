@@ -1226,8 +1226,12 @@ which there are duplicates in location B.""",
         "save-db",
         formatter_class=argparse.RawTextHelpFormatter,
         help="Save persistent file information from or more directories into a single json db.",
-        description=f"""Save a json database from all persistent information created by the
-'{ATBU_PROGRAM_NAME} update-digests' command.
+        description=f"""Save a json database from all persistent information created by the '{ATBU_PROGRAM_NAME} update-digests' command.
+
+Console/logging output includes information about any files detected to have changed since the last
+update. Use -v to include console/logging of each path checked. Use -vv to include details for each
+path even if not changed since the last update. Details are always output when updates occur, where
+using -v or -vv will slow down the command considerably for large directories.
 
 """,
         parents=[parser_common, common_update_stale, common_change_detection_type],

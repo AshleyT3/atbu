@@ -722,7 +722,8 @@ class LocationFileInfoUpdater:
             )
             return
         is_changed = False
-        logging.info(f"Checking for changes to {file_info.path}...")
+        if get_verbosity_level() > 0:
+            logging.info(f"Checking for changes to {file_info.path}...")
         if self.change_detection_type == CHANGE_DETECTION_TYPE_DATESIZE:
             is_changed = file_info.is_modified_date_or_size_changed()
         elif self.change_detection_type == CHANGE_DETECTION_TYPE_DIGEST:
@@ -737,9 +738,7 @@ class LocationFileInfoUpdater:
             )
         if is_changed:
             logging.info(f"Change detected: {file_info.path}:")
-        elif get_verbosity_level() > 0:
-            logging.info(f"Path: {file_info.path}:")
-        if is_changed or get_verbosity_level() > 0:
+        if is_changed or get_verbosity_level() > 1:
             if file_info.has_cached_size_in_bytes:
                 logging.info(f"    cur size={file_info.size_in_bytes_cached}")
                 logging.info(f"    old size={file_info.size_in_bytes}")
@@ -835,7 +834,7 @@ class LocationFileInfoUpdater:
                     f"{file_info.primary_digest_algo_name}={file_info.get_current_digest()}"
                 )
                 logging.debug(f"The file info was {added_changed_str}: {file_info}")
-        else:
+        elif get_verbosity_level() > 0:
             if self.per_file_persistence:
                 logging.info(
                     f"The {ATBU_PERSISTENT_INFO_EXTENSION} file info was up to date: "
