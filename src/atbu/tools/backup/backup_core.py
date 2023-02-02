@@ -94,6 +94,8 @@ from .storage_interface.base import (
     StorageInterfaceFactory,
 )
 
+BACKUP_INFO_STORAGE_PREFIX = f"zz-backup-info"
+
 BACKUP_INFO_EXTENSION = f".{ATBU_ACRONYM}inf"
 BACKUP_INFO_TEMP_EXTENSION = f".{ATBU_ACRONYM}inf.tmp"
 
@@ -3053,12 +3055,11 @@ class Backup:
                 #
                 sbi = self._results_mgr.final_results
                 backup_start_time_stamp = sbi.get_backup_start_time_stamp_utc()
-                db_storage_basename = os.path.split(
-                    str(self._results_mgr.backup_info_db.primary_db_full_path)
-                )[1].lower()
-                extsplit = os.path.splitext(db_storage_basename)
+                # Store backup information with backup storage using a generic
+                # prefix BACKUP_INFO_STORAGE_PREFIX, where it will be renamed as
+                # needed during recovery.
                 db_storage_basename = (
-                    f"{extsplit[0]}-{backup_start_time_stamp}{extsplit[1]}"
+                    f"{BACKUP_INFO_STORAGE_PREFIX}-{backup_start_time_stamp}{BACKUP_INFO_EXTENSION}"
                 )
                 fi_backup_info.storage_object_name = db_storage_basename
 

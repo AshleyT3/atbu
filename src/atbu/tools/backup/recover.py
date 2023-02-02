@@ -52,6 +52,7 @@ from .config import (
 )
 from .restore import RestoreFile
 from .backup_core import (
+    BACKUP_INFO_STORAGE_PREFIX,
     BACKUP_OPERATION_NAME_RESTORE,
     ANOMALY_KIND_UNEXPECTED_STATE,
     BACKUP_INFO_EXTENSION,
@@ -140,14 +141,24 @@ listed above. If you are uncertain, you may want to backup those files before pr
             c = interface.get_container(container_name=sd.container_name)
             restore_file_list: list[RestoreFile] = []
             backup_info_objects = c.list_objects(prefix=sd.storage_def_name)
+            backup_info_objects.extend(c.list_objects(prefix=BACKUP_INFO_STORAGE_PREFIX))
             for bio in backup_info_objects:
+                restore_name = bio.name.lower()
+                if restore_name.startswith(BACKUP_INFO_STORAGE_PREFIX):
+                    # This backup info was stored using the new generic naming.
+                    # Upon recovery, replace the generic portion with the specific
+                    # storage definition name
+                    restore_name = (
+                        sd.storage_def_name + restore_name[len(BACKUP_INFO_STORAGE_PREFIX):]
+                    )
                 print("Building file information for storage objects...")
-                print(f"    {bio.name}")
+                print(f"    object name .... {bio.name}")
+                print(f"    restore name ... {restore_name}")
                 fi_bi = BackupFileInformation(path=str(backup_info_dir / bio.name))
                 fi_bi.implicit_refresh_allowed = False
                 fi_bi.populate_from_header = True
                 fi_bi.size_in_bytes = bio.size  # Use storage size until header read.
-                fi_bi.restore_path_override = str(backup_info_dir / bio.name)
+                fi_bi.restore_path_override = str(backup_info_dir / restore_name)
                 fi_bi.storage_object_name = str(bio.name)
                 restore_file_bi = RestoreFile(
                     file_info=fi_bi,
