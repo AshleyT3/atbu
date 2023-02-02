@@ -545,6 +545,7 @@ def run_atbu(
         "DEBUG",
         "--logfile",
         str(log_file),
+        "-v",
         timeout=timeout,
         stdin=stdin,
     )
