@@ -136,28 +136,61 @@ def create_storage_definition_json(
     secret,
     tmp_path: Path,
     pytester: Pytester,
+    use_secrets_prompt: bool = False,
 ) -> tuple[str, str, str]:
 
-    driver_arg = f"key={userkey},secret={secret}"
+    if use_secrets_prompt:
+        # No secrets on command line.
+        driver_arg = ""
+        # Input secrets...
+        # access key<ENTER>
+        # secret access key<ENTER>
+        # ENTER ENTER to accept both defaults for backup encryption.
+        stdin_resp_enable_enc_pwd_not_req = (
+            f"{userkey}{os.linesep}" +
+            f"{secret}{os.linesep}" +
+            f"{os.linesep}{os.linesep}"
+        ).encode()
+    else:
+        # Specify all driver arguments, including secrets, on command line.
+        driver_arg = f"key={userkey},secret={secret}"
+        # ENTER ENTER to accept both defaults.
+        stdin_resp_enable_enc_pwd_not_req = f"{os.linesep}{os.linesep}".encode()
+
+    # Specify other cloud storage driver kv pairs on command line.
+    # If project id is specified, add it to command line.
     if project_id is not None:
-        driver_arg += f",project={project_id}"
+        driver_arg = (driver_arg + f",project={project_id}").strip(", ")
 
-    # ENTER ENTER to accept both defaults.
-    stdin_resp_enable_enc_pwd_not_req = f"{os.linesep}{os.linesep}".encode()
-
-    rr = run_atbu(
-        pytester,
-        tmp_path,
-        "creds",
-        CREDS_SUBCMD_CREATE_STORAGE_DEF,
-        TEST_BACKUP_NAME,
-        interface,
-        provider,
-        f"{TEST_CONTAINER_BASE_NAME}*",
-        driver_arg,
-        stdin=stdin_resp_enable_enc_pwd_not_req,
-        log_base_name=f"{CREDS_SUBCMD_CREATE_STORAGE_DEF}-json",
-    )
+    if len(driver_arg) > 0:
+        # Specify driver_arg.
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            "creds",
+            CREDS_SUBCMD_CREATE_STORAGE_DEF,
+            TEST_BACKUP_NAME,
+            interface,
+            provider,
+            f"{TEST_CONTAINER_BASE_NAME}*",
+            driver_arg,
+            stdin=stdin_resp_enable_enc_pwd_not_req,
+            log_base_name=f"{CREDS_SUBCMD_CREATE_STORAGE_DEF}-json",
+        )
+    else:
+        # Do not specify driver_arg.
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            "creds",
+            CREDS_SUBCMD_CREATE_STORAGE_DEF,
+            TEST_BACKUP_NAME,
+            interface,
+            provider,
+            f"{TEST_CONTAINER_BASE_NAME}*",
+            stdin=stdin_resp_enable_enc_pwd_not_req,
+            log_base_name=f"{CREDS_SUBCMD_CREATE_STORAGE_DEF}-json",
+        )
     assert rr.ret == ExitCode.OK
 
     storage_def_name_atbu_cfg_path_list = (
@@ -348,6 +381,56 @@ def test_create_storage_definition_json(
     delete_storage_definition_json(tmp_path=tmp_path, pytester=pytester)
     pass  # pylint: disable=unnecessary-pass
 
+@pytest.mark.parametrize(
+    "interface,provider,project_id,userkey,secret,secret_type",
+    backup_restore_parameters,
+)
+def test_create_storage_definition_json__secrets_prompt(
+    interface,
+    provider,
+    project_id,
+    userkey,
+    secret,
+    secret_type,
+    tmp_path: Path,
+    pytester: Pytester,
+):
+    storage_def_name, atbu_cfg_path, container_name = create_storage_definition_json(
+        interface,
+        provider,
+        project_id,
+        userkey,
+        secret,
+        tmp_path=tmp_path,
+        pytester=pytester,
+        use_secrets_prompt=True,
+    )
+    assert storage_def_name == TEST_BACKUP_NAME
+    assert os.path.isfile(atbu_cfg_path)
+
+    cfg, _, _ = AtbuConfig.access_cloud_storage_config(
+        storage_def_name=storage_def_name,
+        must_exist=True,
+        create_if_not_exist=False,
+    )
+    storage_def_dict = cfg.get_storage_def_with_resolved_secrets_deep_copy(
+        storage_def_name=TEST_BACKUP_NAME, keep_secrets_base64_encoded=False
+    )
+    assert container_name.startswith(TEST_CONTAINER_BASE_NAME)
+    assert len(container_name) > len(TEST_CONTAINER_BASE_NAME)
+    client_email_from_cfg = storage_def_dict["driver"]["key"]
+    if project_id is not None:
+        project_id_from_cfg = storage_def_dict["driver"]["project"]
+        assert project_id_from_cfg == project_id
+    secret_from_cfg = storage_def_dict["driver"]["secret"].decode("utf-8")
+    password_type_from_cfg = storage_def_dict["driver"]["password_type"]
+    assert client_email_from_cfg == userkey
+    assert secret_from_cfg == secret
+    assert password_type_from_cfg == secret_type
+
+    delete_storage_definition_json(tmp_path=tmp_path, pytester=pytester)
+    pass  # pylint: disable=unnecessary-pass
+
 
 @pytest.mark.parametrize(
     "interface,provider,project_id,userkey,secret,secret_type",
@@ -380,6 +463,60 @@ def test_backup_restore(
     source_directory = tmp_path / "SourceDataDir"
 
     total_files = create_test_data_directory_basic(
+        path_to_dir=source_directory,
+    )
+    assert total_files > 0
+
+    storage_specifier = f"storage:{TEST_BACKUP_NAME}"
+
+    validate_backup_restore(
+        pytester=pytester,
+        tmp_path=tmp_path,
+        source_directory=source_directory,
+        expected_total_files=total_files,
+        storage_specifier=storage_specifier,
+        compression_type="normal",
+        backup_timeout=60 * 5,
+        restore_timeout=60 * 5,
+        initial_backup_stdin=None,
+    )
+
+    delete_storage_definition_json(tmp_path=tmp_path, pytester=pytester)
+    pass  # pylint: disable=unnecessary-pass
+
+
+@pytest.mark.parametrize(
+    "interface,provider,project_id,userkey,secret,secret_type",
+    backup_restore_parameters,
+)
+def test_backup_restore__secrets_prompt(
+    interface,
+    provider,
+    project_id,
+    userkey,
+    secret,
+    secret_type,
+    tmp_path: Path,
+    pytester: Pytester,
+):
+    storage_def_name, atbu_cfg_path, container_name = create_storage_definition_json(
+        interface,
+        provider,
+        project_id,
+        userkey,
+        secret,
+        tmp_path=tmp_path,
+        pytester=pytester,
+        use_secrets_prompt=True,
+    )
+    assert storage_def_name == TEST_BACKUP_NAME
+    assert os.path.isfile(atbu_cfg_path)
+
+    establish_random_seed(tmp_path)
+
+    source_directory = tmp_path / "SourceDataDir"
+
+    total_files = create_test_data_directory_minimal_vary(
         path_to_dir=source_directory,
     )
     assert total_files > 0

@@ -69,6 +69,14 @@ def parse_storage_def_specifier(storage_location) -> str:
 _STORAGE_DEFINITION_CONFIG_OVERRIDES = {
 }
 
+_AUTOMATED_TESTING_MODE = False
+
+def set_automated_testing_mode(enabled: bool):
+    global _AUTOMATED_TESTING_MODE
+    _AUTOMATED_TESTING_MODE = enabled
+
+def get_automated_testing_mode():
+    return _AUTOMATED_TESTING_MODE
 
 def update_config_list_to_dict(items: list):
     """Given the path/name and value pairs in the items list, build a dict

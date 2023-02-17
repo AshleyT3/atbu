@@ -44,6 +44,8 @@ from atbu.common.hasher import (
     DEFAULT_HASH_ALGORITHM,
 )
 from atbu.tools.backup.config import (
+    set_automated_testing_mode,
+    get_automated_testing_mode,
     register_storage_def_config_override,
 )
 
@@ -340,13 +342,6 @@ def create_argparse():
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
-    # For certain operations, this causes the secret to be written in hex to the console.
-    # This is for testing purposes. You should never use this option when establishing a
-    # private key you are actually going to use.
-    # parser.add_argument(
-    #     "--show-secrets", action="store_true", default=False, help=argparse.SUPPRESS
-    # )
-
     # Uncomment to allow --debug-server (for use with VS Code pydebug)
     # Activate the debug server to listen on specified port, wait for a client connect.
     parser.add_argument(
@@ -354,6 +349,14 @@ def create_argparse():
         help=argparse.SUPPRESS,
         type=int,
         required=False,
+    )
+
+    # Specified by automated tests to be used by this utility as needed for E2E tests.
+    parser.add_argument(
+        "--automated-testing",
+        action="store_true",
+        default=False,
+        help=argparse.SUPPRESS,
     )
 
     #
@@ -770,22 +773,21 @@ path to file system storage location. See '{ATBU_PROGRAM_NAME} help specifiers'.
         help=f"Create a backup storage definition.",
         description=f"""where
 
-    <interface>    <'filesystem','libcloud'|'google'>
-    <provider>     <'filesystem'|'azure_blobs'|'google_storage'>
-    <container>    The cloud storage container or bucket name.
-    <key>          storage key
-    <secret>       storage secret
-    [,k=v[,k=v ...]] extra parameters as needed: name1=value1,name2=value2,...
+    <interface>           <'filesystem','libcloud'|'google'>
+    <provider>            <'filesystem'|'azure_blobs'|'google_storage'>
+    <container>           The cloud storage container or bucket name.
+    <key>                 access key
+    <secret_access_key>   storage secret access key
+    [,k=v[,k=v ...]]      extra parameters as needed: name1=value1,name2=value2,...
 
-Create a storage definition. No spaces allowed as shown. If <secret> evaluates to an
-existing filename with a .json extension, the path to that file will be saved as the
-crednetial (i.e., an OAuth2 service account file). For some configurations, it may be
-easier or necessary to edit the config .json file directly, adding whatever driver
-arguments you wish.
+Create a storage definition. No spaces allowed as shown. If <secret_access_key> evaluates to an
+existing filename with a .json extension, the path to that file will be saved as the crednetial
+(i.e., an OAuth2 service account file). For some configurations, it may be easier or necessary
+to edit the config .json file directly, adding whatever driver arguments you wish.
 
 Examples:
 
-    {ATBU_PROGRAM_NAME} creds {CREDS_SUBCMD_CREATE_STORAGE_DEF} my-cloud-backup libcloud azure_blobs key=<key>,secret=<secret>
+    {ATBU_PROGRAM_NAME} creds {CREDS_SUBCMD_CREATE_STORAGE_DEF} my-cloud-backup libcloud azure_blobs key=<access_key>,secret=<secret_access_key>
     {ATBU_PROGRAM_NAME} creds {CREDS_SUBCMD_CREATE_STORAGE_DEF} my-cloud-backup google google_storage key=<client_email>,secret=<path_to_OAuth2.json>
 
 """,
@@ -824,7 +826,9 @@ attempt to create that one name.
     )
     cred_create_storage_def_parser.add_argument(
         "driver_params",
-        metavar="key=<key>,secret=<secret>[,k=v[,k=v ...]]",
+        metavar="key=<access_key>,secret=<secret_access_key>[,k=v[,k=v ...]]",
+        nargs="?",
+        default=None,
         help=f"""The parameters for the API driver. For example, these are passed to libcloud to
 create a driver to access the API. Generally, you must specify at least a key and secret, but
 you can specify any libcloud driver arguments.
@@ -849,6 +853,15 @@ clear with the encrypted file in the backup storage location. It is recommended 
 override the default without which you cannot recover encrypted files should you
 fail to properly backup your locally stored backup information (which includes the IVs).
 """,
+    )
+    cred_create_storage_def_parser.add_argument(
+        "--secrets-visible",
+        "--sv",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=f"""When <driver_params> is not specified on the command line, the user is prompted for input.
+This switch causes user input of secrets (i.e., access/secret keys) to be visible while typing.
+"""
     )
 
     #
@@ -1374,6 +1387,9 @@ def main(argv=None):
             f"Expected help subject to match those available: {args.help_subject}"
         )
 
+    if hasattr(args, "automated_testing"):
+        set_automated_testing_mode(args.automated_testing)
+
     verbosity_level = 0
     if hasattr(args, "verbosity") and args.verbosity is not None:
         verbosity_level = args.verbosity
@@ -1431,6 +1447,9 @@ def main(argv=None):
             )
             debug_argv = argv if argv is not None else sys.argv
             logging.debug(f"argv={'None' if debug_argv is None else ' '.join([*debug_argv])}")
+
+            if get_automated_testing_mode():
+                logging.info(f"*** Automated testing mode is enabled. ***")
 
             if hasattr(args, "yk"):
                 if not isinstance(args.yk, bool):

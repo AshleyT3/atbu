@@ -859,6 +859,8 @@ You can use your cloud provider's UI to configure a storage container/bucket to 
 ^^^^^^^^^^^^^^^^^^^^^^
 This section will provide an overview on taking your cloud provider's credentials and using that information to configure a |PROJNAME| cloud Storage Definition. Storage Definition is the same |PROJNAME| gives to the configuration for any storage that can store a backup, whether local or cloud.
 
+**Note**: The cloud backup/restore walkthroughs below create the cloud backup configurations using test credentials entirely from the command line. You can use the same commands shown below but omit both the cloud storage access key ("key") and access secret ("secret") and |PROJNAME| will prompt you for both, where you can copy/paste each directly into |PROJNAME|. It is highly recommended that you use this latter approach, and not specify key/secret on the command line, to avoid leaving a copy of key/secret within your command line history buffer, if enabled. 
+
 By now you should have your cloud storage provider's credentials, which will consist of some kind of key or username, and some kind of password or secret (which may be a .json file in some cases).
 
 The general command line to setup a cloud storage definition is as follows...
@@ -867,36 +869,36 @@ For Azure Blob Storage:
 
 .. code-block:: console
 
-    atbu creds create-storage-def my-backup-name libcloud azure_blobs my-storage-container-name key=<access_key>,secret=<secret>
+    atbu creds create-storage-def my-backup-name libcloud azure_blobs my-storage-container-name key=<access_key>,secret=<secret_access_key>
 
 For Google Storage:
 
 .. code-block:: console
 
-    atbu creds create-storage-def my-backup-name google google_storage my-storage-bucket-name key=<access_key>,secret=<secret>
+    atbu creds create-storage-def my-backup-name google google_storage my-storage-bucket-name key=<access_key>,secret=<secret_access_key>
 
-In this case, <access_key>/<secret> are either your HMAC compat mode key/secret, or your .json client_email value (open .json to get it) and a path to the .json file.
+In this case, <access_key>/<secret_access_key> are either your HMAC compat mode key/secret, or your .json client_email value (open .json to get it) and a path to the .json file.
 
 If you are using a non-default project, you can specify the project ID as follows: 
 
 .. code-block:: console
 
-    atbu creds create-storage-def my-backup-name google google_storage my-storage-bucket-name key=<access_key>,secret=<secret>,project=<project_id>
+    atbu creds create-storage-def my-backup-name google google_storage my-storage-bucket-name key=<access_key>,secret=<secret_access_key>,project=<project_id>
 
 You can see the commands for both Azure Blob Storage and Google Storage Services are pretty much the same.
 
 The general format for create-storage-def is as follows:
 
-atbu creds create-storage-def <interface> <provider> <container> key=<key>,secret=<secret>,[project=<project_id>] [--create-container]
+atbu creds create-storage-def <interface> <provider> <container> key=<access_key>,secret=<secret_access_key>,[project=<project_id>] [--create-container]
 
 where
 
-* <interface>    <'filesystem','libcloud'|'google'>
-* <provider>     <'filesystem'|'azure_blobs'|'google_storage'>
-* <container>    The cloud storage container or bucket name.
-* <key>          storage key
-* <secret>       storage secret
-* <project_id>   project if required.
+* <interface>           <'filesystem','libcloud'|'google'>
+* <provider>            <'filesystem'|'azure_blobs'|'google_storage'>
+* <container>           The cloud storage container or bucket name.
+* <key>                 storage key
+* <secret_access_key>   storage secret
+* <project_id>          project if required.
 
 If you specify --create-container, |PROJNAME| will attempt to create the container for you. Some important points on container creation...
 
@@ -905,6 +907,30 @@ If you use --create-container, and you specify an explicit single container name
 Alternatively, when using --create-container, you can specify a container name ending with an asterisk '*' which activates the |PROJNAME| auto-find capability which causes |PROJNAME| to use the specified container name as a base name to which it appends a code until finding an available name.
 
 It is recommended that you use auto-find if you wish |PROJNAME| to create the container name, and you do not wish to control the specific name used (beyond the base name).
+
+Addendum to the above, avoiding secrets on the Command line
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+As mentioned earlier, you can avoid specifying secrets on the command line by omitting them from the command line. In that case, you will be prompted by |PROJNAME| to input them. You can manually enter or copy/paste them. 
+
+For Azure Blob Storage, omit "key=<access_key>,secret=<secret_access_key>" as follows:
+
+.. code-block:: console
+
+    atbu creds create-storage-def my-backup-name libcloud azure_blobs my-storage-container-name
+
+For Google Storage, omit "key=<access_key>,secret=<secret_access_key>" as follows:
+
+.. code-block:: console
+
+    atbu creds create-storage-def my-backup-name google google_storage my-storage-bucket-name
+
+For Google Storage, if you wish to specify a project name, you can still do so on the command line as follows:
+
+.. code-block:: console
+
+    atbu creds create-storage-def my-backup-name google google_storage my-storage-bucket-name project=<project_id>
+
+Basically, you can use either the command line or the console input to specify secrets. If you leave a required secret out of the command line, you will be prompted to enter it via the console.
 
 Azure Example
 ^^^^^^^^^^^^^

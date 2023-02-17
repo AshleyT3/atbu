@@ -277,7 +277,7 @@ def _resolve_keyring_secrets(
     # For each 'keyring-mapping' item:
     #    item's name:
     #       encoded with string such as 'driver-secret' to indicate mapping
-    #       relates from secret to { ... "driver": { ... "secret": <secret> ... } ... }
+    #       relates from secret to { ... "driver": { ... "secret": <secret_access_key> ... } ... }
     #    items's value:
     #       indicates keyring service/username with secret.
     affected_config_path: str

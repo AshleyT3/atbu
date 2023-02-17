@@ -69,7 +69,6 @@ def get_local_filesystem_backup_info(
 def get_local_filesystem_backup_with_wizard(
     storage_location_path: Union[str, Path],
     default_storage_def_name: str = None,
-    debug_mode: bool = False,
 ) -> tuple[AtbuConfig, str, dict]:
     storage_location_path = convert_to_pathlib_path(storage_location_path)
     if storage_location_path is None or storage_location_path.is_file():
@@ -128,7 +127,6 @@ def get_local_filesystem_backup_with_wizard(
     desc_cred = setup_backup_encryption_wizard(
         storage_atbu_cfg=storage_atbu_cfg,
         storage_def_name=storage_def_name,
-        debug_mode=debug_mode,
     )
     cred_set = StorageDefCredentialSet(
         storage_def_name=storage_def_name,
@@ -168,7 +166,7 @@ def establish_storage_path_location():
 
 
 def handle_new_local_filesystem_storage_def(
-    default_storage_def_name: str, storage_location: str, debug_mode: bool = False
+    default_storage_def_name: str, storage_location: str
 ) -> tuple[AtbuConfig, str, dict]:
 
     if not storage_location:
@@ -183,7 +181,6 @@ def handle_new_local_filesystem_storage_def(
     ) = get_local_filesystem_backup_with_wizard(
         storage_location_path=storage_location,
         default_storage_def_name=default_storage_def_name,
-        debug_mode=debug_mode,
     )
 
     return atbu_cfg_to_use, storage_def_name, storage_def

@@ -1832,4 +1832,4 @@ Even though |PROJNAME| does not embed files, sidecar files have benefits in that
 
 Side note, it is always a risk to write data to very hold hard drives... not necessarily a bad risk but just a risk of sorts... hard drives age, can go bad... but writing .atbu digest files to older drives was a choice I was willing to make because I have redundancy so the point was to ensure everything got moved to newer media... anyway, I did not have issues so all was well.
 
-Going fordware, my ingestion workflow will, as a matter of course, involve generating .atbu digest sidecar files, at least for large irreplacable photos/videos. When those currently new drives age and become old, they will already have .atbu digest files so I'm good to go for validating and comparing contents as time moves forward.
+Going forward, my ingestion workflow will, as a matter of course, involve generating .atbu digest sidecar files, at least for large irreplacable photos/videos. When those currently new drives age and become old, they will already have .atbu digest files so I'm good to go for validating and comparing contents as time moves forward.

@@ -976,6 +976,9 @@ def default_is_password_valid(password: CredentialByteArray):
         print(f"Your password is too long.")
         print(f"The maximum length password is {_MAX_PASSWORD} UTF-8 encoded bytes.")
         return False
+    if len(password) == 0:
+        print("Blank passwords are not allowed, try again.")
+        return False
     return True
 
 
@@ -990,9 +993,6 @@ def prompt_for_password(
     pw_input_func = pwinput.pwinput if hidden else input
     while True:
         password_attempt1 = CredentialByteArray(pw_input_func(prompt).encode("utf-8"))
-        if len(password_attempt1) == 0:
-            print("Blank passwords are not allowed, try again.")
-            continue
         if not is_password_valid_func(password_attempt1):
             continue
         if not prompt_again:

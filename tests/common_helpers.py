@@ -540,6 +540,7 @@ def run_atbu(
     log_file = tmp_path / f"atbu-{log_base_name}.log"
     rr = pytester.run(
         atbu_path,
+        "--automated-testing",
         *args,
         "--loglevel",
         "DEBUG",

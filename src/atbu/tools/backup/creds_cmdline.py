@@ -27,6 +27,7 @@ from .exception import *
 from .constants import *
 from .config import (
     AtbuConfig,
+    get_automated_testing_mode,
     is_existing_filesystem_storage_path,
     is_storage_def_name_ok,
     parse_storage_def_specifier,
@@ -49,6 +50,7 @@ from .storage_interface.base import (
 def password_prompt(
     what: str = None,
     hidden: bool = True,
+    allow_blank: bool = False,
 ) -> CredentialByteArray:
 
     if what is None:
@@ -60,13 +62,42 @@ def password_prompt(
             print(f"The {what} you entered is too long.")
             print(f"The maximum length is {MAX_SIZE_IN_BYTES} UTF-8 encoded bytes.")
             return False
+        if not allow_blank and len(password) == 0:
+            print("Blank passwords are not allowed, try again.")
+            return False
         return True
+
+    if get_automated_testing_mode():
+        # When automated tests are active, use Python's 'input' function which accepts standard
+        # input from the test harness. This allows automated E2E testing of paths using this
+        # function, where platform-specific console handling for hidden password input does not
+        # utilize standard input.
+        hidden = False
 
     return prompt_for_password(
         prompt=f"Enter {what}:",
         hidden=hidden,
         is_password_valid_func=_is_password_valid,
     )
+
+
+def prompt_for_driver_storage_secrets(
+    driver_kv_pairs: dict,
+    secrets_visible: bool,
+) -> dict:
+    if CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY not in driver_kv_pairs:
+        access_key = password_prompt(
+            what="the cloud storage access key",
+            hidden=not secrets_visible,
+        )
+        driver_kv_pairs[CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY] = access_key.decode(encoding="utf-8")
+
+    if CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET not in driver_kv_pairs:
+        secret_access_key = password_prompt(
+            what="the cloud storage secret access key (aka \"secret\")",
+            hidden=not secrets_visible,
+        )
+        driver_kv_pairs[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET] = secret_access_key
 
 
 def backup_password_prompt_wizard() -> CredentialByteArray:
@@ -113,14 +144,13 @@ to enter a password.
 
 
 def setup_backup_encryption_wizard(
-    storage_atbu_cfg: AtbuConfig, storage_def_name: str, debug_mode: bool = False
+    storage_atbu_cfg: AtbuConfig, storage_def_name: str
 ) -> DescribedCredential:
     """Setup a password for the backup encryption credential if desired by user.
 
     Args:
         storage_atbu_cfg (AtbuConfig): The configuration to use.
         storage_def_name (str): The storage definition name.
-        debug_mode (bool, optional): Output debug info if True. Defaults to False.
 
     Raises:
         EncryptionAlreadyEnabledError: Encryption already enabled for the specified
@@ -254,7 +284,7 @@ def handle_create_storage_definition(
     driver_params: str,
     create_container: bool,
     include_iv: bool,
-    debug_mode: bool = False,
+    secrets_visible: bool,
 ):
     # Disable MP queued logging to ensure any console
     # logging is in sync with print statements.
@@ -271,8 +301,6 @@ def handle_create_storage_definition(
         raise ValueError(f"Invalid name provider '{provider}' specified.")
     if not container:
         raise ValueError(f"Invalid name container '{container}' specified.")
-    if not driver_params:
-        raise ValueError(f"Invalid name container '{driver_params}' specified.")
 
     atbu_cfg: AtbuConfig
     atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(
@@ -297,23 +325,41 @@ def handle_create_storage_definition(
         storage_def_name=storage_def_name,
     )
 
-    secret = CredentialByteArray()
-    m = re.match(r".*,secret=([^,]+)", driver_params)
-    if m:
-        # A base64 secret may contain '=' so remove and parse separately.
-        secret = CredentialByteArray(m.groups()[0].encode("utf-8"))
-        driver_params = re.sub(r",\s*secret=([^,]+)", "", driver_params)
-    other_driver_kv_pairs = dict(
-        kv_pair.split("=") for kv_pair in driver_params.split(",")
-    )
+    if driver_params is None:
+        driver_kv_pairs = {}
+    else:
+        secret = None
+        m = re.match(r".*[,\s]*secret=([^,]+)", driver_params)
+        if m:
+            # A base64 secret may contain '=' so remove and parse separately.
+            secret = CredentialByteArray(m.groups()[0].encode("utf-8"))
+            driver_params = re.sub(r"[,\s]*secret=([^,]+)", "", driver_params).strip(', ')
+        driver_kv_pairs = dict(
+            kv_pair.split("=") for kv_pair in driver_params.split(",")
+        )
+        if secret is not None:
+            driver_kv_pairs[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET] = secret
 
-    other_driver_kv_pairs[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET] = secret
+    if (
+        CONFIG_VALUE_NAME_DRIVER_STORAGE_KEY in driver_kv_pairs
+        or CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET in driver_kv_pairs
+    ):
+        print(f"WARNING: You have specified secrets on the command line which means")
+        print(f"those secrets may be stored in your command line history and more easily")
+        print(f"accessible to other parties accessing your login. You should consider")
+        print(f"inputing the secrets directly by not specifying them on the command line, or")
+        print(f"securely clearing, or disabling your command line history file.")
+
+    prompt_for_driver_storage_secrets(
+        driver_kv_pairs=driver_kv_pairs,
+        secrets_visible=secrets_visible
+    )
 
     _, storage_def_dict = atbu_cfg.create_storage_def(
         interface_type=interface,
         provider_id=provider,
         container=container,
-        other_driver_kv_pairs=other_driver_kv_pairs,
+        other_driver_kv_pairs=driver_kv_pairs,
         unique_storage_def_name=storage_def_name,
         include_iv=include_iv,
     )
@@ -323,6 +369,7 @@ def handle_create_storage_definition(
     #
 
     cred_storage_kind = CONFIG_PASSWORD_KIND_ACTUAL
+    secret = driver_kv_pairs[CONFIG_VALUE_NAME_DRIVER_STORAGE_SECRET]
     secret_str = secret.decode("utf-8")
     if os.path.isfile(secret_str) and is_OAuth2_secret_json_file(path=secret_str):
         # Yes, secret is directly an existing file name.
@@ -349,7 +396,6 @@ def handle_create_storage_definition(
         desc_cred_encryption = setup_backup_encryption_wizard(
             storage_atbu_cfg=atbu_cfg,
             storage_def_name=storage_def_name,
-            debug_mode=debug_mode,
         )
 
         #
@@ -573,9 +619,6 @@ def handle_creds(args):
     logging.debug(f"handle_creds")
     storage_def_name = args.storage_def
     orig_storage_def_name = storage_def_name  # pylint: disable=unused-variable
-    show_secrets = False
-    if hasattr(args, "show_secrets"):
-        show_secrets = args.show_secrets
     if args.subcmd == CREDS_SUBCMD_CREATE_STORAGE_DEF:
         handle_create_storage_definition(
             storage_def_name=storage_def_name,
@@ -585,7 +628,7 @@ def handle_creds(args):
             driver_params=args.driver_params,
             create_container=args.create_container,
             include_iv=args.include_iv,
-            debug_mode=show_secrets,
+            secrets_visible=args.secrets_visible,
         )
     elif args.subcmd == "delete-storage-def":
         handle_delete_storage_definition(
