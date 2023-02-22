@@ -74,7 +74,7 @@ To use |PROJNAME|, first install it using pip |PKGNAME|:
 
 .. code-block::
 
-   pip install |PKGNAME|
+   pip install atbu-pkg
 
 The remaining sections below flow from top to bottom as a form of general walkthrough, showing how to perform various key tasks.
 
@@ -1607,7 +1607,7 @@ To use |PROJNAME|, first install it using pip |PKGNAME|:
 
 .. code-block::
 
-   pip install |PKGNAME|
+   pip install atbu-pkg
 
 
 .. contents:: Table of Contents
