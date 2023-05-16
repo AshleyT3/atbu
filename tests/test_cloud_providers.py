@@ -64,6 +64,8 @@ from atbu.tools.backup.storage_interface.base import StorageInterfaceFactory
 
 # pylint: disable=unused-import
 from .secrets import (
+    AWS_STORAGE_ACCESSKEY,
+    AWS_STORAGE_SECRET,
     AZURE_BLOB_STORAGE_SECRET,
     AZURE_BLOB_STORAGE_USERKEY,
     GOOGLE_STORAGE_ACCESS_KEY,
@@ -327,6 +329,18 @@ backup_restore_parameters = [
         id="azure",
         marks=pytest.mark.skipif(
             AZURE_BLOB_STORAGE_USERKEY == "skip", reason="secrets not available."
+        ),
+    ),
+    pytest.param(
+        "libcloud",
+        "s3",
+        None,
+        AWS_STORAGE_ACCESSKEY,
+        AWS_STORAGE_SECRET,
+        CONFIG_PASSWORD_KIND_ACTUAL,
+        id="aws",
+        marks=pytest.mark.skipif(
+            AWS_STORAGE_ACCESSKEY == "skip", reason="secrets not available."
         ),
     ),
 ]

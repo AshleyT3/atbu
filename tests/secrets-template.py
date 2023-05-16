@@ -20,3 +20,6 @@ GOOGLE_STORAGE_SECRET = "<secret_access_key>"
 
 AZURE_BLOB_STORAGE_USERKEY = "skip"
 AZURE_BLOB_STORAGE_SECRET = "<secret_access_key>"
+
+AWS_STORAGE_ACCESSKEY = "skip"
+AWS_STORAGE_SECRET = "<secret_access_key>"
