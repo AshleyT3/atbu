@@ -57,7 +57,7 @@ Documentation: https://atbu.readthedocs.io/en/latest/
     ],
     package_dir={"": "src"},
     packages=setuptools.find_namespace_packages(where="src"),
-    python_requires=">=3.9",
+    python_requires=">=3.9, <3.11",
     install_requires=[
         "atbu-common-pkg >= 0.0.4",
         "atbu-mp-pipeline-pkg >= 0.0.7",
