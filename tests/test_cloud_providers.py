@@ -66,8 +66,10 @@ from atbu.tools.backup.storage_interface.base import StorageInterfaceFactory
 from .secrets import (
     AWS_STORAGE_ACCESSKEY,
     AWS_STORAGE_SECRET,
-    AZURE_BLOB_STORAGE_SECRET,
-    AZURE_BLOB_STORAGE_USERKEY,
+    AZSDK_AZURE_BLOB_STORAGE_SECRET,
+    AZSDK_AZURE_BLOB_STORAGE_USERKEY,
+    LIBCLOUD_AZURE_BLOB_STORAGE_SECRET,
+    LIBCLOUD_AZURE_BLOB_STORAGE_USERKEY,
     GOOGLE_STORAGE_ACCESS_KEY,
     GOOGLE_STORAGE_SECRET,
     GOOGLE_STORAGE_SERVICE_ACCOUNT_CLIENT_EMAIL,
@@ -320,15 +322,27 @@ backup_restore_parameters = [
         ),
     ),
     pytest.param(
+        "azure",
+        "azure_blobs",
+        None,
+        AZSDK_AZURE_BLOB_STORAGE_USERKEY,
+        AZSDK_AZURE_BLOB_STORAGE_SECRET,
+        CONFIG_PASSWORD_KIND_ACTUAL,
+        id="azsdk_azure",
+        marks=pytest.mark.skipif(
+            AZSDK_AZURE_BLOB_STORAGE_USERKEY == "skip", reason="secrets not available."
+        ),
+    ),
+    pytest.param(
         "libcloud",
         "azure_blobs",
         None,
-        AZURE_BLOB_STORAGE_USERKEY,
-        AZURE_BLOB_STORAGE_SECRET,
+        LIBCLOUD_AZURE_BLOB_STORAGE_USERKEY,
+        LIBCLOUD_AZURE_BLOB_STORAGE_SECRET,
         CONFIG_PASSWORD_KIND_ACTUAL,
-        id="azure",
+        id="libcloud_azure",
         marks=pytest.mark.skipif(
-            AZURE_BLOB_STORAGE_USERKEY == "skip", reason="secrets not available."
+            LIBCLOUD_AZURE_BLOB_STORAGE_USERKEY == "skip", reason="secrets not available."
         ),
     ),
     pytest.param(

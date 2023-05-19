@@ -89,7 +89,7 @@ class StorageContainerInterface(ABC):
 
 class StorageInterface(ABC):
     def __init__(self):
-        self._retry_exceptions = DEFAULT_RETRY_EXCEPTIONS
+        self._retry_exceptions = list(DEFAULT_RETRY_EXCEPTIONS)
 
     @property
     def upload_chunk_size(self):
@@ -151,6 +151,10 @@ class StorageInterfaceFactory:
             from .libcloud import LibCloudStorageInterface
 
             return LibCloudStorageInterface(storage_def=self.storage_def_dict)
+        elif desired_interface == CONFIG_INTERFACE_TYPE_AZURE:
+            from .azure import AzureStorageInterface
+
+            return AzureStorageInterface(storage_def=self.storage_def_dict)
         elif desired_interface == CONFIG_INTERFACE_TYPE_GOOGLE:
             from .google import GoogleStorageInterface
 

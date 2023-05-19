@@ -21,7 +21,7 @@ import setuptools
 
 setuptools.setup(
     name="atbu-pkg",
-    version="0.0.21",
+    version="0.0.22",
     author="Ashley R. Thomas",
     author_email="ashley.r.thomas.701@gmail.com",
     description= (
@@ -65,6 +65,7 @@ Documentation: https://atbu.readthedocs.io/en/latest/
         "pwinput >= 1.0.2",
         "keyring >= 23.5.0",
         "apache-libcloud >= 3.5.1",
+        "azure-storage-blob >= 12.16.0",
         "google-auth >= 2.6.5",
         "google-cloud-storage >= 2.3.0",
         "google-resumable-media >= 2.3.2",

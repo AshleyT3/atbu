@@ -798,6 +798,7 @@ Examples:
             CONFIG_INTERFACE_TYPE_FILESYSTEM,
             CONFIG_INTERFACE_TYPE_LIBCLOUD,
             CONFIG_INTERFACE_TYPE_GOOGLE,
+            CONFIG_INTERFACE_TYPE_AZURE,
         ],
         help="""The interface (API) the storage definition should use.
 
@@ -809,7 +810,9 @@ Examples:
         help=f"""The storage provider name. This can be '{CONFIG_INTERFACE_TYPE_FILESYSTEM}' for a local
 directory, or a provider supported by the chosen interface. For a cloud provider, if
 interface is '{CONFIG_INTERFACE_TYPE_LIBCLOUD}' you will typically specify a libcloud provider string such as
-'azure_blobs' or 'google_storage'. For provider '{CONFIG_INTERFACE_TYPE_GOOGLE}' use interface 'google_storage'.
+'azure_blobs' or 'google_storage'. For interface '{CONFIG_INTERFACE_TYPE_GOOGLE}' use provider 'google_storage'.
+Interface '{CONFIG_INTERFACE_TYPE_AZURE}' allows us of either traditional S3 secret or SAS token as secret. For
+interface '{CONFIG_INTERFACE_TYPE_AZURE}' use provider 'azure_blobs'.
 
 """,
     )
