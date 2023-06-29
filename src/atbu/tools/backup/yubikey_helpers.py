@@ -15,6 +15,7 @@ r"""YubiKey helpers.
 A layer of helpers between ATBU and yubikey-manager.
 """
 
+from typing import Any, Tuple
 from atbu.common.exception import exc_to_string, InvalidFunctionArgument
 
 from .exception import (
@@ -44,6 +45,7 @@ def setup_yubikey_infra():
         global ykman
         global yubikit
         import ykman
+        import ykman.device
         import yubikit.core
         import yubikit.yubiotp
 
@@ -56,17 +58,23 @@ def setup_yubikey_infra():
         ).with_traceback(ex.__traceback__) from ex
 
 
-def get_list_yubikey_devices():
+def _get_list_yubikey_devices() -> list[Tuple[Any, Any]]:
     # pylint: disable=undefined-variable
     setup_yubikey_infra()
-    return ykman.hid.backend.list_devices()
+    l = ykman.device.list_all_devices()
+    return l if l else None
 
 
 def is_a_yubikey_present():
-    l = get_list_yubikey_devices()
+    l = _get_list_yubikey_devices()
     if l is None:
         return False
     return len(l) > 0
+
+
+def get_first_yubikey_device():
+    l = _get_list_yubikey_devices()
+    return l[0] if l else (None, None)
 
 
 def get_max_challenge_size():
@@ -84,7 +92,10 @@ def challenge_response(
         raise InvalidFunctionArgument(
             f"The challenge must be {get_max_challenge_size()} bytes or less."
         )
-    with ykman.device.connect_to_device(None, [yubikit.core.otp.OtpConnection])[0] as c:
+    device, _ = get_first_yubikey_device()
+    if device is None:
+        raise YubiKeyBackendNotAvailableError("First YubiKey not found.")
+    with device.open_connection(yubikit.core.otp.OtpConnection) as c:
         s = yubikit.yubiotp.YubiOtpSession(c)
         try:
             response = s.calculate_hmac_sha1(
