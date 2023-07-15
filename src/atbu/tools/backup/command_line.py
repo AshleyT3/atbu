@@ -19,6 +19,7 @@ import argparse
 import logging
 import multiprocessing
 import os
+import re
 import sys
 from typing import Union
 
@@ -76,13 +77,76 @@ from ..persisted_info.database import handle_savedb
 from ..persisted_info.diff import handle_diff, DIFF_COMMAND_CHOICES
 
 
-class BlankLinesHelpFormatter(argparse.HelpFormatter):
-    def _split_lines(self, text: str, width: int) -> list[str]:
-        return super()._split_lines(text, width) + [""]
+class AtbuRawTextHelpFormatter(argparse.RawTextHelpFormatter):
+    """This class modifies RawTextHelpFormatter help text to insert
+    blank lines with a heading before each group of ATBU argparse subparsers.
 
-    @staticmethod
-    def insert_blank_line(parser):
-        parser.add_parser("", formatter_class=BlankLinesHelpFormatter, help="")
+    Instead of something like this...
+        ...
+        backup              Backup files to a local file system folder or the cloud.
+        restore             Restore selected files from a backup.
+        ...
+
+    ...a heading is inserted with blank lines as follows...
+
+        ...
+                        Backup/Restore/Verify sub-commands
+                        -----------------------------------
+
+    backup              Backup files to a local file system folder or the cloud.
+    restore             Restore selected files from a backup.
+        ...
+    """
+    def format_help(self):
+
+        help_text = super().format_help()
+
+        m = re.search(
+            pattern=r"( +backup +)Backup files to a local file system folder or the cloud.",
+            string=help_text,
+        )
+        if m is not None:
+            help_padding = m.end(1) - m.start(1)
+            help_text = (
+                help_text[:m.start()] +
+                "\n" +
+                " " * help_padding + "Backup/Restore/Verify sub-commands\n" +
+                " " * help_padding + "-----------------------------------\n" +
+                "\n" +
+                help_text[m.start():]
+            )
+
+        m = re.search(
+            pattern=r"( +update-digests +)Update persistent file information in the specified directories.",
+            string=help_text,
+        )
+        if m is not None:
+            help_padding = m.end(1) - m.start(1)
+            help_text = (
+                help_text[:m.start()] +
+                "\n" +
+                " " * help_padding + "Persistent file information-related sub-commands (unrelated to backup/restore)\n" +
+                " " * help_padding + "------------------------------------------------------------------------------\n" +
+                "\n" +
+                help_text[m.start():]
+            )
+
+        m = re.search(
+            pattern=r"( +help +)Show help on specific subjects:",
+            string=help_text,
+        )
+        if m is not None:
+            help_padding = m.end(1) - m.start(1)
+            help_text = (
+                help_text[:m.start()] +
+                "\n" +
+                " " * help_padding + "Other sub-commands\n" +
+                " " * help_padding + "------------------\n" +
+                "\n" +
+                help_text[m.start():]
+            )
+
+        return help_text
 
 
 #
@@ -339,17 +403,17 @@ def create_argparse():
     #
     parser = argparse.ArgumentParser(
         description=f"{ATBU_ACRONUM_U} v{ATBU_VERSION_STRING}",
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=AtbuRawTextHelpFormatter,
     )
 
     # Uncomment to allow --debug-server (for use with VS Code pydebug)
     # Activate the debug server to listen on specified port, wait for a client connect.
-    parser.add_argument(
-        "--debug-server",
-        help=argparse.SUPPRESS,
-        type=int,
-        required=False,
-    )
+    # parser.add_argument(
+    #     "--debug-server",
+    #     help=argparse.SUPPRESS,
+    #     type=int,
+    #     required=False,
+    # )
 
     # Specified by automated tests to be used by this utility as needed for E2E tests.
     parser.add_argument(
@@ -475,17 +539,6 @@ config/secrets backup. Keep other copies in safe places!
     subparsers = parser.add_subparsers(
         help=f"""""",
     )
-
-    # Add a subparser to act as a heading with blank lines before/after.
-    BlankLinesHelpFormatter.insert_blank_line(subparsers)
-    subparsers.add_parser(
-        "",
-        parents=[parser_common],
-        help=f"""Backup/Restore/Verify sub-commands
------------------------------------
-""",
-    )
-    BlankLinesHelpFormatter.insert_blank_line(subparsers)
 
     #
     # 'backup' subparser.
@@ -1099,17 +1152,6 @@ found, only those files ending with either {ATBU_FILE_BACKUP_EXTENSION_ENCRYPTED
 
     #### decrypt END
 
-    # Add a subparser to act as a heading with blank lines before/after.
-    BlankLinesHelpFormatter.insert_blank_line(subparsers)
-    subparsers.add_parser(
-        "",
-        parents=[parser_common],
-        help=f"""Persistent file information-related sub-commands (unrelated to backup/restore)
-------------------------------------------------------------------------------
-""",
-    )
-    BlankLinesHelpFormatter.insert_blank_line(subparsers)
-
     #############################################################################################
     #                           Persistence-related argparse setup                              #
     #############################################################################################
@@ -1277,17 +1319,6 @@ per-file:, per-dir:, and any location. For example,
         help="Path of the persistent file information json database.",
     )
     parser_savedb.set_defaults(func=handle_savedb)
-
-    # Add a subparser to act as a heading with blank lines before/after.
-    BlankLinesHelpFormatter.insert_blank_line(subparsers)
-    subparsers.add_parser(
-        "",
-        parents=[parser_common],
-        help=f"""Other sub-commands
-------------------
-""",
-    )
-    BlankLinesHelpFormatter.insert_blank_line(subparsers)
 
     #############################################################################################
     #                specific help argparse setup (i.e., for atbu help <subject>                #
