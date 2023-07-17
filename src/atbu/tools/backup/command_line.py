@@ -75,7 +75,7 @@ from ..persisted_info.file_info import (
 from ..persisted_info.update_digests import handle_update_digests
 from ..persisted_info.database import handle_savedb
 from ..persisted_info.diff import handle_diff, DIFF_COMMAND_CHOICES
-
+from ..persisted_info.arrange import handle_arrange
 
 class AtbuRawTextHelpFormatter(argparse.RawTextHelpFormatter):
     """This class modifies RawTextHelpFormatter help text to insert
@@ -1319,6 +1319,85 @@ per-file:, per-dir:, and any location. For example,
         help="Path of the persistent file information json database.",
     )
     parser_savedb.set_defaults(func=handle_savedb)
+
+    #
+    # 'arrange' subparser.
+    #
+    parser_arrange = subparsers.add_parser(
+        "arrange",
+        formatter_class=argparse.RawTextHelpFormatter,
+        help="Arrange \"target\" files to match a \"template\" directory's structure.",
+        description="""Given two directories that were once mirroed, arrange the target
+so that any existing target files matching those in the template directory are moved to a new
+target directory structure to maximize the match between the two. This can be used to arrange
+the target's stale structure to match a newly updated structure in the template directory.
+""",
+        parents=[parser_common, common_update_stale, common_change_detection_type],
+    )
+    parser_arrange.add_argument(
+        "locations",
+        metavar="[per-file:|pf:|per-dir:|pd:|per-both:|pb:] <template_root> [pf:|pd:|pb:] <target_source_root> [pf:|pd:|pb:] <target_dest_root>",
+        nargs="+",
+        type=str,
+        help=f"""You must specify 3 root path locations: template root, target source, and target destination.
+The target source and destination must be on the same drive, where the arrange command is for
+rearranging (moving) files on that drive (from source to dest) based on the template root structure.
+
+You can specify a database type for each location by using the appropriate per-file, per-dir,
+or per-both setting prior to the location(s) it applies to. For large media files, or even
+otherwise, it is recommended to use per-file even though it's no the default because it
+creates sidecar files. The per-dir approach is currently for one-off operations or where
+sidecar files are undesired. Generally, for large media management with sidecar .atbu files,
+specify 'pf:' before the first location.
+
+The arrange command will use the template root path to arrange (move) files within the target
+source to the target destination, where the placement within the target destination will match
+the template root's arrangement for any files available and matching within the target source.
+
+Example: C:\\root\\a\\file1.txt is manually mirrored to D:\\root\\a\\file1.txt, where file1.txt on C:
+is moved to C:\\root\\b\\file1.txt while D: is offline. Their structures are now out of sync.
+When D: is brought back online (reconnected via USB or whatever), its desired to arrange D: to
+match structural changes to C: as best as possible, including renames which move and do not move
+the folder location of a file. Using arrange with template C:\\root, target source D:\\root, and
+target destination D:\\rootnew, results in a best-effort to move files from D:\\root to D:\\rootnew
+while using C:\\root as a template for the desired names/structure. In this example case, arrange
+results in D:\\root\\a\\file1.txt being moved to D:\\rootnew\\b\\file1.txt. After such a rearrangement,
+normal copy-style manual mirroring can resume.
+""",
+    )
+    parser_arrange.add_argument(
+        "--no-undo",
+        action="store_true",
+        default=False,
+        help="""Must be specified if --undofile is not specified. This is a sanity check to ensure",
+no undo file is truely desired.
+"""
+    )
+    parser_arrange.add_argument(
+        "-u", "--undofile",
+        type=str,
+        default=None,
+        help="""Path to write the arrange undo file which contains information about the operations
+performed which can be used to undo the arranging. Note, at this time the undo file is not used
+by this tool but eventually will be. For the time being, it can be used by scripting languages
+to undo move operations if desired, or to otherwise have a log of the operations which took
+place.
+""",
+    )
+    parser_arrange.add_argument(
+        "--overwrite",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="""If specified, existing target destination files can be ovewritten. By default,
+move operations will fail if the destination file already exists.""",
+    )
+    parser_arrange.add_argument(
+        "--whatif",
+        action="store_true",
+        default=False,
+        help="Show how files would be arranged without actually arranging them.",
+    )
+    parser_arrange.set_defaults(func=handle_arrange)
 
     #############################################################################################
     #                specific help argparse setup (i.e., for atbu help <subject>                #

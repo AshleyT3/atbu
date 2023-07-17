@@ -27,8 +27,16 @@ from atbu.mp_pipeline.mp_global import get_verbosity_level
 from ..backup.constants import *
 from ..backup.exception import *
 from ..backup.global_hasher import GlobalHasherDefinitions
-from .database import FileInformationDatabaseCollection, extract_location_info
-from .file_info import CHANGE_DETECTION_TYPE_DATESIZE, FileInformationPersistent
+from .database import (
+    FileInformationDatabaseCollection,
+    extract_location_info,
+    rel_path,
+)
+from .file_info import (
+    CHANGE_DETECTION_TYPE_DATESIZE,
+    FileInformationPersistent,
+    is_file_info_list_bad_state,
+)
 
 DIFF_COMMAND_MOVE_DUPLICATES = "move-duplicates"
 DIFF_COMMAND_REMOVE_DUPLICATES = "remove-duplicates"
@@ -452,48 +460,6 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
         )
 
 
-def is_file_info_list_bad_state(
-    primary_hasher_name, file_info_list: list[FileInformationPersistent]
-):
-    primary_digest = file_info_list[0].get_current_digest(primary_hasher_name)
-    size_in_bytes = file_info_list[0].size_in_bytes
-    state_error = False
-    for file_info in file_info_list[1:]:
-        other_primary_digest = file_info.get_current_digest(primary_hasher_name)
-        if primary_digest != other_primary_digest:
-            logging.error(
-                f"Unexpected list state error, digest mismatch "
-                f"'{primary_digest}' != '{other_primary_digest}'"
-            )
-            for file_info2 in file_info_list:
-                logging.error(f"item related to bad state: {file_info2}")
-            state_error = True
-            break
-        if size_in_bytes != file_info.size_in_bytes:
-            logging.error(
-                "Unexpected size mismatch encountered, "
-                f"potential collision, skipping the following file:"
-            )
-            for file_info2 in file_info_list:
-                logging.error(f"Collision item: {file_info2}")
-            state_error = True
-            break
-    return state_error
-
-
-def rel_path(top_level_dir: str, path: str):
-    check_top = os.path.normcase(path[: len(top_level_dir)])
-    if os.path.normcase(top_level_dir) != check_top:
-        raise InvalidFunctionArgument(
-            f"The path must be a subdirectory of top_level_dir: "
-            f"top_level_dir={top_level_dir} path={path}"
-        )
-    rpath = path[len(top_level_dir) :]
-    if rpath[0] in ["\\", "/"]:
-        rpath = rpath[1:]
-    return rpath
-
-
 def diff_locations(
     locationA_path: str,
     locationA_info: dict[str, list[FileInformationPersistent]],
@@ -514,16 +480,16 @@ def diff_locations(
     locA_in_locB = {}
     for digest, file_info_list_locA in locationA_info.items():
         if is_file_info_list_bad_state(
-            primary_hasher_name=GlobalHasherDefinitions().get_primary_hashing_algo_name(),
+            primary_hasher_name=primary_hasher_name,
             file_info_list=file_info_list_locA,
         ):
             continue
         primary_digest_locA = file_info_list_locA[0].primary_digest
         if primary_digest_locA is None:
-            logging.error(f"No primary digest found for")
+            logging.error(f"No primary digest found: {file_info_list_locA[0].path}")
             continue
         if digest != primary_digest_locA:
-            raise Exception(
+            raise DigestMistmatchError(
                 f"Key digest does not match item in list. {digest} {primary_digest_locA}"
             )
         file_info_list_locB = locationB_info.get(primary_digest_locA)

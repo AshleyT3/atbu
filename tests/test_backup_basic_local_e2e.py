@@ -92,9 +92,10 @@ def test_backup_restore(
     source_directory = tmp_path / "SourceDataDir"
     backup_directory = tmp_path / "BackupDestination"
 
-    total_files = create_test_data_directory_basic(
+    _, files_created = create_test_data_directory_basic(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
 
     stdin_bytes = (
         f"{ATBU_TEST_BACKUP_NAME}{os.linesep}{os.linesep}{os.linesep}".encode()
@@ -126,9 +127,10 @@ def test_verify_digest_only(
     source_directory = tmp_path / "SourceDataDir"
     backup_directory = tmp_path / "BackupDestination"
 
-    total_files = create_test_data_directory_basic(
+    _, files_created = create_test_data_directory_basic(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
 
     with DirInfo(source_directory) as source_dir_info:
         source_dir_info.gather_info(start_gathering_digests=True)
@@ -178,9 +180,10 @@ def test_verify_compare_local(
     source_directory = tmp_path / "SourceDataDir"
     backup_directory = tmp_path / "BackupDestination"
 
-    total_files = create_test_data_directory_basic(
+    _, files_created = create_test_data_directory_basic(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
 
     source_dir_info = DirInfo(source_directory)
     with source_dir_info:
@@ -234,9 +237,10 @@ def test_backup_restore_history(
     source_directory = tmp_path / "SourceDataDir"
     backup_directory = tmp_path / "BackupDestination"
 
-    total_files = create_test_data_directory_minimal_vary(
+    _, files_created = create_test_data_directory_minimal_vary(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
 
     stdin_bytes = (
         f"{ATBU_TEST_BACKUP_NAME}{os.linesep}{os.linesep}{os.linesep}".encode()
@@ -268,9 +272,10 @@ def test_credential_export_import(
     source_directory = tmp_path / "SourceDataDir"
     backup_directory = tmp_path / "BackupDestination"
 
-    total_files = create_test_data_directory_minimal(
+    _, files_created = create_test_data_directory_minimal(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
     assert total_files > 0
 
     stdin_bytes = f"{storage_def_name}{os.linesep}{os.linesep}{os.linesep}".encode()
@@ -327,9 +332,10 @@ def test_credential_and_backup_info_recovery(
     source_directory = tmp_path / "SourceDataDir"
     backup_directory = tmp_path / "BackupDestination"
 
-    total_files = create_test_data_directory_minimal(
+    _, files_created = create_test_data_directory_minimal(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
     assert total_files > 0
 
     stdin_bytes = f"{storage_def_name}{os.linesep}{os.linesep}{os.linesep}".encode()

@@ -490,9 +490,10 @@ def test_backup_restore(
 
     source_directory = tmp_path / "SourceDataDir"
 
-    total_files = create_test_data_directory_basic(
+    _, files_created = create_test_data_directory_basic(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
     assert total_files > 0
 
     storage_specifier = f"storage:{TEST_BACKUP_NAME}"
@@ -544,9 +545,10 @@ def test_backup_restore__secrets_prompt(
 
     source_directory = tmp_path / "SourceDataDir"
 
-    total_files = create_test_data_directory_minimal_vary(
+    _, files_created = create_test_data_directory_minimal_vary(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
     assert total_files > 0
 
     storage_specifier = f"storage:{TEST_BACKUP_NAME}"
@@ -597,9 +599,10 @@ def test_backup_restore_history(
 
     source_directory = tmp_path / "SourceDataDir"
 
-    total_files = create_test_data_directory_minimal_vary(
+    _, files_created = create_test_data_directory_minimal_vary(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
     assert total_files > 0
 
     storage_specifier = f"storage:{TEST_BACKUP_NAME}"
@@ -651,9 +654,10 @@ def test_credential_export_import(
 
     source_directory = tmp_path / "SourceDataDir"
 
-    total_files = create_test_data_directory_minimal(
+    _, files_created = create_test_data_directory_minimal(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
     assert total_files > 0
 
     #
@@ -716,9 +720,10 @@ def test_credential_and_backup_info_recovery(
 
     source_directory = tmp_path / "SourceDataDir"
 
-    total_files = create_test_data_directory_minimal(
+    _, files_created = create_test_data_directory_minimal(
         path_to_dir=source_directory,
     )
+    total_files = len(files_created)
     assert total_files > 0
 
     #

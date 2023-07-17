@@ -71,6 +71,28 @@ class CustomDecoder(json.JSONDecoder):
         return obj
 
 
+def rel_path(top_level_dir: str, path: str):
+    check_top = os.path.normcase(path[: len(top_level_dir)])
+    if os.path.normcase(top_level_dir) != check_top:
+        raise InvalidFunctionArgument(
+            f"The path must be a subdirectory of top_level_dir: "
+            f"top_level_dir={top_level_dir} path={path}"
+        )
+    rpath = path[len(top_level_dir) :]
+    if rpath[0] in [os.sep, os.altsep]:
+        rpath = rpath[1:]
+    return rpath
+
+
+def flatten_location_info_to_path_sorted_list(
+    location_info: dict[str, list[FileInformationPersistent]]
+) -> list[FileInformationPersistent]:
+    return sorted(
+        [file_info for fi_list in location_info.values() for file_info in fi_list],
+        key=lambda x: x.nc_path,
+    )
+
+
 def get_location_info_from_database(
     database_json_path,
 ) -> defaultdict[str, list[FileInformationPersistent]]:
@@ -221,13 +243,17 @@ class FileInformationDatabase:
             # Or, in the case of a moved folder, remove info
             # pertaining to the old location.
             nc_source_path = os.path.normcase(self.source_path)
-            self._file_info_list = list(
-                filter(
-                    lambda fi: os.path.isfile(fi.path)
-                    and fi.nc_path.startswith(nc_source_path),
-                    self._file_info_list,
-                )
-            )
+            updated_file_info_list = []
+            for fi in self._file_info_list:
+                is_root_valid = False
+                try:
+                    common_prefix = os.path.commonpath([nc_source_path, fi.nc_path])
+                    is_root_valid = common_prefix == nc_source_path
+                except ValueError:
+                    pass
+                if is_root_valid and os.path.isfile(fi.path):
+                    updated_file_info_list.append(fi)
+            self._file_info_list = updated_file_info_list
 
             #
             # self._file_info_list is now a file info list of files
@@ -415,7 +441,7 @@ class FileInformationDatabaseCollection:
 
 
 def extract_location_info(
-    arguments: list[str], min_required: int, max_allowed: int
+    arguments: list[str], min_required: int, max_allowed: int, must_exist: bool = True,
 ) -> list[tuple[str, str]]:
     """Helper function to process location arguments captured by argparse."""
     per_arg_to_persist_types = {
@@ -443,7 +469,7 @@ def extract_location_info(
                 f"Invalid argument '{orig_loc}'. Expected a directory but got '{loc}'"
             )
         loc = os.path.abspath(loc)
-        if not os.path.exists(loc):
+        if must_exist and not os.path.exists(loc):
             raise InvalidCommandLineArgument(
                 f"The specified location does not exist: {loc}"
             )

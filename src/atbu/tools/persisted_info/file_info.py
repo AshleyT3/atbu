@@ -924,3 +924,32 @@ def get_loc_persistent_file_info(
         factory=lambda loc_root, file_path: FileInformationPersistent(path=file_path),
     )
     return file_info_persistent_list
+
+
+def is_file_info_list_bad_state(
+    primary_hasher_name, file_info_list: list[FileInformationPersistent]
+):
+    primary_digest = file_info_list[0].get_current_digest(primary_hasher_name)
+    size_in_bytes = file_info_list[0].size_in_bytes
+    state_error = False
+    for file_info in file_info_list[1:]:
+        other_primary_digest = file_info.get_current_digest(primary_hasher_name)
+        if primary_digest != other_primary_digest:
+            logging.error(
+                f"Unexpected list state error, digest mismatch "
+                f"'{primary_digest}' != '{other_primary_digest}'"
+            )
+            for file_info2 in file_info_list:
+                logging.error(f"item related to bad state: {file_info2}")
+            state_error = True
+            break
+        if size_in_bytes != file_info.size_in_bytes:
+            logging.error(
+                "Unexpected size mismatch encountered, "
+                f"potential collision, skipping the following file:"
+            )
+            for file_info2 in file_info_list:
+                logging.error(f"Collision item: {file_info2}")
+            state_error = True
+            break
+    return state_error

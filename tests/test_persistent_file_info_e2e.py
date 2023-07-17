@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from io import SEEK_END, SEEK_SET
 import os
 from pathlib import Path
+from random import randint
+import random
 import re
 import string
 from typing import Any
@@ -58,7 +60,16 @@ from atbu.tools.persisted_info.database import (
     FileInformationDatabaseCollection,
 )
 
-from .common_helpers import run_atbu
+from .common_helpers import (
+    DirInfo,
+    StaticTestValues,
+    create_test_data_directory_default_levels,
+    duplicate_tree,
+    establish_random_seed,
+    get_rel_path,
+    get_rel_path_nc,
+    run_atbu,
+)
 
 SIZE_1MB = 1024 * 1024
 SIZE_2MB = 2 * SIZE_1MB
@@ -1055,3 +1066,271 @@ def test_diff_bit_rot(
     verify_expected_vs_actual(specific_layout=locA_specific_layout, info=info)
     verify_expected_vs_actual(specific_layout=locB_specific_layout, info=info)
     pass
+
+
+@pytest.mark.parametrize(
+    "persist_types",
+    persist_type_parameters,
+)
+def test_arrange_basic(
+    persist_types: list[str],
+    tmp_path: Path,
+    caplog: LogCaptureFixture,
+    pytester: Pytester,
+):
+    establish_random_seed(tmp_path)  # bytes([0,1,2,3])
+
+    persist_type_prefix = get_persist_type_prefix(persist_types=persist_types)
+    is_per_file = True if persist_type_prefix == ATBU_PERSIST_TYPE_PER_FILE else False
+
+    original_test_data_directory = tmp_path / "OriginalTestDataDir"
+    current_template_root = tmp_path / "TemplateRoot"
+    outdated_target_source_root = tmp_path / "TargetSourceRoot"
+    arranged_target_dest_root = tmp_path / "TargetDestRoot"
+    undofile_path = tmp_path / "UndoFiles"
+    undofile_path.mkdir(parents=True, exist_ok=False)
+
+    initial_dir_size_defs = [
+        StaticTestValues(values=list(range(64)), some_limit=2),
+    ]
+
+    dirs_list, files_list = create_test_data_directory_default_levels(
+        path_to_dir=original_test_data_directory,
+        file_size_defs=initial_dir_size_defs,
+    )
+
+    duplicate_tree(
+        src_dir=original_test_data_directory,
+        dst_dir=current_template_root,
+    )
+
+    duplicate_tree(
+        src_dir=current_template_root,
+        dst_dir=outdated_target_source_root,
+    )
+
+    with DirInfo(dir_path=current_template_root) as template_di:
+        template_di.gather_info()
+
+        removed_or_moved_old_rel_paths = set()
+        removed_or_moved_new_rel_paths = set()
+
+        # Delete a file.
+        files_deleted, files_remaining = template_di.delete_randomly_chosen_files(
+            num_to_delete=1,
+        )
+        deleted_file_rel_path = os.path.normcase(get_rel_path(
+                root_path=current_template_root,
+                path_within_root=files_deleted[0],
+            )
+        )
+        removed_or_moved_old_rel_paths.add(deleted_file_rel_path)
+
+        idx_available_for_tests = [*range(0, len(template_di.file_list))]
+        random.shuffle(idx_available_for_tests)
+
+        # Move a file to a newly created directory.
+        idx_to_move = idx_available_for_tests.pop()
+        move_src_path = template_di.file_list[idx_to_move].path
+        move_src_rel_path = os.path.normcase(get_rel_path(
+                root_path=current_template_root,
+                path_within_root=move_src_path,
+            )
+        )
+        removed_or_moved_old_rel_paths.add(move_src_rel_path)
+        basename_to_move = os.path.basename(move_src_path)
+        dest_dir = os.path.join(current_template_root, "NewDir")
+        move_dest_path = os.path.join(dest_dir, basename_to_move)
+        move_dest_rel_path = os.path.normcase(get_rel_path(
+                root_path=current_template_root,
+                path_within_root=move_dest_path,
+            )
+        )
+        removed_or_moved_new_rel_paths.add(move_dest_rel_path)
+        os.renames(
+            old=move_src_path,
+            new=move_dest_path,
+        )
+
+        # Rename an existing file, keeping in the same directory.
+        idx_to_rename = idx_available_for_tests.pop()
+        rename_src_path = template_di.file_list[idx_to_rename].path
+        rename_src_rel_path = os.path.normcase(get_rel_path(
+                root_path=current_template_root,
+                path_within_root=rename_src_path,
+            )
+        )
+        removed_or_moved_old_rel_paths.add(rename_src_rel_path)
+        base, ext = os.path.splitext(os.path.basename(rename_src_path))
+        new_basename_of_rename = f"Rename-{base}-Rename{ext}"
+        rename_dest_path = os.path.join(os.path.dirname(rename_src_path), new_basename_of_rename)
+        rename_dest_rel_path = os.path.normcase(get_rel_path(
+                root_path=current_template_root,
+                path_within_root=rename_dest_path,
+            )
+        )
+        removed_or_moved_new_rel_paths.add(rename_dest_rel_path)
+        os.renames(
+            old=rename_src_path,
+            new=rename_dest_path,
+        )
+
+        # Rename an existing file, moving it to another directory.
+        idx_to_move_rename = idx_available_for_tests.pop()
+        move_rename_src_path = template_di.file_list[idx_to_move_rename].path
+        move_rename_src_rel_path = os.path.normcase(get_rel_path(
+                root_path=current_template_root,
+                path_within_root=move_rename_src_path,
+            )
+        )
+        removed_or_moved_old_rel_paths.add(move_rename_src_rel_path)
+        base, ext = os.path.splitext(os.path.basename(move_rename_src_path))
+        new_basename_of_move_rename = f"Rename-{base}-Rename{ext}"
+        move_rename_dest_dir = os.path.join(current_template_root, "NewDirRenamedFile")
+        move_rename_dest_path = os.path.join(move_rename_dest_dir, new_basename_of_move_rename)
+        move_rename_dest_rel_path = os.path.normcase(get_rel_path(
+                root_path=current_template_root,
+                path_within_root=move_rename_dest_path,
+            )
+        )
+        removed_or_moved_new_rel_paths.add(move_rename_dest_rel_path)
+        os.renames(
+            old=move_rename_src_path,
+            new=move_rename_dest_path,
+        )
+
+    add_files_size_defs = [
+        StaticTestValues(values=list(range(1000,1020)), some_limit=2),
+    ]
+
+    dirs_added, files_added = create_test_data_directory_default_levels(
+        path_to_dir=current_template_root,
+        file_size_defs=add_files_size_defs,
+        add_files_to_existing=True
+    )
+
+    files_remaining.extend(files_added)
+
+    caplog.clear()
+    argv = [
+        "arrange",
+        f"{persist_type_prefix}:",
+        str(current_template_root),
+        str(outdated_target_source_root),
+        str(arranged_target_dest_root),
+        "--undofile",
+        str(undofile_path / "arrange1_undo.json"),
+        "--loglevel",
+        "DEBUG",
+    ]
+    rr = run_atbu(
+        pytester,
+        tmp_path,
+        *argv,
+        log_base_name="arrange1",
+    )
+    assert rr.ret == ExitCode.OK
+
+    with (
+        DirInfo(dir_path=original_test_data_directory) as original_di,
+        DirInfo(dir_path=current_template_root) as template_di,
+        DirInfo(dir_path=outdated_target_source_root) as target_source_di,
+        DirInfo(dir_path=arranged_target_dest_root) as target_dest_di,
+    ):
+        original_di.gather_info(start_gathering_digests=True)
+        template_di.gather_info()
+        target_source_di.gather_info()
+        target_dest_di.gather_info(start_gathering_digests=True)
+
+        original_set = original_di.get_nc_rel_path_set()
+        template_set = template_di.get_nc_rel_path_set()
+        target_source_set = target_source_di.get_nc_rel_path_set()
+        target_dest_set = target_dest_di.get_nc_rel_path_set()
+
+        #
+        # Sanity and test checks for deleted/moved files.
+        #
+
+        # The deleted file is in original, not in updated template and target destination.
+        assert deleted_file_rel_path in original_set
+        assert deleted_file_rel_path in target_source_set
+        assert deleted_file_rel_path not in template_set
+        assert deleted_file_rel_path not in target_dest_set
+
+        # The original moved file location is in original, not in template and target dest. 
+        assert move_src_rel_path in original_set
+        assert move_src_rel_path not in template_set
+        if is_per_file:
+            assert f"{move_src_rel_path}{ATBU_PERSISTENT_INFO_EXTENSION}" not in template_set
+        assert move_src_rel_path not in target_source_set
+        if is_per_file:
+            assert f"{move_src_rel_path}{ATBU_PERSISTENT_INFO_EXTENSION}" not in target_source_set
+        assert move_src_rel_path not in target_dest_set
+        if is_per_file:
+            assert f"{move_src_rel_path}{ATBU_PERSISTENT_INFO_EXTENSION}" not in target_dest_set
+
+        # The moved file dest is not in the original but in template and target dest.
+        assert move_dest_rel_path not in original_set
+        assert move_dest_rel_path in template_set
+        if is_per_file:
+            assert f"{move_dest_rel_path}{ATBU_PERSISTENT_INFO_EXTENSION}" in template_set
+        assert move_dest_rel_path not in target_source_set
+        if is_per_file:
+            assert f"{move_dest_rel_path}{ATBU_PERSISTENT_INFO_EXTENSION}" not in target_source_set
+        assert move_dest_rel_path in target_dest_set
+        if is_per_file:
+            assert f"{move_dest_rel_path}{ATBU_PERSISTENT_INFO_EXTENSION}" in target_dest_set
+
+        # The target destination less the template should contain 0 paths because
+        # the destination is built based on what is observed in the template.
+        target_dest_less_template = target_dest_set.difference(template_set)
+        assert len(target_dest_less_template) == 0
+
+        # The original less the newly created target destination set should contain any paths
+        # which were removed or moved.
+        original_less_target_dest = original_set.difference(target_dest_set)
+        assert original_less_target_dest == removed_or_moved_old_rel_paths
+        #removed_or_moved_old_rel_paths !!! remove
+        #removed_or_moved_new_rel_paths
+
+        # Files added to the template did not exist in the target source, which means they
+        # will not exist in the target destination. If 'per-file' is used, .atbu files will
+        # exist for all added files which doubles the count (i.e., if 20 files added, 40 
+        # additional files will exist in the template). Verify all files added are present
+        # in the delta with the target destination. For per-dir, the .atbudb will be present
+        # hence +1.
+        dest_files_added_count = len(files_added)*2 if is_per_file else len(files_added) + 1
+        template_less_target_dest = template_set.difference(target_dest_set)
+        assert len(template_less_target_dest) == dest_files_added_count
+        files_added_nc_rel_path_set = set([get_rel_path_nc(current_template_root, fa) for fa in files_added])
+        assert files_added_nc_rel_path_set.issubset(template_less_target_dest)
+
+
+        target_source_less_target_dest = target_source_set.difference(target_dest_set)
+        assert len(target_source_less_target_dest) == 2
+        assert deleted_file_rel_path in target_source_less_target_dest
+        if is_per_file:
+            assert f"{deleted_file_rel_path}{ATBU_PERSISTENT_INFO_EXTENSION}" in target_source_less_target_dest
+
+        original_rp_fi_dict = original_di.get_nc_rel_path_dict()
+        for dest_rp, dest_fi in target_dest_di.get_nc_rel_path_dict().items():
+            orig_fi = original_rp_fi_dict.get(dest_rp)
+            if orig_fi is None:
+                if dest_rp == move_dest_rel_path:
+                    orig_fi = original_rp_fi_dict.get(move_src_rel_path)
+                elif dest_rp == rename_dest_rel_path:
+                    orig_fi = original_rp_fi_dict.get(rename_src_rel_path)
+                elif dest_rp == move_rename_dest_rel_path:
+                    orig_fi = original_rp_fi_dict.get(move_rename_src_rel_path)
+            if orig_fi is not None:
+                assert dest_fi == orig_fi
+                if is_per_file:
+                    fip = FileInformationPersistent(path=dest_fi.path)
+                    assert fip.info_data_file_exists()
+                    fip.read_info_data_file()
+                    assert dest_fi.digest == fip.primary_digest
+            elif os.path.splitext(dest_rp)[1] == ATBU_PERSISTENT_INFO_EXTENSION:
+                continue
+            else:
+                fail(f"Expected to validate all target destination files: {dest_rp}")
+        pass  # pylint: disable=unnecessary-pass

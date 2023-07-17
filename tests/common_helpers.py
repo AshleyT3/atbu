@@ -72,7 +72,7 @@ def duplicate_tree(src_dir, dst_dir, no_pacifier: bool = False):
     shutil.copytree(src=src_dir, dst=dst_dir, copy_function=copy_func)
 
 
-class TestValues:
+class StaticTestValues:
     def __init__(self, values, some_limit) -> None:
         self._orig_values = values
         self._pending_values = values
@@ -94,7 +94,7 @@ class TestValues:
         return result
 
 
-class RandomTestValues(TestValues):
+class RandomTestValues(StaticTestValues):
     def __init__(
         self,
         low_count_inclusive,
@@ -116,6 +116,13 @@ class RandomTestValues(TestValues):
         return randint(self.low_inclusive, self.high_inclusive)
 
 
+def get_min_files_expected(file_size_defs: list[StaticTestValues]):
+    total_files = 0
+    for fsd in file_size_defs:
+        total_files += fsd.remaining_values
+    return total_files
+
+
 def establish_random_seed(tmp_path, random_seed: bytes = None):
     if random_seed is None:
         random_seed = os.urandom(4)
@@ -127,6 +134,41 @@ def establish_random_seed(tmp_path, random_seed: bytes = None):
         random_seed = bytes.fromhex(random_seed_file.read_text())
     random.seed(random_seed)
     return random_seed
+
+
+def delete_randomly_chosen_files(
+    files_list: list[str],
+    num_to_delete: int = None,
+) -> tuple[list[str], list[str]]:
+    """Delete a number of files from a given list of file paths.
+
+    Args:
+        files_list (list[str]): The list of file paths from which to choose files to delete.
+            num_to_delete (int, optional): The number of files to delete. Specifying None will
+            cause all files in the list to be deleted. Specifying a positive number will
+            cause num_to_delete random files to be selected and deleted. Defaults to None.
+
+    Returns:
+        tuple[list[str], list[str]]: A tuple of two lists, the first being the list of files
+            deleted, the second being the files remaining.
+    """
+    if num_to_delete is not None and (num_to_delete <= 0 or num_to_delete > len(files_list)):
+        raise ValueError(
+            f"num_to_delete must be either None or a valid number between 1 and len(files_list). "
+            f"num_to_delete={num_to_delete}"
+        )
+    if num_to_delete is None or num_to_delete == len(files_list):
+        for p in files_list:
+            os.remove(p)
+        return (list(files_list), [])
+    deleted_file_list = []
+    remaining_files_list = list(files_list)
+    for _ in range(num_to_delete):
+        index = randint(0, len(remaining_files_list) - 1)
+        deleted_file_list.append(remaining_files_list[index])
+        del remaining_files_list[index]
+        os.remove(deleted_file_list[-1])
+    return deleted_file_list, remaining_files_list
 
 
 def create_test_data_file(file_path, size):
@@ -143,10 +185,11 @@ def create_test_data_file(file_path, size):
 
 def create_test_files(
     path_to_dir: Path,
-    file_size_def: list[TestValues],
+    file_size_def: list[StaticTestValues],
     use_remaining: bool,
     add_files_to_existing: bool,
-):
+) -> list[str]:
+    created_files_list: list[str] = []
     total_files_created = 0
     for fsd in file_size_def:
         if use_remaining:
@@ -168,26 +211,34 @@ def create_test_files(
                     )
                 i += 1
             create_test_data_file(file_path, size)
+            created_files_list.append(str(file_path))
             total_files_created += 1
-    return total_files_created
+    return created_files_list
 
 
 def create_test_data_directory(
     path_to_dir: Path,
     max_levels: int,
     max_dirs_per_level: int,
-    per_level_file_size_def: list[TestValues],
+    file_size_def: list[StaticTestValues],
     add_files_to_existing: bool,
-):
+) -> tuple[list[str], list[str]]:
+
+    min_files_expected = get_min_files_expected(file_size_defs=file_size_def)
+    assert min_files_expected > 0
+
+    created_dirs_list: list[str] = []
+    created_files_list: list[str] = []
+
     def create_recurse(
         path_to_dir: Path,
         max_levels: int,
         max_dirs_per_level: int,
-        per_level_file_size_def: list[TestValues],
         add_files_to_existing: bool,
         level: int = 0,
     ):
-        total_files = 0
+        if not path_to_dir.exists():
+            created_dirs_list.append(str(path_to_dir))
         path_to_dir.mkdir(parents=True, exist_ok=True)
         if max_levels > 0:
             if level == 0:
@@ -209,29 +260,31 @@ def create_test_data_directory(
                         )
                     i += 1
 
-                total_files += create_recurse(
+                create_recurse(
                     path_to_dir=subdir_path,
                     max_levels=max_levels - 1,
                     max_dirs_per_level=max_dirs_per_level,
-                    per_level_file_size_def=per_level_file_size_def,
                     add_files_to_existing=add_files_to_existing,
                     level=level + 1,
                 )
-        total_files += create_test_files(
-            path_to_dir=path_to_dir,
-            file_size_def=per_level_file_size_def,
-            use_remaining=(level == 0),
-            add_files_to_existing=add_files_to_existing,
+        created_files_list.extend(
+            create_test_files(
+                path_to_dir=path_to_dir,
+                file_size_def=file_size_def,
+                use_remaining=(level == 0),
+                add_files_to_existing=add_files_to_existing,
+            )
         )
-        return total_files
 
-    return create_recurse(
+    create_recurse(
         path_to_dir=path_to_dir,
         max_levels=max_levels,
         max_dirs_per_level=max_dirs_per_level,
-        per_level_file_size_def=per_level_file_size_def,
         add_files_to_existing=add_files_to_existing,
     )
+
+    assert len(created_files_list) >= min_files_expected
+    return created_dirs_list, created_files_list
 
 
 def get_file_digest(file_path):
@@ -325,11 +378,51 @@ class LocallyPersistedFileInfo(FileInfo):
         return super().digest
 
 
+def strip_trailing_slash(path: str):
+    drive, subdir = os.path.splitdrive(path)
+    if not subdir:
+        return path
+    while len(subdir) > 0 and subdir[-1] in [os.path.sep, os.path.altsep]:
+        subdir = subdir[:len(subdir)-1]
+    return os.path.join(drive, subdir)
+
+
+def get_rel_path(root_path: str, path_within_root: str):
+    root_path = strip_trailing_slash(root_path)
+    path_within_root = strip_trailing_slash(path_within_root)
+    try:
+        common_path = os.path.commonpath([
+            os.path.normcase(root_path),
+            path_within_root,
+        ])
+    except ValueError as ex:
+        raise InvalidStateError(
+            f"Common path cannot be extracted. "
+            f"All contained paths should be within the dir_path root. "
+            f"dir_path={self.dir_path} nc_path={fi.nc_path}"
+        ) from ex
+    if common_path != os.path.normcase(root_path):
+        raise InvalidStateError(
+            f"The common_path was unexpectedly not the dir_path. "
+            f"dir_path={root_path} "
+            f"nc_path={path_within_root} "
+            f"common_path={common_path}"
+        )
+    rpath = path_within_root[len(common_path):]
+    while len(rpath) > 0 and rpath[0] in [os.sep, os.altsep]:
+        rpath = rpath[1:]
+    return rpath
+
+
+def get_rel_path_nc(root_path: str, path_within_root: str):
+    return os.path.normcase(get_rel_path(root_path=root_path, path_within_root=path_within_root))
+
+
 class DirInfo:
     def __init__(self, dir_path=None):
         self.dir_path = dir_path
         self.file_db = {}
-        self.file_list = []
+        self.file_list: list[LocallyPersistedFileInfo] = []
         self.process_exec = None
 
     def __enter__(self):
@@ -352,6 +445,25 @@ class DirInfo:
         self.file_db[finfo.nc_path] = finfo
         self.file_list.append(finfo)
 
+    def delete_randomly_chosen_files(
+        self,
+        num_to_delete: int = None,
+    ) -> tuple[list[str], list[str]]:
+        deleted, remaining = delete_randomly_chosen_files(
+            files_list=list(self.file_db.keys()),
+            num_to_delete=num_to_delete,
+        )
+        for df in deleted:
+            del self.file_db[os.path.normcase(df)]
+            for idx, fli in enumerate(self.file_list):
+                if fli.nc_path == os.path.normcase(df):
+                    # idx is used to avoid file_list.remove(o) which
+                    # requires __eq__ which requires digests. 
+                    del self.file_list[idx]
+                    fli.reset_digest()
+                    break
+        return deleted, remaining
+
     def gather_info(self, start_gathering_digests: bool = False):
         for p in glob.iglob(os.path.join(self.dir_path, "**"), recursive=True):
             if not os.path.isfile(p):
@@ -367,6 +479,22 @@ class DirInfo:
             self.file_list.append(finfo)
         self.file_list.sort(key=lambda fi: fi.nc_path)
 
+    def get_nc_rel_path_dict(self) -> dict[str, LocallyPersistedFileInfo]:
+        if self.dir_path is None:
+            raise ValueError(
+                f"Cannot derive a relative path without a known self.dir_path."
+            )
+        result: dict[str, LocallyPersistedFileInfo] = {}
+        for fi in self.file_list:
+            nc_rel_path = get_rel_path(
+                root_path=os.path.normcase(self.dir_path),
+                path_within_root=fi.nc_path
+            )
+            result[nc_rel_path] = fi
+        return result
+
+    def get_nc_rel_path_set(self) -> set[str]:
+        return set(self.get_nc_rel_path_dict().keys())
 
 def directories_match_entirely_by_order(di1: DirInfo, di2: DirInfo):
     if len(di1.file_list) != len(di2.file_list):
@@ -555,7 +683,7 @@ def run_atbu(
 
 def get_file_size_defs_01_basic():
     return [
-        TestValues(values=list(range(64)), some_limit=2),
+        StaticTestValues(values=list(range(64)), some_limit=2),
         RandomTestValues(
             low_count_inclusive=5,
             high_count_inclusive=5,
@@ -570,25 +698,25 @@ def get_file_size_defs_01_basic():
             high_inclusive=1024,
             some_limit=2,
         ),
-        TestValues(
+        StaticTestValues(
             values=list(
                 range(DEFAULT_CHUNK_DOWNLOAD_SIZE - 1, DEFAULT_CHUNK_DOWNLOAD_SIZE + 2)
             ),
             some_limit=1,
         ),
-        TestValues(
+        StaticTestValues(
             values=list(
                 range(DEFAULT_CHUNK_UPLOAD_SIZE - 1, DEFAULT_CHUNK_UPLOAD_SIZE + 2)
             ),
             some_limit=1,
         ),
-        TestValues(
+        StaticTestValues(
             values=list(
                 range(AZURE_DOWNLOAD_CHUNK_SIZE - 1, AZURE_DOWNLOAD_CHUNK_SIZE + 2)
             ),
             some_limit=1,
         ),
-        TestValues(
+        StaticTestValues(
             values=list(
                 range(AZURE_UPLOAD_CHUNK_SIZE - 1, AZURE_UPLOAD_CHUNK_SIZE + 2)
             ),
@@ -621,65 +749,55 @@ def get_file_size_defs_03_minimal_vary():
     ]
 
 
-def get_min_files_expected(file_size_defs):
-    total_files = 0
-    for fsd in file_size_defs:
-        total_files += fsd.remaining_values
-    return total_files
-
-
-def create_test_data_directory_basic(path_to_dir: Path):
-    file_size_defs = get_file_size_defs_01_basic()
-    min_files_expected = get_min_files_expected(file_size_defs=file_size_defs)
-    assert min_files_expected > 0
-
-    num_files_created = create_test_data_directory(
+def create_test_data_directory_default_levels(
+    path_to_dir: Path,
+    file_size_defs: list[StaticTestValues],
+    add_files_to_existing: bool = False,
+) -> tuple[list[str], list[str]]:
+    dirs_created, files_created = create_test_data_directory(
         path_to_dir=path_to_dir,
         max_levels=5,
         max_dirs_per_level=3,
-        per_level_file_size_def=file_size_defs,
-        add_files_to_existing=False,
+        file_size_def=file_size_defs,
+        add_files_to_existing=add_files_to_existing,
     )
-    assert num_files_created >= min_files_expected
-    return num_files_created
+    return dirs_created, files_created
+
+
+def create_test_data_directory_basic(
+    path_to_dir: Path,
+    add_files_to_existing: bool = False,
+):
+    dirs_created, files_created = create_test_data_directory_default_levels(
+        path_to_dir=path_to_dir,
+        file_size_defs=get_file_size_defs_01_basic(),
+        add_files_to_existing=add_files_to_existing,
+    )
+    return dirs_created, files_created
 
 
 def create_test_data_directory_minimal(
     path_to_dir: Path,
     add_files_to_existing: bool = False,
-):
-    file_size_defs = get_file_size_defs_02_minimal()
-    min_files_expected = get_min_files_expected(file_size_defs=file_size_defs)
-    assert min_files_expected > 0
-
-    num_files_created = create_test_data_directory(
+) -> tuple[list[str], list[str]]:
+    dirs_created, files_created = create_test_data_directory_default_levels(
         path_to_dir=path_to_dir,
-        max_levels=5,
-        max_dirs_per_level=3,
-        per_level_file_size_def=file_size_defs,
+        file_size_defs=get_file_size_defs_02_minimal(),
         add_files_to_existing=add_files_to_existing,
     )
-    assert num_files_created >= min_files_expected
-    return num_files_created
+    return dirs_created, files_created
 
 
 def create_test_data_directory_minimal_vary(
     path_to_dir: Path,
     add_files_to_existing: bool = False,
-):
-    file_size_defs = get_file_size_defs_03_minimal_vary()
-    min_files_expected = get_min_files_expected(file_size_defs=file_size_defs)
-    assert min_files_expected > 0
-
-    num_files_created = create_test_data_directory(
+) -> tuple[list[str], list[str]]:
+    dirs_created, files_created = create_test_data_directory_default_levels(
         path_to_dir=path_to_dir,
-        max_levels=5,
-        max_dirs_per_level=3,
-        per_level_file_size_def=file_size_defs,
+        file_size_defs=get_file_size_defs_03_minimal_vary(),
         add_files_to_existing=add_files_to_existing,
     )
-    assert num_files_created >= min_files_expected
-    return num_files_created
+    return dirs_created, files_created
 
 
 def simulate_bitrot(
@@ -1241,10 +1359,11 @@ def validate_backup_restore(
                 di1=source_dir_info, di2=restore_dir_info
             )
 
-    total_files_added = create_test_data_directory_minimal(
+    _, files_created = create_test_data_directory_minimal(
         path_to_dir=source_directory,
         add_files_to_existing=True,
     )
+    total_files_added = len(files_created)
     expected_total_files_b = expected_total_files + total_files_added
 
     with DirInfo(source_directory) as source_dir_info:
@@ -1293,10 +1412,11 @@ def validate_backup_restore(
         num_files=num_bitrot,
     )
 
-    total_files_added = create_test_data_directory_minimal(
+    _, files_created = create_test_data_directory_minimal(
         path_to_dir=source_directory,
         add_files_to_existing=True,
     )
+    total_files_added = len(files_created)
     expected_total_files_c = expected_total_files_b + total_files_added
 
     rr = run_atbu(
@@ -1489,10 +1609,11 @@ def validate_backup_restore_history(
             src_dir=last_br_info.dir_path,
             dst_dir=new_dir_path,
         )
-        new_dir_total_files = create_test_data_directory_minimal_vary(
+        _, files_created = create_test_data_directory_minimal_vary(
             path_to_dir=new_dir_path,
             add_files_to_existing=True,
         )
+        new_dir_total_files = len(files_created)
         last_br_info = SourceDirInfo(
             total_files=last_br_info.total_files + new_dir_total_files,
             dir_path=new_dir_path,
