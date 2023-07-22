@@ -72,9 +72,9 @@ class CustomDecoder(json.JSONDecoder):
 
 
 def rel_path(top_level_dir: str, path: str):
-    check_top = os.path.normcase(path[: len(top_level_dir)])
-    if os.path.normcase(top_level_dir) != check_top:
-        raise InvalidFunctionArgument(
+    common_path = os.path.commonpath([os.path.normcase(top_level_dir), os.path.normcase(path)])
+    if common_path != os.path.normcase(top_level_dir):
+        raise ValueError(
             f"The path must be a subdirectory of top_level_dir: "
             f"top_level_dir={top_level_dir} path={path}"
         )
