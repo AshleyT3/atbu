@@ -191,7 +191,7 @@ class MoveFileInformationCommand(FileInformationCommandBase):
         )
         if not whatif:
             os.makedirs(os.path.split(destination_file_path)[0], exist_ok=True)
-            os.rename(file_info.path, destination_file_path)
+            os.renames(file_info.path, destination_file_path)
             file_moved = True
             if not file_info.is_loaded_from_db:
                 logging.info(
@@ -204,14 +204,14 @@ class MoveFileInformationCommand(FileInformationCommandBase):
                     os.makedirs(
                         os.path.split(destination_config_file_path)[0], exist_ok=True
                     )
-                    os.rename(
+                    os.renames(
                         file_info.info_data_file_path, destination_config_file_path
                     )
                     config_file_moved = True
                 except Exception as ex:
                     try:
                         # Undo the successful user data file move.
-                        os.rename(src=destination_file_path, dst=file_info.path)
+                        os.renames(destination_file_path, file_info.path)
                     except Exception:
                         pass
                     logging.error(
@@ -276,11 +276,13 @@ class MoveFileInformationCommand(FileInformationCommandBase):
             if is_config_file_moved:
                 self.config_files_affected += 1
         self.unique_files_affected += len(unique_file_counter_hash_set)
-        self.directories_removed += remove_empty_directorires(
+        remove_empty_directorires(
             root_dir_paths=self.directories_affected,
             whatif=self.whatif,
         )
-
+        self.directories_removed = sum(
+            [1 for rd in self.directories_affected if not os.path.isdir(rd)]
+        )
 
 class RemoveFileInformationCommand(FileInformationCommandBase):
     def __init__(
