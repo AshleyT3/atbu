@@ -476,7 +476,7 @@ def extract_location_info(
         locations.append(
             (
                 loc,
-                current_persist_types,
+                current_persist_types if not os.path.isfile(loc) else [ATBU_PERSIST_TYPE_PER_DIR],
             )
         )
     if len(locations) < min_required:
