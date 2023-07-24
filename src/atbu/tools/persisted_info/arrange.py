@@ -257,12 +257,12 @@ class _ArrangeMatchFinder:
         is_date_match_required: bool,
         is_basename_match_required: bool,
     ) -> _FileInfoRelPathInfo:
-        targ_src_rel_path_nc = os.path.normcase(
-            rel_path(
-                top_level_dir=self.target_source_root,
-                path=targ_src_fi.path,
-            )
+
+        targ_src_rel_path = rel_path(
+            top_level_dir=self.target_source_root,
+            path=targ_src_fi.path,
         )
+        targ_src_rel_path_nc = os.path.normcase(targ_src_rel_path)
         targ_src_rel_dir_nc, targ_src_basename_nc = os.path.split(targ_src_rel_path_nc)
 
         best_match_rpi: _FileInfoRelPathInfo = None
@@ -298,12 +298,11 @@ class _ArrangeMatchFinder:
                     )
                 continue
 
-            template_fi_rel_path_nc = os.path.normcase(
-                rel_path(
-                    top_level_dir=self.template_root,
-                    path=template_fi.path,
-                )
+            template_fi_rel_path = rel_path(
+                top_level_dir=self.template_root,
+                path=template_fi.path,
             )
+            template_fi_rel_path_nc = os.path.normcase(template_fi_rel_path)
             template_fi_rel_dir_nc, template_fi_basename_nc = os.path.split(
                 template_fi_rel_path_nc
             )
@@ -434,8 +433,8 @@ class _ArrangeMatchFinder:
                             f"date_req={is_date_match_required} "
                             f"basename_req={is_basename_match_required} "
                             f"dig={targ_src_fi.primary_digest} "
-                            f"template={template_fi_rel_path_nc} "
-                            f"source={targ_src_rel_path_nc} "
+                            f"template={template_fi_rel_path} "
+                            f"source={targ_src_rel_path} "
                         )
                     continue
                 best_match_subdir_distance = subdir_distance
@@ -443,7 +442,7 @@ class _ArrangeMatchFinder:
             best_match_rpi = _FileInfoRelPathInfo(
                 fi_list=template_fi_list,
                 fi=template_fi,
-                rel_path=template_fi_rel_path_nc,
+                rel_path=template_fi_rel_path,
             )
             if _is_verbose_debug_logging():
                 logging.debug(
@@ -452,8 +451,8 @@ class _ArrangeMatchFinder:
                     f"date_req={is_date_match_required} "
                     f"basename_req={is_basename_match_required} "
                     f"dig={targ_src_fi.primary_digest} "
-                    f"template={template_fi_rel_path_nc} "
-                    f"source={targ_src_rel_path_nc} "
+                    f"template={template_fi_rel_path} "
+                    f"source={targ_src_rel_path} "
                 )
 
         if best_match_rpi is not None:
@@ -464,8 +463,8 @@ class _ArrangeMatchFinder:
                 f"date_req={is_date_match_required} "
                 f"f={is_basename_match_required} "
                 f"dig={targ_src_fi.primary_digest} "
-                f"template={template_fi_rel_path_nc} "
-                f"source={targ_src_rel_path_nc} "
+                f"template={template_fi_rel_path} "
+                f"source={targ_src_rel_path} "
             )
 
         return best_match_rpi
