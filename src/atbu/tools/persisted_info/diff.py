@@ -21,7 +21,10 @@ import logging
 import re
 import time
 
-from atbu.common.util_helpers import is_platform_path_case_sensitive
+from atbu.common.util_helpers import (
+    is_platform_path_case_sensitive,
+    rel_path,
+)
 from atbu.mp_pipeline.mp_global import get_verbosity_level
 
 from ..backup.constants import *
@@ -30,7 +33,6 @@ from ..backup.global_hasher import GlobalHasherDefinitions
 from .database import (
     FileInformationDatabaseCollection,
     extract_location_info,
-    rel_path,
 )
 from .file_info import (
     CHANGE_DETECTION_TYPE_DATESIZE,

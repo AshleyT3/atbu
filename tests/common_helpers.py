@@ -399,13 +399,13 @@ def get_rel_path(root_path: str, path_within_root: str):
         raise InvalidStateError(
             f"Common path cannot be extracted. "
             f"All contained paths should be within the dir_path root. "
-            f"dir_path={self.dir_path} nc_path={fi.nc_path}"
+            f"root_path={root_path} path_within_root={path_within_root}"
         ) from ex
     if common_path != os.path.normcase(root_path):
         raise InvalidStateError(
             f"The common_path was unexpectedly not the dir_path. "
-            f"dir_path={root_path} "
-            f"nc_path={path_within_root} "
+            f"root_path={root_path} "
+            f"path_within_root={path_within_root} "
             f"common_path={common_path}"
         )
     rpath = path_within_root[len(common_path):]

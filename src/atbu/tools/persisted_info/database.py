@@ -24,6 +24,7 @@ import os
 import json
 import logging
 from collections import defaultdict
+import re
 
 from atbu.common.hasher import HasherDefinitions
 
@@ -69,19 +70,6 @@ class CustomDecoder(json.JSONDecoder):
                 is_loaded_from_db=True,
             )
         return obj
-
-
-def rel_path(top_level_dir: str, path: str):
-    common_path = os.path.commonpath([os.path.normcase(top_level_dir), os.path.normcase(path)])
-    if common_path != os.path.normcase(top_level_dir):
-        raise ValueError(
-            f"The path must be a subdirectory of top_level_dir: "
-            f"top_level_dir={top_level_dir} path={path}"
-        )
-    rpath = path[len(top_level_dir) :]
-    if rpath[0] in [os.sep, os.altsep]:
-        rpath = rpath[1:]
-    return rpath
 
 
 def flatten_location_info_to_path_sorted_list(

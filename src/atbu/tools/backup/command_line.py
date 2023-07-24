@@ -1327,10 +1327,74 @@ per-file:, per-dir:, and any location. For example,
         "arrange",
         formatter_class=argparse.RawTextHelpFormatter,
         help="Arrange \"target\" files to match a \"template\" directory's structure.",
-        description="""Given two directories that were once mirroed, arrange the target
-so that any existing target files matching those in the template directory are moved to a new
-target directory structure to maximize the match between the two. This can be used to arrange
-the target's stale structure to match a newly updated structure in the template directory.
+        description=rf"""
+Manually mirroring drives using copy operations is not uncommon. While manually mirroring can
+work with most any drives, and be very low-cost/convenient, there can be issues that arise over
+time. One such issue relates to situations where the main current drive has its directories or
+file names changed, bringing it out of sync name/structure-wise with the manual mirrors.
+
+Consider an archive of large media items which largely remain static but where one wishes to
+change organization strategies over time. In such cases, synchronizing all manual mirrors can
+be challenging. The 'arrange' command helps to bring older manual mirrors up to date in structure
+and file naming.
+
+Example:
+
+Given two directories that were once manually mirrored, c:\SourceDir and d:\OrigMirrorDir, it is
+desired to rearrange (rename items) in d:\OrigMirrorDir so they match c:\SourceDir as closely as
+possible for any items in both which match in content precisely (a digest match).
+
+The c:\SourceDir is the called the arrange "template" directory since it acts as a template for
+how the new mirror should most optimally look after the arrange operation is complete.
+
+The d:\OrigMirrorDir is called the arramge "target source" directory since it will act as a source
+of files used with move operations to create a new third directory on the same drive, d:\NewMirrorDir.
+
+That third directory, d:\NewMirrorDir, is the arrange "target destination" directory since it acts
+as a target for move operations from the arrange "target source" in order to try to match d:\NewMirrorDir
+as closely as possible to the template c:\SourceDir.
+
+The arrange command only performs intra-drive move operations (aka rename operations) to move
+otherwise untouched files to new locations. The goal of 'arrange' is to maximize already existing
+mirror copies by arranging them in an order matching c:\SourceDir as closely as possible. This
+is performed for any files with a matching digest (precise match).
+
+The command for this arrange operation might be:
+
+    {ATBU_PROGRAM_NAME} arrange pf: c:\SourceDIr d:\OrigMirrorDir d:\NewMirrorDir -u d:\undofile.json
+
+Note, specifying an undofile or the --no-undo is required. An undo log file is not currently
+used by this tool for undo, but eventually will be. At this time, though, it acts as a log of what
+move operations took place as part of the arrange command.
+
+The 'pf:' indicator will cause .atbu sidecar files to be created for all files in c:\SourceDir,
+and all files in d:\OrigMirrorDir. (Use 'pd:" if you do not wish to use sidecar files, but keep
+in mind sidecar files have benefits making them worth having around for large media items.)
+
+After .atbu files are created, an analysis is performed based on digests of all files in order to begin
+move operations from d:\OrigMirrorDir to d:\NewMirrorDir.
+
+After the operation is complete, d:\NewMirrorDir will be a mirror of c:\SourceDir for any files
+within d:\OrigMirrorDir which matched in digest (i.e., content). For any files not having a
+digest match, the files will remain in d:\OrigMirrorDir for manual review as desired. A manual
+mirror copy command can now be used to fully sync c:\SourceDir with d:\NewMirrorDir, but without
+re-copying duplicate files that already existed in both directories (both manual mirror locations).
+
+Think of the 'arrange' command as a way of rearranging one drive's directory based on the way some
+other drive's directory is structured, based on the assumption both directories have duplicate files
+making such rearranging worthwhile to automate. For manually mirrored drives, especially for large
+media items, this is most often the case.
+
+The arrange operation will never delete files, or modify the content of files. Arrange only moves
+and rename files all on the same drive. AFter an 'arrange' operation completes, all files that were
+in d:\OrigMirrorDir will be either in d:\NewMirrorDir (possibly renamed to match the name of an item
+in c:\SourceDir), or unmoved in d:\OrigMirrorDir if no c:\SourceDir matches could be found.
+
+Arrange merely seeks to move/rename what is already in d:\OrigMirrorDir to a relative location within
+d:\NewMirrorDir matching a relative location for the same item within c:\SoureDir, but only if that
+item in c:\SourceDir matches date, size, digest exactly with the d:\OrigMirrorDir item. Note, if the
+date, size, digest match, but the name differs, the renamed item takes on the name of the item in
+c:\SourceDir, so perhaps this renaming could be considered the most volatile aspsect of arranging.
 """,
         parents=[parser_common, common_update_stale, common_change_detection_type],
     )
