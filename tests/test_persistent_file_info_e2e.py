@@ -220,7 +220,7 @@ output_extraction_definitions: list[OutputExtractionDefinition] = [
 ]
 
 
-def get_persist_type_prefix(persist_types: list[str]) -> str:
+def get_persist_type_option(persist_types: list[str]) -> str:
     if len(persist_types) == 1:
         persist_type_prefix = persist_types[0]
     else:
@@ -560,7 +560,7 @@ def create_layout1(
 def create_layout1_with_config_files(
     persist_types: list[str], tmp_path: Path, pytester: Pytester
 ):
-    persist_type_prefix = get_persist_type_prefix(persist_types=persist_types)
+    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
     locA_path, locA_specific_layout, locB_path, locB_specific_layout = create_layout1(
         persist_types=persist_types,
         tmp_path=tmp_path,
@@ -594,7 +594,7 @@ def update_digests(
     tmp_path: Path,
     pytester: Pytester,
 ):
-    persist_type_prefix = get_persist_type_prefix(persist_types=persist_types)
+    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
 
     if is_digest_change_detection:
         # The default is date/time and size changes (faster), but
@@ -690,7 +690,7 @@ def test_diff(
         pytester=pytester,
     )
 
-    persist_type_prefix = get_persist_type_prefix(persist_types=persist_types)
+    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
 
     argv = [
         "diff",
@@ -748,7 +748,7 @@ def test_diff_with_deleted_files(
     caplog: LogCaptureFixture,
     pytester: Pytester,
 ):
-    persist_type_prefix = get_persist_type_prefix(persist_types=persist_types)
+    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
 
     (
         locA_path,
@@ -985,7 +985,7 @@ def test_diff_bit_rot(
     caplog: LogCaptureFixture,
     pytester: Pytester,
 ):
-    persist_type_prefix = get_persist_type_prefix(persist_types=persist_types)
+    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
 
     (
         locA_path,
@@ -1080,8 +1080,8 @@ def test_arrange_basic(
 ):
     establish_random_seed(tmp_path)  # bytes([0,1,2,3])
 
-    persist_type_prefix = get_persist_type_prefix(persist_types=persist_types)
-    is_per_file = True if persist_type_prefix == ATBU_PERSIST_TYPE_PER_FILE else False
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
+    is_per_file = True if persist_type_option == ATBU_PERSIST_TYPE_PER_FILE else False
 
     original_test_data_directory = tmp_path / "OriginalTestDataDir"
     current_template_root = tmp_path / "TemplateRoot"
@@ -1214,9 +1214,12 @@ def test_arrange_basic(
     caplog.clear()
     argv = [
         "arrange",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "-t",
         str(current_template_root),
+        "-s",
         str(outdated_target_source_root),
+        "-d",
         str(arranged_target_dest_root),
         "--undofile",
         str(undofile_path / "arrange1_undo.json"),

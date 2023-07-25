@@ -743,25 +743,22 @@ def handle_arrange(args):
         raise InvalidCommandLineArgument(
             f"Either --no-undo or --undofile <path> must be specified."
         )
-    locations = extract_location_info(
-        args.locations, min_required=3, max_allowed=3, must_exist=False
-    )
-    loc_template_root = locations[0][0]
-    loc_template_root_per_type = locations[0][1]
+    loc_template_root = args.template_dir[0][1]
+    loc_template_root_per_type = args.template_dir[0][0]
     if not os.path.exists(loc_template_root):
         raise InvalidCommandLineArgument(
             f"The template root path does not exist: {loc_template_root}"
         )
 
-    loc_target_source_root = locations[1][0]
-    loc_target_source_root_per_type = locations[1][1]
+    loc_target_source_root = args.source_dir[0][1]
+    loc_target_source_root_per_type = args.source_dir[0][0]
     if not os.path.exists(loc_target_source_root):
         raise InvalidCommandLineArgument(
             f"The target source root does not exist: {loc_target_source_root}"
         )
 
-    loc_target_dest_root = locations[2][0]
-    loc_target_dest_root_per_type = locations[2][1]
+    loc_target_dest_root = args.destination_dir[0][1]
+    loc_target_dest_root_per_type = args.destination_dir[0][0]
 
     sr_target_source = os.stat(loc_target_source_root)
     if not os.path.exists(loc_target_dest_root):

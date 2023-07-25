@@ -149,6 +149,73 @@ class AtbuRawTextHelpFormatter(argparse.RawTextHelpFormatter):
         return help_text
 
 
+class PerDirFileAction(argparse.Action):
+    """Track the last specified 'per-*' option.
+    The class variable PerDirFileAction.current_persist_type holds the last specified value.
+    """
+    current_persist_type = None
+    per_arg_to_persist_types = {
+        "per-file": [ATBU_PERSIST_TYPE_PER_FILE],
+        "pf": [ATBU_PERSIST_TYPE_PER_FILE],
+        "per-dir": [ATBU_PERSIST_TYPE_PER_DIR],
+        "pd": [ATBU_PERSIST_TYPE_PER_DIR],
+        "per-both": [ATBU_PERSIST_TYPE_PER_FILE, ATBU_PERSIST_TYPE_PER_DIR],
+        "pb": [ATBU_PERSIST_TYPE_PER_FILE, ATBU_PERSIST_TYPE_PER_DIR],
+    }
+    # pylint: disable=redefined-outer-name
+    def __init__(self, option_strings, dest, nargs=None, **kwargs):
+        if nargs is not None and nargs != 0:
+            raise ValueError("nargs not allowed")
+        super().__init__(option_strings, dest, nargs=nargs, **kwargs)
+    def __call__(self, parser, namespace, values, option_string=None):
+        persist_type = PerDirFileAction.per_arg_to_persist_types.get(option_string.lstrip("-"))
+        if persist_type is None:
+            raise ValueError(
+                f"Expecting option_string to be one of: {PerDirFileAction.per_arg_to_persist_types}"
+            )
+        PerDirFileAction.current_persist_type = persist_type
+        setattr(namespace, self.dest, values)
+
+
+class LocationAction(argparse.Action):
+    """Handle persist tooling location options.
+    Generally, this action requires at least one "--per-*" option (perist type) to be specified
+    prior to any locations. If the PerDirFileAction.current_persist_type is None, this action
+    will fail to accept a location.
+
+    Locations are placed in a list, namespace.<dest>, which contains a tuple for each location
+    in the format (<persist_type>,<location>).
+    """
+    # pylint: disable=redefined-outer-name
+    def __init__(self, option_strings, dest, nargs=None, **kwargs):
+        super().__init__(option_strings, dest, nargs=nargs, **kwargs)
+    def __call__(self, parser, namespace, values, option_string=None):
+        if PerDirFileAction.current_persist_type is None:
+            raise argparse.ArgumentError(
+                None,
+                f"One of --pf, --per-file, --pd, or --per-dir "
+                f"must be specified before {option_string}."
+            )
+        if not isinstance(values, list) or len(values) != 1:
+            # argparse should catch this so this catches breaking or unexpected code changes.
+            raise argparse.ArgumentError(
+                None,
+                f"Only one location can be specified using the {option_string} option."
+            )
+        if not hasattr(namespace, self.dest) or getattr(namespace, self.dest) is None:
+            setattr(namespace, self.dest, [])
+        locations: list[str] = getattr(namespace, self.dest)
+        max_allowed = 1 if self.nargs is None else self.nargs
+        try:
+            max_allowed = int(max_allowed)
+            if len(locations) >= max_allowed:
+                raise argparse.ArgumentError(None, f"The {option_string} option can only be specified {max_allowed} time(s).")
+        except ValueError:
+            # No limit on number of locations (i.e., nargs="+").
+            pass
+        locations.append((PerDirFileAction.current_persist_type, values[0]))
+
+
 #
 # Common help strings used by argparse configuration further below.
 #
@@ -1361,7 +1428,7 @@ is performed for any files with a matching digest (precise match).
 
 The command for this arrange operation might be:
 
-    {ATBU_PROGRAM_NAME} arrange pf: c:\SourceDIr d:\OrigMirrorDir d:\NewMirrorDir -u d:\undofile.json
+    {ATBU_PROGRAM_NAME} arrange --pf -t c:\SourceDir -s d:\OrigMirrorDir -d d:\NewMirrorDir -u d:\undofile.json
 
 Note, specifying an undofile or the --no-undo is required. An undo log file is not currently
 used by this tool for undo, but eventually will be. At this time, though, it acts as a log of what
@@ -1395,38 +1462,72 @@ d:\NewMirrorDir matching a relative location for the same item within c:\SoureDi
 item in c:\SourceDir matches date, size, digest exactly with the d:\OrigMirrorDir item. Note, if the
 date, size, digest match, but the name differs, the renamed item takes on the name of the item in
 c:\SourceDir, so perhaps this renaming could be considered the most volatile aspsect of arranging.
+
+Hint: Create digests separately from the arrange command by using atbu update-digests. For example,
+for large media items, it may be advantageous to use '--per-file' .atbu files. It can take a while
+to generate .atbu files and related digests for a large amount of data. To create these in advance,
+separate from the arrange operation, use 'atbu update-digests'. If you do not create digests
+in advance, the first thing the 'arrange' command will do is implicitly run update-digests.
 """,
         parents=[parser_common, common_update_stale, common_change_detection_type],
     )
     parser_arrange.add_argument(
-        "locations",
-        metavar="[per-file:|pf:|per-dir:|pd:|per-both:|pb:] <template_root> [pf:|pd:|pb:] <target_source_root> [pf:|pd:|pb:] <target_dest_root>",
-        nargs="+",
-        type=str,
-        help=f"""You must specify 3 root path locations: template root, target source, and target destination.
-The target source and destination must be on the same drive, where the arrange command is for
-rearranging (moving) files on that drive (from source to dest) based on the template root structure.
+        "--per-dir", "--pd",
+        nargs=0,
+        action=PerDirFileAction,
+        help=f"""
+Specify this option before a location that should use per-directory persistence. For example,
+specify the following to use per-dir for all directories:
+    {ATBU_PROGRAM_NAME} arrange --pd -t C:\\MyTemplate -s D:\\MySource -d D:\\MyDest -u .\\undo-file.json
+"""
+    )
+    parser_arrange.add_argument(
+        "--per-file", "--pf",
+        nargs=0,
+        action=PerDirFileAction,
+        help=f"""
+Specify this option before a location that should use per-file persistence. For example,
+specify the following to use per-file for all directories:
+    {ATBU_PROGRAM_NAME} arrange --pf -t C:\\MyTemplate -s D:\\MySource -d D:\\MyDest -u .\\undo-file.json
+"""
+    )
+    parser_arrange.add_argument(
+        "-t", "--template-dir", "--td",
+        action=LocationAction,
+        nargs=1,
+        required=True,
+        help=f"""The template directory of an arrange operation.
 
-You can specify a database type for each location by using the appropriate per-file, per-dir,
-or per-both setting prior to the location(s) it applies to. For large media files, or even
-otherwise, it is recommended to use per-file even though it's no the default because it
-creates sidecar files. The per-dir approach is currently for one-off operations or where
-sidecar files are undesired. Generally, for large media management with sidecar .atbu files,
-specify 'pf:' before the first location.
+The following is a template directory that uses "per-file" .atbu files which will be generated
+when using update-digests or by arrange if they do not already exist:
 
-The arrange command will use the template root path to arrange (move) files within the target
-source to the target destination, where the placement within the target destination will match
-the template root's arrangement for any files available and matching within the target source.
+    {ATBU_PROGRAM_NAME} arrange --pf -t C:\\MyTemplate -s D:\\MySource -d D:\\MyDest -u .\\undo-file.json
+""",
+    )
+    parser_arrange.add_argument(
+        "-s", "--source-dir", "--sd",
+        action=LocationAction,
+        nargs=1,
+        required=True,
+        help=f"""The target drive source directory (aka target source dir) of an arrange operation.
 
-Example: C:\\root\\a\\file1.txt is manually mirrored to D:\\root\\a\\file1.txt, where file1.txt on C:
-is moved to C:\\root\\b\\file1.txt while D: is offline. Their structures are now out of sync.
-When D: is brought back online (reconnected via USB or whatever), its desired to arrange D: to
-match structural changes to C: as best as possible, including renames which move and do not move
-the folder location of a file. Using arrange with template C:\\root, target source D:\\root, and
-target destination D:\\rootnew, results in a best-effort to move files from D:\\root to D:\\rootnew
-while using C:\\root as a template for the desired names/structure. In this example case, arrange
-results in D:\\root\\a\\file1.txt being moved to D:\\rootnew\\b\\file1.txt. After such a rearrangement,
-normal copy-style manual mirroring can resume.
+The following is a target source directory that uses "per-file" .atbu files which will be generated
+when using update-digests or by arrange if they do not already exist:
+
+    {ATBU_PROGRAM_NAME} arrange --pf -t C:\\MyTemplate -s D:\\MySource -d D:\\MyDest -u .\\undo-file.json
+""",
+    )
+    parser_arrange.add_argument(
+        "-d", "--destination-dir", "--dd",
+        action=LocationAction,
+        nargs=1,
+        required=True,
+        help=f"""The target drive destination directory (aka target destination dir) of an arrange operation.
+
+The following is a target destination directory that uses "per-file" .atbu files which will
+be generated when using update-digests or by arrange if they do not already exist:
+
+    {ATBU_PROGRAM_NAME} arrange --pf -t C:\\MyTemplate -s D:\\MySource -d D:\\MyDest -u .\\undo-file.json
 """,
     )
     parser_arrange.add_argument(
