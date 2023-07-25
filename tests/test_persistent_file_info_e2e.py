@@ -560,14 +560,15 @@ def create_layout1(
 def create_layout1_with_config_files(
     persist_types: list[str], tmp_path: Path, pytester: Pytester
 ):
-    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
     locA_path, locA_specific_layout, locB_path, locB_specific_layout = create_layout1(
         persist_types=persist_types,
         tmp_path=tmp_path,
     )
     argv = [
         "update-digests",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--locations",
         str(locA_path),
         str(locB_path),
     ]
@@ -594,7 +595,7 @@ def update_digests(
     tmp_path: Path,
     pytester: Pytester,
 ):
-    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
 
     if is_digest_change_detection:
         # The default is date/time and size changes (faster), but
@@ -603,13 +604,15 @@ def update_digests(
             "update-digests",
             "--change-detection-type",
             "digest",
-            f"{persist_type_prefix}:",
+            f"--{persist_type_option}",
+            "--locations",
             location,
         ]
     else:
         argv = [
             "update-digests",
-            f"{persist_type_prefix}:",
+            f"--{persist_type_option}",
+            "--locations",
             location,
         ]
 
@@ -690,12 +693,14 @@ def test_diff(
         pytester=pytester,
     )
 
-    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
 
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--location-a",
         str(locA_path),
+        "--location-b",
         str(locB_path),
     ]
     rr = run_atbu(
@@ -716,8 +721,10 @@ def test_diff(
     caplog.clear()
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--location-a",
         str(locA_path),
+        "--location-b",
         str(locB_path),
         "--loglevel",
         "DEBUG",
@@ -748,7 +755,7 @@ def test_diff_with_deleted_files(
     caplog: LogCaptureFixture,
     pytester: Pytester,
 ):
-    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
 
     (
         locA_path,
@@ -761,8 +768,10 @@ def test_diff_with_deleted_files(
 
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--la",
         str(locA_path),
+        "--lb",
         str(locB_path),
     ]
     rr = run_atbu(
@@ -802,8 +811,10 @@ def test_diff_with_deleted_files(
     caplog.clear()
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--location-a",
         str(locA_path),
+        "--location-b",
         str(locB_path),
         "--loglevel",
         "DEBUG",
@@ -845,8 +856,10 @@ def test_diff_with_deleted_files(
     caplog.clear()
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--location-a",
         str(locA_path),
+        "--location-b",
         str(locB_path),
         "--loglevel",
         "DEBUG",
@@ -896,8 +909,10 @@ def test_diff_with_deleted_files(
     caplog.clear()
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--location-a",
         str(locA_path),
+        "--location-b",
         str(locB_path),
         "--loglevel",
         "DEBUG",
@@ -954,8 +969,10 @@ def test_diff_with_deleted_files(
     caplog.clear()
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--la",
         str(locA_path),
+        "--lb",
         str(locB_path),
         "--loglevel",
         "DEBUG",
@@ -985,7 +1002,7 @@ def test_diff_bit_rot(
     caplog: LogCaptureFixture,
     pytester: Pytester,
 ):
-    persist_type_prefix = get_persist_type_option(persist_types=persist_types)
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
 
     (
         locA_path,
@@ -998,8 +1015,10 @@ def test_diff_bit_rot(
 
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--location-a",
         str(locA_path),
+        "--lb",
         str(locB_path),
     ]
     rr = run_atbu(
@@ -1049,8 +1068,10 @@ def test_diff_bit_rot(
     caplog.clear()
     argv = [
         "diff",
-        f"{persist_type_prefix}:",
+        f"--{persist_type_option}",
+        "--la",
         str(locA_path),
+        "--location-b",
         str(locB_path),
         "--loglevel",
         "DEBUG",

@@ -196,25 +196,27 @@ class LocationAction(argparse.Action):
                 f"One of --pf, --per-file, --pd, or --per-dir "
                 f"must be specified before {option_string}."
             )
-        if not isinstance(values, list) or len(values) != 1:
-            # argparse should catch this so this catches breaking or unexpected code changes.
-            raise argparse.ArgumentError(
-                None,
-                f"Only one location can be specified using the {option_string} option."
-            )
+        if not isinstance(values, list):
+            raise TypeError(f"expecting values to be a list.")
         if not hasattr(namespace, self.dest) or getattr(namespace, self.dest) is None:
             setattr(namespace, self.dest, [])
         locations: list[str] = getattr(namespace, self.dest)
         max_allowed = 1 if self.nargs is None else self.nargs
-        try:
-            max_allowed = int(max_allowed)
-            if len(locations) >= max_allowed:
-                raise argparse.ArgumentError(None, f"The {option_string} option can only be specified {max_allowed} time(s).")
-        except ValueError:
-            # No limit on number of locations (i.e., nargs="+").
-            pass
-        locations.append((PerDirFileAction.current_persist_type, values[0]))
-
+        total_after_appending = len(locations) + len(values)
+        if (
+            max_allowed in [argparse.ZERO_OR_MORE, argparse.ONE_OR_MORE]
+            or total_after_appending <= max_allowed
+        ):
+            for value in values:
+                locations.append((PerDirFileAction.current_persist_type, value))
+        else:
+            raise argparse.ArgumentError(
+                argument=self,
+                message=(
+                    f"The {option_string} option can only be specified {max_allowed} "
+                    f"time{'' if max_allowed == 1 else 's'}."
+                )
+            )
 
 #
 # Common help strings used by argparse configuration further below.
@@ -1257,12 +1259,35 @@ default is what you want because it updates stale information when a
 change is detected as determined by --change-detection-type.""",
     )
 
+    common_persistence_type_options = argparse.ArgumentParser(add_help=False)
+    common_persistence_type_options.add_argument(
+        "--per-dir", "--pd",
+        nargs=0,
+        action=PerDirFileAction,
+        help=f"""
+Specify this option before a location that should use per-directory persistence. For example,
+specify the following to use per-dir for all directories:
+    {ATBU_PROGRAM_NAME} arrange --pd <...location options...>
+"""
+    )
+    common_persistence_type_options.add_argument(
+        "--per-file", "--pf",
+        nargs=0,
+        action=PerDirFileAction,
+        help=f"""
+Specify this option before a location that should use per-file persistence. For example,
+specify the following to use per-file for all directories:
+    {ATBU_PROGRAM_NAME} arrange --pf <...location options...>
+"""
+    )
+
+
     #
     # Update digests subparser.
     #
     parser_update_digests = subparsers.add_parser(
         "update-digests",
-        parents=[common_change_detection_type, parser_common],
+        parents=[parser_common, common_change_detection_type, common_persistence_type_options],
         formatter_class=argparse.RawTextHelpFormatter,
         help="Update persistent file information in the specified directories.",
         description=f"""
@@ -1276,14 +1301,16 @@ creates a single database at the root of the specified location.
 """,
     )
     parser_update_digests.add_argument(
-        "locations",
-        metavar="[per-file:|pf:|per-dir:|pd:|per-both:|pb:]|<location>",
+        "-l", "--locations",
+        action=LocationAction,
         nargs="+",
-        type=str,
-        help=f"""One or more local file system directories whose persistent information to update,
-each optionally prefixed with the desired file info persistence to use (default is per-dir).
-Note, there is a space after per-file:, per-dir:, and any location. For example,
-'per-file: c:\\SomeLocationThatShouldUsePerFile'.
+        required=True,
+        help=f"""
+One or more local file system directories whose persistent information to update. Before
+specifying any locations, either --per-file or --per-dir must be specified. For example,
+
+    {ATBU_PROGRAM_NAME} update-digests --per-file --locations c:\\SomeLocationThatShouldUsePerFile'
+
 """,
     )
     parser_update_digests.set_defaults(func=handle_update_digests)
@@ -1300,17 +1327,34 @@ location A or B can be a directory or a persistent file information database. Th
 result of A less B, meaning files A that are not in B. Optionally, you can choose to have an action
 of removing or moving discovered duplicates.
 """,
-        parents=[parser_common, common_update_stale, common_change_detection_type],
+        parents=[parser_common, common_update_stale, common_change_detection_type, common_persistence_type_options],
     )
     parser_diff.add_argument(
-        "locations",
-        metavar="[per-file:|pf:|per-dir:|pd:|per-both:|pb:]|<location>",
-        nargs="+",
-        type=str,
-        help=f"""You must specify this twice, once each for location A and B, optionally prefixing
-either with the desired file info persistence to use (default is per-dir).
-Note, there is a space after per-file:, per-dir:, and any location. For example,
-'per-file: c:\\SomeLocationThatIsUsingPerFile'.
+        "--location-a", "--la",
+        action=LocationAction,
+        nargs=1,
+        required=True,
+        help=f"""This is Location A or the "left side" of a diff operation. One of --per-file or --per-dir must be used
+prior to specifying any locations.
+
+The following diff uses per-file persistence for both locations A and B...
+
+    {ATBU_PROGRAM_NAME} diff --per-file --la c:\\LocationA --lb c:\\LocationB
+
+""",
+    )
+    parser_diff.add_argument(
+        "--location-b", "--lb",
+        action=LocationAction,
+        nargs=1,
+        required=True,
+        help=f"""This is Location B or the "right side" of a diff operation. One of --per-file or --per-dir must be used
+prior to specifying any locations.
+
+The following diff uses per-file persistence for both locations A and B...
+
+    {ATBU_PROGRAM_NAME} diff --per-file --la c:\\LocationA --lb c:\\LocationB
+
 """,
     )
     parser_diff.add_argument(
@@ -1359,17 +1403,26 @@ path even if not changed since the last update. Details are always output when u
 using -v or -vv will slow down the command considerably for large directories.
 
 """,
-        parents=[parser_common, common_update_stale, common_change_detection_type],
+        parents=[
+            parser_common,
+            common_update_stale,
+            common_change_detection_type,
+            common_persistence_type_options
+        ],
     )
     parser_savedb.add_argument(
-        "locations",
-        metavar="[per-file:|pf:|per-dir:|pd:|per-both:|pb:]|<location>",
+        "-l", "--locations",
+        action=LocationAction,
         nargs="+",
-        help=f"""The locations whose persistent file information should be placed into a newly
-saved database .json file. Optionally prefix any location with the desired
-file info persistence to use (default is per-dir). Note, there is a space after
-per-file:, per-dir:, and any location. For example,
-    'per-file: c:\\SomeLocationThatShouldUsePerFile'.
+        required=True,
+        help=f"""The locations whose persistent file information should be placed into a newly saved database .json file.
+Before any location is specified, at least one of --per-file or --per-dir must be specified first
+in order to indicate the same of persistence information should be read from the locations.
+
+The following saves a database using per-file information within c:\\LocA...
+
+    {ATBU_PROGRAM_NAME} update-digests --per-file --locations c:\\LocA' --db .\mydb.json
+
 """,
     )
     parser_savedb.add_argument(

@@ -20,7 +20,7 @@ import logging
 from ..backup.exception import *
 from ..backup.constants import *
 from .file_info import SneakyCorruptionPotential
-from .database import FileInformationDatabaseCollection, extract_location_info
+from .database import FileInformationDatabaseCollection
 
 
 def handle_update_digests(args):
@@ -28,11 +28,7 @@ def handle_update_digests(args):
     if args.locations is None:
         raise ValueError("You must specify one or more locations.")
     logging.debug(f"locations={args.locations}")
-    location_persist_type_list = extract_location_info(
-        arguments=args.locations,
-        min_required=1,
-        max_allowed=None,
-    )
+    location_list = args.locations
     total_files = 0
     total_files_created = 0
     total_files_updated = 0
@@ -40,9 +36,10 @@ def handle_update_digests(args):
     total_files_skipped = 0
     sneaky_corruption_potentials: list[SneakyCorruptionPotential] = []
     try:
-        for loc_persist_type in location_persist_type_list:
-            location = loc_persist_type[0]
-            persist_types = loc_persist_type[1]
+        location_info: tuple[list[str], str]
+        for location_info in location_list:
+            persist_types = location_info[0]
+            location = location_info[1]
             if not os.path.exists(location):
                 raise FileNotFoundError(f"Directory does not exist: {location}")
             logging.info(

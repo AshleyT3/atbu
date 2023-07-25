@@ -43,7 +43,6 @@ from .file_info import (
 )
 from .database import (
     FileInformationDatabaseCollection,
-    extract_location_info,
     flatten_location_info_to_path_sorted_list,
 )
 

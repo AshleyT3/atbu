@@ -428,59 +428,6 @@ class FileInformationDatabaseCollection:
         return updater
 
 
-def extract_location_info(
-    arguments: list[str], min_required: int, max_allowed: int, must_exist: bool = True,
-) -> list[tuple[str, str]]:
-    """Helper function to process location arguments captured by argparse."""
-    per_arg_to_persist_types = {
-        "per-file:": [ATBU_PERSIST_TYPE_PER_FILE],
-        "pf:": [ATBU_PERSIST_TYPE_PER_FILE],
-        "per-dir:": [ATBU_PERSIST_TYPE_PER_DIR],
-        "pd:": [ATBU_PERSIST_TYPE_PER_DIR],
-        "per-both:": [ATBU_PERSIST_TYPE_PER_FILE, ATBU_PERSIST_TYPE_PER_DIR],
-        "pb:": [ATBU_PERSIST_TYPE_PER_FILE, ATBU_PERSIST_TYPE_PER_DIR],
-    }
-    current_persist_types = [ATBU_PERSIST_TYPE_PER_DIR]
-    locations = []
-    for loc in arguments:
-        orig_loc = loc
-        if max_allowed is not None and len(locations) >= max_allowed:
-            raise InvalidCommandLineArgument(
-                f"You have already specified {len(locations)} locations. "
-                f"The argument '{loc}' is invalid."
-            )
-        if loc in per_arg_to_persist_types:
-            current_persist_types = per_arg_to_persist_types[loc]
-            continue
-        if len(loc) == 0:
-            raise InvalidCommandLineArgument(
-                f"Invalid argument '{orig_loc}'. Expected a directory but got '{loc}'"
-            )
-        loc = os.path.abspath(loc)
-        if must_exist and not os.path.exists(loc):
-            raise InvalidCommandLineArgument(
-                f"The specified location does not exist: {loc}"
-            )
-        locations.append(
-            (
-                loc,
-                current_persist_types if not os.path.isfile(loc) else [ATBU_PERSIST_TYPE_PER_DIR],
-            )
-        )
-    if len(locations) < min_required:
-        raise InvalidCommandLineArgument(
-            f"You have only specified '{len(locations)}' "
-            f"which is less than the {min_required} required."
-        )
-    if max_allowed is not None and len(locations) > max_allowed:
-        # Given above checks, this should never occur.
-        raise InvalidCommandLineArgument(
-            f"You specified {len(locations)} locations which "
-            f"is more than the {max_allowed} allowed."
-        )
-    return locations
-
-
 @dataclass
 class LocationSummaryItem:
     location: str
@@ -514,10 +461,7 @@ def handle_savedb(args):
     if args.locations is None:
         raise InvalidCommandLineArgument("You must specify one or more locations.")
     logging.debug(f"locations={args.locations}")
-    location_persist_types = extract_location_info(
-        args.locations, min_required=1, max_allowed=None
-    )
-
+    location_list = args.locations
     if not hasattr(args, "database"):
         raise InvalidCommandLineArgument(
             "The --database location has not been specified."
@@ -544,9 +488,11 @@ def handle_savedb(args):
     )
     all_locations_info_skipped = []
     location_summary = []
-    for lp in location_persist_types:
-        location = lp[0]
-        persist_types = lp[1]
+
+    persist_location_info: tuple[list[str], str]
+    for persist_location_info in location_list:
+        persist_types = persist_location_info[0]
+        location = persist_location_info[1]
         if not os.path.exists(location):
             raise FileNotFoundError(f"Directory does not exist: {location}")
 

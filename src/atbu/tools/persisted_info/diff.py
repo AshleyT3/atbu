@@ -32,7 +32,6 @@ from ..backup.exception import *
 from ..backup.global_hasher import GlobalHasherDefinitions
 from .database import (
     FileInformationDatabaseCollection,
-    extract_location_info,
 )
 from .file_info import (
     CHANGE_DETECTION_TYPE_DATESIZE,
@@ -577,11 +576,10 @@ def diff_locations(
 
 
 def handle_diff(args):
-    locations = extract_location_info(args.locations, min_required=2, max_allowed=2)
-    locationA = locations[0][0]
-    locationA_persist_types = locations[0][1]
-    locationB = locations[1][0]
-    locationB_persist_types = locations[1][1]
+    locationA_persist_types = args.location_a[0][0]
+    locationA = args.location_a[0][1]
+    locationB_persist_types = args.location_b[0][0]
+    locationB = args.location_b[0][1]
 
     locationA_DBs = FileInformationDatabaseCollection(
         source_path=locationA, persist_types=locationA_persist_types
