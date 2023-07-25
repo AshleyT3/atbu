@@ -29,6 +29,10 @@ from atbu.common.util_helpers import (
     rel_path,
     get_subdir_distance,
 )
+from atbu.common.multi_json_enc_dec import (
+    create_dataclass_json_encoder,
+    create_dataclass_json_decoder,
+)
 
 from ..backup.exception import *
 from ..backup.constants import ATBU_PERSISTENT_INFO_EXTENSION
@@ -82,25 +86,13 @@ class _ArrangeUndoInfo:
     is_move_successful: bool
     error_msg: str
 
-    def to_serialization_dict(self) -> dict:
-        d = {
-            "_type": "_ArrangeUndoInfo",
-            "source_full_path": self.source_full_path,
-            "dest_full_path": self.dest_full_path,
-            "is_move_successful": self.is_move_successful,
-            "error_msg": self.error_msg,
-        }
-        return d
-
     @staticmethod
     def get_json_encoder() -> json.JSONEncoder:
-        class ArrangeUndoInfoEncoder(json.JSONEncoder):
-            def default(self, o):
-                if isinstance(o, _ArrangeUndoInfo):
-                    return o.to_serialization_dict()
-                return json.JSONEncoder.default(self, o)
+        return create_dataclass_json_encoder(data_cls=__class__, is_strict=True)
 
-        return ArrangeUndoInfoEncoder
+    @staticmethod
+    def get_json_decoder() -> json.JSONDecoder:
+        return create_dataclass_json_decoder(data_cls=__class__, is_strict=True)
 
 
 class _PathMatchType(Enum):
