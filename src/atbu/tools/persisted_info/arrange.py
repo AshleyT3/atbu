@@ -625,7 +625,7 @@ def arrange_target(
                 successful_move_count += 1
                 arrange_undo_info.append(
                     _ArrangeUndoInfo(
-                        source_full_path=arrange_oper_info.target_source_fi.path,
+                        source_full_path=arrange_oper_info.target_source_full_path,
                         dest_full_path=arrange_oper_info.target_dest_full_path,
                         is_move_successful=True,
                         error_msg=None if not is_dryrun else "<dryrun>",
@@ -732,6 +732,119 @@ def arrange_target(
 
     logging.info(f"Arrange complete.")
 
+
+def handle_arrange_undo(args):
+    is_dryrun=args.whatif
+    with open(file=args.undofile, mode="rt", encoding="utf-8") as undofile:
+        undofile_contents = undofile.read()
+    undo_operation_list: list[_ArrangeUndoInfo] = json.loads(
+        s=undofile_contents,
+        cls=_ArrangeUndoInfo.get_json_decoder()
+    )
+    source_never_moved_count = 0
+    dest_does_not_exist_count = 0
+    source_exists_count = 0
+    successful_undo_count = 0
+    failed_undo_count = 0
+    undo_operation: _ArrangeUndoInfo
+    for undo_operation in undo_operation_list:
+        if not undo_operation.is_move_successful:
+            source_never_moved_count += 1
+            error_message = "unknown"
+            if undo_operation.error_msg is not None:
+                error_message = undo_operation.error_msg
+            logging.warning(
+                f"Skipping item 'arrange' never moved: "
+                f"orig source={undo_operation.source_full_path} "
+                f"orig dest={undo_operation.dest_full_path} "
+                f"reason never moved={undo_operation.error_msg}"
+            )
+            continue
+        if not os.path.isfile(undo_operation.dest_full_path):
+            dest_does_not_exist_count += 1
+            logging.error(
+                f"Skipping item, move destination (undo source) not found: "
+                f"orig dest={undo_operation.dest_full_path} "
+                f"orig source={undo_operation.source_full_path}"
+            )
+            continue
+        if os.path.isfile(undo_operation.source_full_path):
+            source_exists_count += 1
+            logging.error(
+                f"Skipping item, original source (undo dest) file exists, will not overwrite: "
+                f"orig dest={undo_operation.dest_full_path} "
+                f"orig source={undo_operation.source_full_path}"
+            )
+            continue
+
+        #
+        # Try to undo (move back) the file...
+        #
+        try:
+            if os.path.exists(undo_operation.source_full_path):
+                # While os.renames will throw the same exception on destination file already
+                # existing, it is exlicity thrown here to simply avoid the call to os.renames.
+                raise FileExistsError(
+                    f"ERROR: The destination file already exists: "
+                    f"{undo_operation.source_full_path}"
+                )
+            if not is_dryrun:
+                os.renames(
+                    old=undo_operation.dest_full_path,
+                    new=undo_operation.source_full_path,
+                )
+            successful_undo_count += 1
+            logging.info(
+                f"Undo successful{' (dry run)' if is_dryrun else ''}: "
+                f"{undo_operation.dest_full_path}"
+                f" --> UNDO --> "
+                f"{undo_operation.source_full_path}"
+            )
+        except OSError as ex:
+            failed_undo_count += 1
+            if isinstance(ex, FileExistsError):
+                source_never_moved_count += 1
+            error_message = (
+                f"Undo failed{' (dry run)' if is_dryrun else ''}: "
+                f"{undo_operation.dest_full_path}"
+                f" --> UNDO --> "
+                f"{undo_operation.source_full_path}"
+                f"{exc_to_string(ex)}"
+            )
+            logging.error(error_message)
+
+    dryrun_str = "(--whatif) " if is_dryrun else " "
+    logging.info("--- Undo Summary Report ---")
+    logging.info(
+        f"{'Total undo operations considered ' + dryrun_str:.<75} "
+        f"{len(undo_operation_list)} (includes operations never originally completed due to error)"
+    )
+    logging.info(
+        f"{'Total successful undo operations ' + dryrun_str:.<75} "
+        f"{successful_undo_count} undo operations completed."
+    )
+    logging.info(
+        f"{'Count of source files arrange never moved ' + dryrun_str:.<75} "
+        f"{source_never_moved_count} skipped undo operations because 'arrange' had skipped these."
+    )
+    logging.info(
+        f"{'Count of nonexistent original destination (undo source) files ' + dryrun_str:.<75} "
+        f"{dest_does_not_exist_count} skipped undo operations."
+    )
+    logging.info(
+        f"{'Count of existing original source (undo destination) files ' + dryrun_str:.<75} "
+        f"{source_exists_count} skipped undo operations."
+    )
+    logging.info(
+        f"{'Total failed attempted undo operations ' + dryrun_str:.<75} "
+        f"{failed_undo_count} unexpectedly failed undo operations."
+    )
+    logging.info(
+        f"{'Undo file ' + dryrun_str:.<75} "
+        f"{args.undofile}"
+    )
+
+    logging.info(f"Undo complete.")
 
 def handle_arrange(args):
     global _verbosity_level

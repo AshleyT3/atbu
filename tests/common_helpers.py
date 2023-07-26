@@ -28,6 +28,7 @@ from pathlib import Path
 from random import randint
 import re
 import shutil
+from typing import Union
 
 # pylint: disable=unused-import,wrong-import-position
 from pytest import (
@@ -464,9 +465,19 @@ class DirInfo:
                     break
         return deleted, remaining
 
-    def gather_info(self, start_gathering_digests: bool = False):
+    def gather_info(
+        self,
+        start_gathering_digests: bool = False,
+        re_pattern_exclude: Union[str, re.Pattern] = None
+    ):
+        if isinstance(re_pattern_exclude, str):
+            re_pattern_exclude = re.compile(re_pattern_exclude)
+        if re_pattern_exclude is not None and not isinstance(re_pattern_exclude, re.Pattern):
+            raise TypeError(f"re_pattern_include must be either a string re pattern or an re pattern.")
         for p in glob.iglob(os.path.join(self.dir_path, "**"), recursive=True):
             if not os.path.isfile(p):
+                continue
+            if re_pattern_exclude is not None and re_pattern_exclude.match(p):
                 continue
             if self.process_exec is None:
                 self.process_exec = ProcessPoolExecutor()

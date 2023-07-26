@@ -45,11 +45,13 @@ from pytest import (
     ExitCode,
 )
 
+from atbu.common.util_helpers import is_platform_path_case_sensitive
 from atbu.tools.backup.global_hasher import GlobalHasherDefinitions
 from atbu.tools.backup.constants import (
     ATBU_PERSIST_TYPE_PER_BOTH,
     ATBU_PERSIST_TYPE_PER_DIR,
     ATBU_PERSIST_TYPE_PER_FILE,
+    ATBU_PERSISTENT_INFO_DB_EXTENSION,
 )
 from atbu.tools.persisted_info.file_info import (
     ATBU_PERSISTENT_INFO_EXTENSION,
@@ -64,6 +66,7 @@ from .common_helpers import (
     DirInfo,
     StaticTestValues,
     create_test_data_directory_default_levels,
+    directories_match_entirely_by_order,
     duplicate_tree,
     establish_random_seed,
     get_rel_path,
@@ -1089,27 +1092,20 @@ def test_diff_bit_rot(
     pass
 
 
-@pytest.mark.parametrize(
-    "persist_types",
-    persist_type_parameters,
-)
-def test_arrange_basic(
-    persist_types: list[str],
+def perform_validate_arrange_basic(
+    persist_type_option: str,
+    original_test_data_directory: Path,
+    current_template_root: Path,
+    outdated_target_source_root: Path,
+    outdated_target_source_root_orig: Path,
+    arranged_target_dest_root: Path,
+    arrange_undofile_path: Path,
     tmp_path: Path,
     caplog: LogCaptureFixture,
     pytester: Pytester,
+
 ):
-    establish_random_seed(tmp_path)  # bytes([0,1,2,3])
-
-    persist_type_option = get_persist_type_option(persist_types=persist_types)
     is_per_file = True if persist_type_option == ATBU_PERSIST_TYPE_PER_FILE else False
-
-    original_test_data_directory = tmp_path / "OriginalTestDataDir"
-    current_template_root = tmp_path / "TemplateRoot"
-    outdated_target_source_root = tmp_path / "TargetSourceRoot"
-    arranged_target_dest_root = tmp_path / "TargetDestRoot"
-    undofile_path = tmp_path / "UndoFiles"
-    undofile_path.mkdir(parents=True, exist_ok=False)
 
     initial_dir_size_defs = [
         StaticTestValues(values=list(range(64)), some_limit=2),
@@ -1128,6 +1124,11 @@ def test_arrange_basic(
     duplicate_tree(
         src_dir=current_template_root,
         dst_dir=outdated_target_source_root,
+    )
+
+    duplicate_tree(
+        src_dir=outdated_target_source_root,
+        dst_dir=outdated_target_source_root_orig,
     )
 
     with DirInfo(dir_path=current_template_root) as template_di:
@@ -1243,7 +1244,7 @@ def test_arrange_basic(
         "-d",
         str(arranged_target_dest_root),
         "--undofile",
-        str(undofile_path / "arrange1_undo.json"),
+        str(arrange_undofile_path),
         "--loglevel",
         "DEBUG",
     ]
@@ -1358,3 +1359,123 @@ def test_arrange_basic(
             else:
                 fail(f"Expected to validate all target destination files: {dest_rp}")
         pass  # pylint: disable=unnecessary-pass
+
+
+@pytest.mark.parametrize(
+    "persist_types",
+    persist_type_parameters,
+)
+def test_arrange_basic(
+    persist_types: list[str],
+    tmp_path: Path,
+    caplog: LogCaptureFixture,
+    pytester: Pytester,
+):
+    establish_random_seed(tmp_path)  # bytes([0,1,2,3])
+
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
+    is_per_file = True if persist_type_option == ATBU_PERSIST_TYPE_PER_FILE else False
+
+    original_test_data_directory = tmp_path / "OriginalTestDataDir"
+    current_template_root = tmp_path / "TemplateRoot"
+    outdated_target_source_root = tmp_path / "TargetSourceRoot"
+    outdated_target_source_root_orig = tmp_path / "TargetSourceRootOrig"
+    arranged_target_dest_root = tmp_path / "TargetDestRoot"
+    undofile_directory = tmp_path / "UndoFiles"
+    undofile_directory.mkdir(parents=True, exist_ok=False)
+    arrange1_undofile_path = undofile_directory / "arrange1_undo.json"
+
+    perform_validate_arrange_basic(
+        persist_type_option=persist_type_option,
+        original_test_data_directory=original_test_data_directory,
+        current_template_root=current_template_root,
+        outdated_target_source_root=outdated_target_source_root,
+        outdated_target_source_root_orig=outdated_target_source_root_orig,
+        arranged_target_dest_root=arranged_target_dest_root,
+        arrange_undofile_path=arrange1_undofile_path,
+        tmp_path=tmp_path,
+        caplog=caplog,
+        pytester=pytester,
+    )
+
+
+@pytest.mark.parametrize(
+    "persist_types",
+    persist_type_parameters,
+)
+def test_arrange_undo(
+    persist_types: list[str],
+    tmp_path: Path,
+    caplog: LogCaptureFixture,
+    pytester: Pytester,
+):
+    establish_random_seed(tmp_path)  # bytes([0,1,2,3])
+
+    persist_type_option = get_persist_type_option(persist_types=persist_types)
+    is_per_file = True if persist_type_option == ATBU_PERSIST_TYPE_PER_FILE else False
+
+    original_test_data_directory = tmp_path / "OriginalTestDataDir"
+    current_template_root = tmp_path / "TemplateRoot"
+    outdated_target_source_root = tmp_path / "TargetSourceRoot"
+    outdated_target_source_root_orig = tmp_path / "TargetSourceRootOrig"
+    arranged_target_dest_root = tmp_path / "TargetDestRoot"
+    undofile_directory = tmp_path / "UndoFiles"
+    undofile_directory.mkdir(parents=True, exist_ok=False)
+    arrange1_undofile_path = undofile_directory / "arrange1_undo.json"
+
+    perform_validate_arrange_basic(
+        persist_type_option=persist_type_option,
+        original_test_data_directory=original_test_data_directory,
+        current_template_root=current_template_root,
+        outdated_target_source_root=outdated_target_source_root,
+        outdated_target_source_root_orig=outdated_target_source_root_orig,
+        arranged_target_dest_root=arranged_target_dest_root,
+        arrange_undofile_path=arrange1_undofile_path,
+        tmp_path=tmp_path,
+        caplog=caplog,
+        pytester=pytester,
+    )
+
+    caplog.clear()
+    argv = [
+        "undo",
+        "--undofile",
+        str(arrange1_undofile_path),
+        "--loglevel",
+        "DEBUG",
+    ]
+    rr = run_atbu(
+        pytester,
+        tmp_path,
+        *argv,
+        log_base_name="undo_arrange1",
+    )
+    assert rr.ret == ExitCode.OK
+
+    with (
+        DirInfo(dir_path=outdated_target_source_root_orig) as target_source_orig,
+        DirInfo(dir_path=outdated_target_source_root) as target_source_undo,
+    ):
+        # For this test, .atbu and atbudb files are generated as part of the arrange command
+        # so are not part of the original target source content.
+        re_pat_exclude_atbu = re.compile(
+            pattern=(
+                rf".*("
+                rf"{re.escape(ATBU_PERSISTENT_INFO_EXTENSION)}|"
+                rf"{re.escape(ATBU_PERSISTENT_INFO_DB_EXTENSION)})$"
+            ),
+            flags=0 if is_platform_path_case_sensitive() else re.IGNORECASE
+        )
+        target_source_orig.gather_info(
+            start_gathering_digests=True,
+            re_pattern_exclude=re_pat_exclude_atbu,
+        )
+        target_source_undo.gather_info(
+            start_gathering_digests=True,
+            re_pattern_exclude=re_pat_exclude_atbu,
+        )
+        assert len(target_source_orig.file_list) == len(target_source_undo.file_list)
+        assert directories_match_entirely_by_order(
+            di1=target_source_orig, di2=target_source_undo
+        )
+    pass

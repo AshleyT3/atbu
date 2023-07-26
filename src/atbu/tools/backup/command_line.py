@@ -75,7 +75,7 @@ from ..persisted_info.file_info import (
 from ..persisted_info.update_digests import handle_update_digests
 from ..persisted_info.database import handle_savedb
 from ..persisted_info.diff import handle_diff, DIFF_COMMAND_CHOICES
-from ..persisted_info.arrange import handle_arrange
+from ..persisted_info.arrange import handle_arrange, handle_arrange_undo
 
 class AtbuRawTextHelpFormatter(argparse.RawTextHelpFormatter):
     """This class modifies RawTextHelpFormatter help text to insert
@@ -1616,6 +1616,37 @@ move operations will fail if the destination file already exists.""",
         help="Show how files would be arranged without actually arranging them.",
     )
     parser_arrange.set_defaults(func=handle_arrange)
+
+    #
+    # 'undo' subparser.
+    #
+    parser_undo = subparsers.add_parser(
+        "undo",
+        formatter_class=argparse.RawTextHelpFormatter,
+        help="Use an 'arrange' undo file to revert its move operations.",
+        description=rf"""The 'arrange' command can optionally produce an 'undo' file which contains a list of operations
+it performed. This 'undo' command can be used to revert (undo) the move operations. Example:
+
+    {ATBU_PROGRAM_NAME} undo -u .\MyUndoFile.json
+
+""",
+        parents=[parser_common],
+    )
+    parser_undo.add_argument(
+        "-u", "--undofile",
+        type=str,
+        required=True,
+        default=None,
+        help="""Path to an undo file created by the 'arrange' command.
+""",
+    )
+    parser_undo.add_argument(
+        "--whatif",
+        action="store_true",
+        default=False,
+        help="Show how 'arrange' move operations would be reverted without actually doing it.",
+    )
+    parser_undo.set_defaults(func=handle_arrange_undo)
 
     #############################################################################################
     #                specific help argparse setup (i.e., for atbu help <subject>                #
