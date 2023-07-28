@@ -153,7 +153,7 @@ class PerDirFileAction(argparse.Action):
     """Track the last specified 'per-*' option.
     The class variable PerDirFileAction.current_persist_type holds the last specified value.
     """
-    current_persist_type = None
+    current_persist_type: list[str] = None
     per_arg_to_persist_types = {
         "per-file": [ATBU_PERSIST_TYPE_PER_FILE],
         "pf": [ATBU_PERSIST_TYPE_PER_FILE],
@@ -208,7 +208,11 @@ class LocationAction(argparse.Action):
             or total_after_appending <= max_allowed
         ):
             for value in values:
-                locations.append((PerDirFileAction.current_persist_type, value))
+                if os.path.isfile(value):
+                    # When the location is a file, it is always a json db, force 'per-dir'.
+                    locations.append(([ATBU_PERSIST_TYPE_PER_DIR], value))
+                else:
+                    locations.append((PerDirFileAction.current_persist_type, value))
         else:
             raise argparse.ArgumentError(
                 argument=self,
