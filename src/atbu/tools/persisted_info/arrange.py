@@ -633,7 +633,7 @@ def arrange_target(
                 )
                 logging.info(
                     f"Move successful{' (dry run)' if is_dryrun else ''}: "
-                    f"{arrange_oper_info.target_source_fi.path}"
+                    f"{arrange_oper_info.target_source_full_path}"
                     f" --> "
                     f"{arrange_oper_info.target_dest_full_path}"
                 )
