@@ -71,11 +71,6 @@ class _ArrangeOperationInfo:
 class _FileInfoRelPathInfo:
     fi_list: list[FileInformationPersistent]
     fi: FileInformationPersistent
-    rel_path: str
-    rel_path_nc: str = field(init=False)
-
-    def __post_init__(self):
-        self.rel_path_nc = os.path.normcase(self.rel_path)
 
 
 @dataclass
@@ -197,14 +192,15 @@ class _ArrangeMatchFinder:
         targ_src_fi: FileInformationPersistent,
     ):
         # Mark target source for move to target dest using discovered template rel path.
+        template_rel_path, target_dest_full_path = self._get_dest_paths(
+            template_full_path=template_rpi.fi.path
+        )
         arrange_info = _ArrangeOperationInfo(
             template_fi=template_rpi.fi,
             target_source_fi=targ_src_fi,
             target_source_full_path=targ_src_fi.path,
-            target_dest_rel_path=template_rpi.rel_path,
-            target_dest_full_path=os.path.join(
-                self.target_dest_root, template_rpi.rel_path
-            ),
+            target_dest_rel_path=template_rel_path,
+            target_dest_full_path=target_dest_full_path,
         )
         self.arrange_oper_info_list.append(arrange_info)
 
@@ -218,18 +214,15 @@ class _ArrangeMatchFinder:
 
         if targ_src_fi.info_data_file_exists():
             # Add operation for sidecar .atbu file.
-            template_info_data_rel_path = rel_path(
-                top_level_dir=self.template_root,
-                path=template_rpi.fi.info_data_file_path,
+            template_info_data_rel_path, target_dest_info_data_full_path = self._get_dest_paths(
+                template_full_path=template_rpi.fi.info_data_file_path
             )
             arrange_info = _ArrangeOperationInfo(
                 template_fi=template_rpi.fi,
                 target_source_fi=targ_src_fi,
                 target_source_full_path=targ_src_fi.info_data_file_path,
                 target_dest_rel_path=template_info_data_rel_path,
-                target_dest_full_path=os.path.join(
-                    self.target_dest_root, template_info_data_rel_path
-                ),
+                target_dest_full_path=target_dest_info_data_full_path,
             )
             self.arrange_oper_info_list.append(arrange_info)
             logging.debug(
@@ -289,10 +282,7 @@ class _ArrangeMatchFinder:
                     )
                 continue
 
-            template_fi_rel_path = rel_path(
-                top_level_dir=self.template_root,
-                path=template_fi.path,
-            )
+            template_fi_rel_path = self._get_template_rel_path(template_full_path=template_fi.path)
             template_fi_rel_path_nc = os.path.normcase(template_fi_rel_path)
             template_fi_rel_dir_nc, template_fi_basename_nc = os.path.split(
                 template_fi_rel_path_nc
@@ -433,7 +423,6 @@ class _ArrangeMatchFinder:
             best_match_rpi = _FileInfoRelPathInfo(
                 fi_list=template_fi_list,
                 fi=template_fi,
-                rel_path=template_fi_rel_path,
             )
             if _is_verbose_debug_logging():
                 logging.debug(
@@ -527,7 +516,51 @@ class _ArrangeMatchFinder:
 
         return template_rpi_found
 
+    def _get_template_rel_path(self, template_full_path: str):
+        return rel_path(
+            top_level_dir=self.template_root,
+            path=template_full_path,
+        )
+
+    def _get_dest_paths(self, template_full_path: str) -> tuple[str, str]:
+        the_rel_path = self._get_template_rel_path(template_full_path)
+        the_full_path = os.path.join(self.target_dest_root, the_rel_path)
+        return the_rel_path, the_full_path
+
+    def _clean_template_info(self):
+        for digest, template_fi_list in self.template_info.items():
+            updated_template_fi_list: list[FileInformationPersistent] = []
+            for template_fi in template_fi_list:
+                _, target_dest_full_path = self._get_dest_paths(template_fi.path)
+                if os.path.exists(target_dest_full_path):
+                    logging.warning(
+                        f"Target destination already exists, ignoring template: "
+                        f"template={template_fi.path} "
+                        f"existing destination={target_dest_full_path} "
+                        f"digest={digest}"
+                    )
+                    # Prune template_fi from list.
+                    continue
+
+                _, target_dest_info_data_full_path = self._get_dest_paths(
+                    template_fi.info_data_file_path
+                )
+                if os.path.exists(target_dest_info_data_full_path):
+                    logging.warning(
+                        f"Target destination info file already exists, ignoring template: "
+                        f"template={template_fi.info_data_file_path} "
+                        f"existing destination={target_dest_info_data_full_path} "
+                        f"digest={digest}"
+                    )
+                    # Prune template_fi from list.
+                    continue
+
+                # Move to destination possible, keep template_if.
+                updated_template_fi_list.append(template_fi)
+            template_fi_list[:] = updated_template_fi_list
+
     def find_target_all_matches(self):
+        self._clean_template_info()
         for match_characteristics in self._match_characteristics_list:
 
             if _is_verbose_debug_logging():
