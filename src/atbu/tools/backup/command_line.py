@@ -1385,7 +1385,7 @@ which there are duplicates in location B.""",
         help="Directory for destination when moving duplicates as part of diff.",
     )
     parser_diff.add_argument(
-        "--whatif",
+        "--dryrun",
         action="store_true",
         default=False,
         help="Show what files would be removed but do not actually remove them.",
@@ -1614,7 +1614,7 @@ place.
 move operations will fail if the destination file already exists.""",
     )
     parser_arrange.add_argument(
-        "--whatif",
+        "--dryrun",
         action="store_true",
         default=False,
         help="Show how files would be arranged without actually arranging them.",
@@ -1645,7 +1645,7 @@ it performed. This 'undo' command can be used to revert (undo) the move operatio
 """,
     )
     parser_undo.add_argument(
-        "--whatif",
+        "--dryrun",
         action="store_true",
         default=False,
         help="Show how 'arrange' move operations would be reverted without actually doing it.",

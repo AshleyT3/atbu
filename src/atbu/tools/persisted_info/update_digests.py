@@ -52,7 +52,7 @@ def handle_update_digests(args):
             updater = fi_dbc.update(
                 change_detection_type=args.change_detection_type,
                 update_stale=True,
-                whatif=False,
+                dryrun=False,
             )
             logging.info(f"{'Location ':.<45} {location}")
             logging.info(f"    {'Location total files ':.<45} {updater.total_files}")

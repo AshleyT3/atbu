@@ -720,7 +720,7 @@ def arrange_target(
             )
             undofile.close()
 
-    dryrun_str = "(--whatif) " if is_dryrun else " "
+    dryrun_str = "(--dryrun) " if is_dryrun else " "
 
     logging.info(
         f"{'Total target source files ' + dryrun_str:.<65} "
@@ -767,7 +767,7 @@ def arrange_target(
 
 
 def handle_arrange_undo(args):
-    is_dryrun=args.whatif
+    is_dryrun=args.dryrun
     with open(file=args.undofile, mode="rt", encoding="utf-8") as undofile:
         undofile_contents = undofile.read()
     undo_operation_list: list[_ArrangeUndoInfo] = json.loads(
@@ -846,7 +846,7 @@ def handle_arrange_undo(args):
             )
             logging.error(error_message)
 
-    dryrun_str = "(--whatif) " if is_dryrun else " "
+    dryrun_str = "(--dryrun) " if is_dryrun else " "
     logging.info("--- Undo Summary Report ---")
     logging.info(
         f"{'Total undo operations considered ' + dryrun_str:.<75} "
@@ -944,7 +944,7 @@ def handle_arrange(args):
     updaterA = loc_template_DBs.update(
         change_detection_type=args.change_detection_type,
         update_stale=args.update_stale,
-        whatif=args.whatif,
+        dryrun=args.dryrun,
     )
     loc_template_info = loc_template_DBs.get_dict_digest_to_fi()
     loc_template_info_skipped = updaterA.skipped_files
@@ -954,7 +954,7 @@ def handle_arrange(args):
     updaterB = loc_target_source_DBs.update(
         change_detection_type=args.change_detection_type,
         update_stale=args.update_stale,
-        whatif=args.whatif,
+        dryrun=args.dryrun,
     )
     loc_target_source_info = loc_target_source_DBs.get_dict_digest_to_fi()
     loc_target_source_skipped = updaterB.skipped_files
@@ -966,5 +966,5 @@ def handle_arrange(args):
         target_source_info=loc_target_source_info,
         target_dest_root=loc_target_dest_root,
         undo_file_path=args.undofile,
-        is_dryrun=args.whatif,
+        is_dryrun=args.dryrun,
     )

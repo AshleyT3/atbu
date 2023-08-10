@@ -282,7 +282,7 @@ class FileInformationDatabase:
         self,
         change_detection_type: str,
         update_stale: bool,
-        whatif: bool,
+        dryrun: bool,
     ) -> LocationFileInfoUpdater:
         self.load()
         # Show progress in sorted file path order.
@@ -292,7 +292,7 @@ class FileInformationDatabase:
             update_stale=update_stale,
             change_detection_type=change_detection_type,
             per_file_persistence=not self.persist_type == ATBU_PERSIST_TYPE_PER_DIR,
-            whatif=whatif,
+            dryrun=dryrun,
         )
         # Do not update for explicitly specified .json
         # file DBs because files are not necessarily online.
@@ -400,7 +400,7 @@ class FileInformationDatabaseCollection:
         self,
         change_detection_type: str,
         update_stale: bool,
-        whatif: bool,
+        dryrun: bool,
     ) -> LocationFileInfoUpdater:
         """Update the databases if needed. Returns the updater used for
         access to any stats.
@@ -409,7 +409,7 @@ class FileInformationDatabaseCollection:
         updater = primary_update_db.update(
             change_detection_type=change_detection_type,
             update_stale=update_stale,
-            whatif=whatif,
+            dryrun=dryrun,
         )
         if other_db is None:
             # There is no other db, just primary. If primary is per-file it
@@ -502,7 +502,7 @@ def handle_savedb(args):
         updater = location_DBs.update(
             change_detection_type=args.change_detection_type,
             update_stale=args.update_stale,
-            whatif=False,
+            dryrun=False,
         )
         location_info_found = location_DBs.get_dict_digest_to_fi()
         location_info_skipped = updater.skipped_files

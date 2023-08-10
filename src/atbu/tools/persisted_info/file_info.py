@@ -631,7 +631,7 @@ class LocationFileInfoUpdater:
         update_stale: bool,
         change_detection_type: str,
         per_file_persistence: bool = True,
-        whatif: bool = False,
+        dryrun: bool = False,
         hasher_defs: HasherDefinitions = None,
     ):
         if not isinstance(file_info_list, list):
@@ -644,8 +644,8 @@ class LocationFileInfoUpdater:
             raise ValueError(
                 "change_detection_type must be one of datesize, digest, force."
             )
-        self.whatif = whatif
-        self.whatif_str = "(--whatif) " if self.whatif else ""
+        self.dryrun = dryrun
+        self.dryrun_str = "(--dryrun) " if self.dryrun else ""
         self.file_info_list = file_info_list
         self.hasher_defs = hasher_defs
         self.update_stale = update_stale
@@ -691,8 +691,8 @@ class LocationFileInfoUpdater:
                     (file_info, f"The {ATBU_PERSISTENT_INFO_EXTENSION} info is missing")
                 )
                 return
-            logging.info(f"{self.whatif_str}Creating info for {file_info.path}...")
-            if not self.whatif:
+            logging.info(f"{self.dryrun_str}Creating info for {file_info.path}...")
+            if not self.dryrun:
                 file_info.refresh_info_from_phys_file(self.hasher_defs.create_hasher())
                 if self.per_file_persistence:
                     file_info.write_info_data_file()
@@ -704,8 +704,8 @@ class LocationFileInfoUpdater:
                     f"Cannot upgrade persistent file info because "
                     f"option to update not specified. {exc_to_string(ex)}"
                 ).with_traceback(ex.__traceback__) from ex
-            logging.info(f"{self.whatif_str}Creating info for {file_info.path}...")
-            if not self.whatif:
+            logging.info(f"{self.dryrun_str}Creating info for {file_info.path}...")
+            if not self.dryrun:
                 file_info.update_info_data_file_to_latest_version(
                     self.hasher_defs.create_hasher()
                 )
@@ -791,14 +791,14 @@ class LocationFileInfoUpdater:
                     f"File has changed, file info stale, skipping {file_info.path}."
                 )
                 return
-            logging.info(f"{self.whatif_str}Updating file info for {file_info.path}...")
-            if not self.whatif:
+            logging.info(f"{self.dryrun_str}Updating file info for {file_info.path}...")
+            if not self.dryrun:
                 file_info.refresh_info_from_phys_file(self.hasher_defs.create_hasher())
                 primary_digest = file_info.get_current_digest(self.primary_hasher_name)
                 if self.per_file_persistence:
                     file_info.write_info_data_file()
             some_updating_occurred = True
-            if file_info.is_modified_date_or_size_changed() and not self.whatif:
+            if file_info.is_modified_date_or_size_changed() and not self.dryrun:
                 self.skipped_files.append(
                     (
                         file_info,

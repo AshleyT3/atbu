@@ -49,10 +49,10 @@ DIFF_COMMAND_CHOICES = [
 
 def remove_empty_directorires(
     root_dir_paths: set[str],
-    whatif: bool,
+    dryrun: bool,
 ):
     """Remove empty directories within the specified root_dir_paths."""
-    whatif_str = "(what_if)" if whatif else ""
+    dryrun_str = "(what_if)" if dryrun else ""
     directory_removal_attempts = 3
     retry_directory_removal = True
     while directory_removal_attempts > 0 and retry_directory_removal:
@@ -62,11 +62,11 @@ def remove_empty_directorires(
         for directory_affected in root_dir_paths:
             if os.path.isdir(directory_affected):
                 try:
-                    if not whatif:
+                    if not dryrun:
                         if len(os.listdir(directory_affected)) == 0:
                             os.removedirs(directory_affected)
                     logging.info(
-                        f"Successfully removed{whatif_str} {directory_affected}"
+                        f"Successfully removed{dryrun_str} {directory_affected}"
                     )
                 except OSError:
                     retry_directory_removal = True
@@ -87,9 +87,9 @@ class FileInformationCommandBase:
         self,
         root_source_dir: str,
         file_info_to_affect: list[FileInformationPersistent],
-        whatif: bool = False,
+        dryrun: bool = False,
     ):
-        self.whatif = whatif
+        self.dryrun = dryrun
         if root_source_dir is None or not os.path.isdir(root_source_dir):
             raise LocationDoesNotExistException(
                 f"The location is not a directory: {root_source_dir}"
@@ -97,10 +97,10 @@ class FileInformationCommandBase:
         self.root_source_dir = root_source_dir
         self._file_info_to_affect = file_info_to_affect
         self.directories_affected = set()
-        if self.whatif:
-            self.whatif_str = "(--whatif) "
+        if self.dryrun:
+            self.dryrun_str = "(--dryrun) "
         else:
-            self.whatif_str = ""
+            self.dryrun_str = ""
         self.unique_files_affected = 0
         self.physical_files_total = 0
         self.physical_files_affected = 0
@@ -126,12 +126,12 @@ class MoveFileInformationCommand(FileInformationCommandBase):
         root_source_dir: str,
         file_info_to_affect: list[FileInformationPersistent],
         move_destination: str,
-        whatif: bool = False,
+        dryrun: bool = False,
     ):
         super().__init__(
             root_source_dir=root_source_dir,
             file_info_to_affect=file_info_to_affect,
-            whatif=whatif,
+            dryrun=dryrun,
         )
         if move_destination is None:
             raise ValueError(
@@ -169,7 +169,7 @@ class MoveFileInformationCommand(FileInformationCommandBase):
         file_info: FileInformationPersistent,
         root_source_dir: str,
         root_dest_dir: str,
-        whatif: bool,
+        dryrun: bool,
     ):
         """Move a file and its FileInformationPersistent from
         a source path to a destination path, retaining the same
@@ -186,17 +186,17 @@ class MoveFileInformationCommand(FileInformationCommandBase):
         if file_info.is_loaded_from_db:
             destination_config_file_path = None
         logging.info(
-            f"Moving{self.whatif_str} {file_info.path} "
+            f"Moving{self.dryrun_str} {file_info.path} "
             f"---to--> "
             f"{destination_file_path} digest={file_info.get_current_digest()}"
         )
-        if not whatif:
+        if not dryrun:
             os.makedirs(os.path.split(destination_file_path)[0], exist_ok=True)
             os.renames(file_info.path, destination_file_path)
             file_moved = True
             if not file_info.is_loaded_from_db:
                 logging.info(
-                    f"Moving{self.whatif_str} "
+                    f"Moving{self.dryrun_str} "
                     f"{file_info.info_data_file_path} "
                     f"---to--> "
                     f"{destination_config_file_path}"
@@ -225,14 +225,14 @@ class MoveFileInformationCommand(FileInformationCommandBase):
                 logging.info(f"Move successful.")
         else:
             logging.info(
-                f"Moving{self.whatif_str} "
+                f"Moving{self.dryrun_str} "
                 f"{file_info.path} "
                 f"---to--> "
                 f"{destination_file_path} "
                 f"digest={file_info.get_current_digest()}"
             )
             logging.info(
-                f"Moving{self.whatif_str} "
+                f"Moving{self.dryrun_str} "
                 f"{file_info.info_data_file_path} "
                 f"---to--> "
                 f"{destination_config_file_path}"
@@ -268,7 +268,7 @@ class MoveFileInformationCommand(FileInformationCommandBase):
                 file_info_to_process,
                 self.root_source_dir,
                 self.move_destination,
-                whatif=self.whatif,
+                dryrun=self.dryrun,
             )
             if is_file_moved:
                 self.directories_affected.add(file_info_to_process.dirname)
@@ -279,7 +279,7 @@ class MoveFileInformationCommand(FileInformationCommandBase):
         self.unique_files_affected += len(unique_file_counter_hash_set)
         remove_empty_directorires(
             root_dir_paths=self.directories_affected,
-            whatif=self.whatif,
+            dryrun=self.dryrun,
         )
         self.directories_removed = sum(
             [1 for rd in self.directories_affected if not os.path.isdir(rd)]
@@ -290,12 +290,12 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
         self,
         root_source_dir: str,
         file_info_to_affect: list[FileInformationPersistent],
-        whatif: bool = False,
+        dryrun: bool = False,
     ):
         super().__init__(
             root_source_dir=root_source_dir,
             file_info_to_affect=file_info_to_affect,
-            whatif=whatif,
+            dryrun=dryrun,
         )
 
     def _log_remove_error(
@@ -342,11 +342,11 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
         )
         if not is_remove_config:
             logging.info(
-                f"Removing{self.whatif_str} {path_to_remove} "
+                f"Removing{self.dryrun_str} {path_to_remove} "
                 f"digest={file_info_to_remove.primary_digest}"
             )
         else:
-            logging.info(f"Removing{self.whatif_str} {path_to_remove}")
+            logging.info(f"Removing{self.dryrun_str} {path_to_remove}")
 
         try:
             os.remove(path_to_remove)
@@ -383,7 +383,7 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
                 raise
 
     def _remove_file_and_file_info(
-        self, file_info_to_remove: FileInformationPersistent, whatif: bool
+        self, file_info_to_remove: FileInformationPersistent, dryrun: bool
     ) -> tuple[bool, bool]:
         file_removed = False
         config_file_removed = False
@@ -395,7 +395,7 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
                 f"Unexpected state: {ATBU_ACRONUM_U} configuration file note found: "
                 f"{file_info_to_remove.info_data_file_path}"
             )
-        if not whatif:
+        if not dryrun:
             # Remove main user data file.
             self._remove_file(
                 is_remove_config=False,
@@ -411,16 +411,16 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
                 )
                 config_file_removed = True
         else:
-            # For 'whatif' case, send feedback of successful removal if the file exists.
+            # For 'dryrun' case, send feedback of successful removal if the file exists.
             if os.path.isfile(file_info_to_remove.path):
                 logging.info(
-                    f"Removing{self.whatif_str} "
+                    f"Removing{self.dryrun_str} "
                     f"{file_info_to_remove.path} "
                     f"digest={file_info_to_remove.get_current_digest()}"
                 )
                 if not is_loaded_from_db:
                     logging.info(
-                        f"Removing{self.whatif_str} {file_info_to_remove.info_data_file_path}"
+                        f"Removing{self.dryrun_str} {file_info_to_remove.info_data_file_path}"
                     )
                     if get_verbosity_level() > 0:
                         logging.info(f"Remove successful.")
@@ -448,7 +448,7 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
             self.physical_files_total += 1
             is_file_removed, is_config_files_removed = self._remove_file_and_file_info(
                 file_info_to_remove=file_info_to_process,
-                whatif=self.whatif,
+                dryrun=self.dryrun,
             )
             if is_file_removed:
                 self.directories_affected.add(file_info_to_process.dirname)
@@ -459,7 +459,7 @@ class RemoveFileInformationCommand(FileInformationCommandBase):
         self.unique_files_affected += len(unique_file_counter_hash_set)
         self.directories_removed += remove_empty_directorires(
             root_dir_paths=self.directories_affected,
-            whatif=self.whatif,
+            dryrun=self.dryrun,
         )
 
 
@@ -594,7 +594,7 @@ def handle_diff(args):
     logging.info(f"{'Location B ':.<40} {locationB}")
     logging.info(f"{'Location B persist types ':.<40} {locationB_persist_types}")
 
-    whatif_str = " (--whatif)" if args.whatif else " "
+    dryrun_str = " (--dryrun)" if args.dryrun else " "
 
     post_diff_command = None
     command_line_action_str = None
@@ -611,7 +611,7 @@ def handle_diff(args):
             root_source_dir=locationA,
             file_info_to_affect=None,
             move_destination=args.move_destination,
-            whatif=args.whatif,
+            dryrun=args.dryrun,
         )
     elif command_line_action_str == "remove-duplicates":
         past_tense_verb = "removed"
@@ -624,7 +624,7 @@ def handle_diff(args):
         post_diff_command = RemoveFileInformationCommand(
             root_source_dir=locationA,
             file_info_to_affect=None,
-            whatif=args.whatif,
+            dryrun=args.dryrun,
         )
     elif command_line_action_str is None:
         pass
@@ -638,7 +638,7 @@ def handle_diff(args):
     updaterA = locationA_DBs.update(
         change_detection_type=args.change_detection_type,
         update_stale=args.update_stale,
-        whatif=args.whatif,
+        dryrun=args.dryrun,
     )
     locationA_info = locationA_DBs.get_dict_digest_to_fi()
     locationA_skipped = updaterA.skipped_files
@@ -648,7 +648,7 @@ def handle_diff(args):
     updaterB = locationB_DBs.update(
         change_detection_type=args.change_detection_type,
         update_stale=args.update_stale,
-        whatif=args.whatif,
+        dryrun=args.dryrun,
     )
     locationB_info = locationB_DBs.get_dict_digest_to_fi()
     locationB_skipped = updaterB.skipped_files
@@ -683,7 +683,7 @@ def handle_diff(args):
             post_diff_command.file_info_to_affect = locA_in_locB_flattened
             post_diff_command.perform_command()
 
-            if not args.whatif:
+            if not args.dryrun:
                 # After performing the command, update the DBs.
                 # Use CHANGE_DETECTION_TYPE_DATESIZE regardless of user
                 # choice because this update is merely to filter out
@@ -692,7 +692,7 @@ def handle_diff(args):
                 post_command_updaterA = locationA_DBs.update(
                     change_detection_type=CHANGE_DETECTION_TYPE_DATESIZE,
                     update_stale=args.update_stale,
-                    whatif=args.whatif,
+                    dryrun=args.dryrun,
                 )
                 if len(post_command_updaterA.skipped_files) > 0:
                     logging.warning(
@@ -760,23 +760,23 @@ def handle_diff(args):
         )
         if post_diff_command is not None:
             logging.info(f"Summary '{command_line_action_str}'...")
-            whatif_str = " (--whatif)" if post_diff_command.whatif else " "
-            past_tense_verb_whatif = f"{past_tense_verb}{whatif_str}"
+            dryrun_str = " (--dryrun)" if post_diff_command.dryrun else " "
+            past_tense_verb_dryrun = f"{past_tense_verb}{dryrun_str}"
             logging.info(
-                f"{'Total Location A unique files ' + past_tense_verb_whatif:.<65} "
+                f"{'Total Location A unique files ' + past_tense_verb_dryrun:.<65} "
                 f"{post_diff_command.unique_files_affected}"
             )
             logging.info(
-                f"{'Total Location A physical files ' + past_tense_verb_whatif:.<65} "
+                f"{'Total Location A physical files ' + past_tense_verb_dryrun:.<65} "
                 f"{post_diff_command.physical_files_affected}"
             )
             if locationA_DBs.has_per_file_persistence:
                 logging.info(
-                    f"{'Total Location A config files ' + past_tense_verb_whatif:.<65} "
+                    f"{'Total Location A config files ' + past_tense_verb_dryrun:.<65} "
                     f"{post_diff_command.config_files_affected}"
                 )
                 logging.info(
-                    f"{'Total Location A config files not ' + past_tense_verb_whatif:.<65} "
+                    f"{'Total Location A config files not ' + past_tense_verb_dryrun:.<65} "
                     f"{post_diff_command.config_files_total - post_diff_command.config_files_affected}"
                 )
             logging.info(
