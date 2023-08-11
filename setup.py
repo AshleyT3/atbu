@@ -21,7 +21,7 @@ import setuptools
 
 setuptools.setup(
     name="atbu-pkg",
-    version="0.0.34",
+    version="0.0.35",
     author="Ashley R. Thomas",
     author_email="ashley.r.thomas.701@gmail.com",
     description= (
