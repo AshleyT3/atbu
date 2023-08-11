@@ -127,13 +127,29 @@ BACKUP_PIPELINE_STAGE_BACKUP = 3
 
 
 def _is_debug_logging():
-    return logging.getLogger().getEffectiveLevel() >= logging.DEBUG
+    return logging.getLogger().getEffectiveLevel() <= logging.DEBUG
 
 
-def _is_very_verbose_logging():
-    return (
-        get_verbosity_level() >= 2
-        and logging.getLogger().getEffectiveLevel() >= logging.DEBUG
+def _is_logging_verbosity_at_level_or_more(required_level: int, required_verbosity: int) -> bool:
+    eff_level = logging.getLogger().getEffectiveLevel()
+    if eff_level > required_level:
+        return False
+    if eff_level == required_level and get_verbosity_level() < required_verbosity:
+        return False
+    return True
+
+
+def _is_very_verbose_debug_logging():
+    return _is_logging_verbosity_at_level_or_more(
+        required_level=logging.DEBUG,
+        required_verbosity=2,
+    )
+
+
+def _is_verbose_info_logging():
+    return _is_logging_verbosity_at_level_or_more(
+        required_level=logging.INFO,
+        required_verbosity=1,
     )
 
 
@@ -2113,9 +2129,10 @@ def file_operation_future_result(
             and file_info.exception is None
             and not wi.is_failed
         ):
-            logging.info(
-                f"{the_operation} not needed, unchanged: {file_info.path_for_logging}"
-            )
+            if _is_verbose_info_logging():
+                logging.info(
+                    f"{the_operation} not needed, unchanged: {file_info.path_for_logging}"
+                )
             return None
 
         if file_info.exception:
@@ -2269,7 +2286,7 @@ class GzipFileWrapper(gzip.GzipFile):
 
     def write(self, data):
         self.compressed_bytes += len(data)
-        if _is_very_verbose_logging():
+        if _is_very_verbose_debug_logging():
             logging.debug(
                 f"GzipFileWrapper: writing {len(data)} of data to compression: path={self.filename}"
             )
@@ -2416,7 +2433,7 @@ class CompressionPipelineStage(SubprocessPipelineStage):
                     b = input_file.read(read_size)
                     if len(b) == 0:
                         break
-                    if _is_very_verbose_logging():
+                    if _is_very_verbose_debug_logging():
                         logging.debug(
                             f"Sending {len(b)} bytes through compression to "
                             f"fileno={output_fileno}: path={fi.path}"
@@ -2991,7 +3008,8 @@ class Backup:
                     )
                     if not is_changed:
                         # For incremental, skip based on size/modified-based checks.
-                        logging.info(f"Skipping unchanged file: {file_info.path}")
+                        if _is_verbose_info_logging():
+                            logging.info(f"Skipping unchanged file: {file_info.path}")
                         self._unchanged_skipped_files.append(file_info)
                         file_info.is_unchanged_since_last = True
                         file_info.deduplication_option = (
@@ -3050,7 +3068,7 @@ class Backup:
                 done, pending_backups = futures.wait(
                     fs=pending_backups, return_when=FIRST_COMPLETED
                 )
-                if _is_very_verbose_logging():
+                if _is_very_verbose_debug_logging():
                     logging.debug(
                         f"Backup: observe {len(done)} completed, "
                         f"{len(pending_backups)} remaining files."
@@ -3064,7 +3082,7 @@ class Backup:
                         is_dryrun=self.is_dryrun,
                     )
                 )
-                if _is_very_verbose_logging() and len(pending_backups) > 0:
+                if _is_very_verbose_debug_logging() and len(pending_backups) > 0:
                     logging.info(
                         f"Wait for {len(pending_backups)} backup file operations to complete..."
                     )
