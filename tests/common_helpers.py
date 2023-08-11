@@ -613,6 +613,30 @@ def extract_backup_names_from_log(output_lines: list[str]) -> list[str]:
     return names
 
 
+def extract_lines_from_log(
+    output_lines: list[str],
+    pattern: str,
+    flags = 0
+) -> list[str]:
+    re_extract_lines = re.compile(pattern=pattern, flags=flags)
+    return [ol for ol in output_lines if re_extract_lines.search(ol) is not None]
+
+
+def extract_skip_file_info_from_log(
+    output_lines: list[str],
+) -> tuple[int, int, int]:
+    incremental_skip_msg = re.escape("Skipping unchanged file (date/size check)")
+    incremental_plus_skip_msg = re.escape(
+        "Skipping unchanged file (digest, modified date/time, size all unchanged)"
+    )
+    deduplication_skip_msg = re.escape("Skipping unchanged file (dedup='digest')")
+    return (
+        len(extract_lines_from_log(output_lines=output_lines, pattern=incremental_skip_msg)),
+        len(extract_lines_from_log(output_lines=output_lines, pattern=incremental_plus_skip_msg)),
+        len(extract_lines_from_log(output_lines=output_lines, pattern=deduplication_skip_msg)),
+    )
+
+
 @dataclass
 class LogSummaryInfo:
     total_files: int = -1
@@ -1329,7 +1353,7 @@ def validate_backup_restore(
     pytester,
     tmp_path,
     source_directory,
-    expected_total_files,
+    initial_expected_total_files,
     storage_specifier,
     compression_type,
     backup_timeout,
@@ -1338,8 +1362,9 @@ def validate_backup_restore(
 ):
     restore1_dir_expect_success = tmp_path / "Restore1ExpectSuccess"
     restore2_dir_expect_success = tmp_path / "Restore2AfterIncBackupSuccess"
-    restore3_dir_expect_success = tmp_path / "Restore3AfterIncPlucBackupSuccess"
-    restore4_dir_expect_success = tmp_path / "Restore4AfterIncPlucDedupBackupSuccess"
+    restore3_dir_expect_success = tmp_path / "Restore3AfterIncPlusBackupSuccess"
+    restore4_dir_expect_success = tmp_path / "Restore4AfterIncPlusDedupBackupSuccess"
+    restore5_dir_expect_success = tmp_path / "Restore5AfterIncHybridDedupBackupSuccess"
 
     # pylint: disable=unused-variable
     with DirInfo(source_directory) as source_dir_info:
@@ -1360,6 +1385,29 @@ def validate_backup_restore(
         )
         assert rr.ret == ExitCode.OK
 
+        lsi = extract_backup_summary_from_log(
+            output_lines=rr.outlines,
+        )
+        assert lsi.total_files == initial_expected_total_files
+        assert lsi.total_errors == 0
+        assert lsi.total_bitrot_detection_warning == 0
+        assert lsi.total_bitrot_detection_info == 0
+        assert lsi.total_successful_backups == initial_expected_total_files
+        assert lsi.total_successful_backups == lsi.total_backup_operations
+        assert lsi.total_unchanged_files == 0
+
+        (
+            incremental_skip_count,
+            incremental_plus_skip_count,
+            deduplication_skip_count,
+        ) = extract_skip_file_info_from_log(
+            output_lines=rr.outlines
+        )
+
+        assert incremental_skip_count == 0
+        assert incremental_plus_skip_count == 0
+        assert deduplication_skip_count == 0
+
         rr = run_atbu(
             pytester,
             tmp_path,
@@ -1374,8 +1422,8 @@ def validate_backup_restore(
         assert rr.ret == ExitCode.OK
         with DirInfo(restore1_dir_expect_success) as restore_dir_info:
             restore_dir_info.gather_info(start_gathering_digests=True)
-            assert len(source_dir_info.file_list) == expected_total_files
-            assert len(restore_dir_info.file_list) == expected_total_files
+            assert len(source_dir_info.file_list) == initial_expected_total_files
+            assert len(restore_dir_info.file_list) == initial_expected_total_files
             assert directories_match_entirely_by_order(
                 di1=source_dir_info, di2=restore_dir_info
             )
@@ -1385,7 +1433,7 @@ def validate_backup_restore(
         add_files_to_existing=True,
     )
     total_files_added = len(files_created)
-    expected_total_files_b = expected_total_files + total_files_added
+    expected_total_files_b = initial_expected_total_files + total_files_added
 
     with DirInfo(source_directory) as source_dir_info:
         source_dir_info.gather_info(start_gathering_digests=True)
@@ -1399,11 +1447,33 @@ def validate_backup_restore(
             storage_specifier,
             "-z",
             compression_type,
-            stdin=initial_backup_stdin,
             timeout=backup_timeout,
             log_base_name="backup2",
         )
         assert rr.ret == ExitCode.OK
+
+        lsi = extract_backup_summary_from_log(
+            output_lines=rr.outlines,
+        )
+        assert lsi.total_files == expected_total_files_b
+        assert lsi.total_errors == 0
+        assert lsi.total_bitrot_detection_warning == 0
+        assert lsi.total_bitrot_detection_info == 0
+        assert lsi.total_successful_backups == total_files_added
+        assert lsi.total_successful_backups == lsi.total_backup_operations
+        assert lsi.total_unchanged_files == initial_expected_total_files
+
+        (
+            incremental_skip_count,
+            incremental_plus_skip_count,
+            deduplication_skip_count,
+        ) = extract_skip_file_info_from_log(
+            output_lines=rr.outlines
+        )
+
+        assert incremental_skip_count == initial_expected_total_files
+        assert incremental_plus_skip_count == 0
+        assert deduplication_skip_count == 0
 
         rr = run_atbu(
             pytester,
@@ -1449,7 +1519,6 @@ def validate_backup_restore(
         storage_specifier,
         "-z",
         compression_type,
-        stdin=initial_backup_stdin,
         timeout=backup_timeout,
         log_base_name="backup3a-detect-bitrot",
     )
@@ -1486,7 +1555,6 @@ def validate_backup_restore(
             storage_specifier,
             "-z",
             compression_type,
-            stdin=initial_backup_stdin,
             timeout=backup_timeout,
             log_base_name="backup3b-no-detect-bitrot",
         )
@@ -1504,6 +1572,18 @@ def validate_backup_restore(
         assert (
             lsi.total_unchanged_files == lsi.total_files - lsi.total_backup_operations
         )
+
+        (
+            incremental_skip_count,
+            incremental_plus_skip_count,
+            deduplication_skip_count,
+        ) = extract_skip_file_info_from_log(
+            output_lines=rr.outlines
+        )
+
+        assert incremental_skip_count == 0
+        assert incremental_plus_skip_count == lsi.total_unchanged_files
+        assert deduplication_skip_count == 0
 
         rr = run_atbu(
             pytester,
@@ -1548,7 +1628,6 @@ def validate_backup_restore(
             storage_specifier,
             "-z",
             compression_type,
-            stdin=initial_backup_stdin,
             timeout=backup_timeout,
             log_base_name="backup4",
         )
@@ -1567,6 +1646,18 @@ def validate_backup_restore(
         assert lsi.total_successful_backups == lsi.total_backup_operations
         assert lsi.total_successful_backups == num_duplicates_with_bitrot
         assert lsi.total_unchanged_files == lsi.total_files - num_duplicates_with_bitrot
+
+        (
+            incremental_skip_count,
+            incremental_plus_skip_count,
+            deduplication_skip_count,
+        ) = extract_skip_file_info_from_log(
+            output_lines=rr.outlines
+        )
+
+        assert incremental_skip_count == 0
+        assert incremental_plus_skip_count == 0
+        assert deduplication_skip_count == lsi.total_files - num_duplicates_with_bitrot
 
         rr = run_atbu(
             pytester,
@@ -1588,6 +1679,75 @@ def validate_backup_restore(
                 di1=source_dir_info, di2=restore_dir_info
             )
 
+    num_duplicates = int(expected_total_files_c / 2)
+    orig_dup_path_list = duplicate_files(
+        path_to_dir=source_directory,
+        num_files=num_duplicates,
+        num_bitrot=None,
+    )
+    expected_total_files_e = expected_total_files_d + len(orig_dup_path_list)
+
+    with DirInfo(source_directory) as source_dir_info:
+        source_dir_info.gather_info(start_gathering_digests=True)
+
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            "backup",
+            "--incremental-hybrid",
+            "--dedup",
+            "digest",
+            source_directory,
+            storage_specifier,
+            "-z",
+            compression_type,
+            timeout=backup_timeout,
+            log_base_name="backup5",
+        )
+        assert rr.ret == ExitCode.OK
+
+        lsi = extract_backup_summary_from_log(
+            output_lines=rr.outlines,
+        )
+        assert lsi.total_files == expected_total_files_e
+        assert lsi.total_errors == 0
+        assert lsi.total_bitrot_detection_warning == 0
+        assert lsi.total_bitrot_detection_info == 0
+        assert lsi.total_successful_backups == lsi.total_backup_operations
+        assert lsi.total_successful_backups == 0
+        assert lsi.total_unchanged_files == lsi.total_files
+
+        (
+            incremental_skip_count,
+            incremental_plus_skip_count,
+            deduplication_skip_count,
+        ) = extract_skip_file_info_from_log(
+            output_lines=rr.outlines
+        )
+
+        assert incremental_skip_count == lsi.total_files - num_duplicates
+        assert incremental_plus_skip_count == 0
+        assert deduplication_skip_count == num_duplicates
+
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            "restore",
+            storage_specifier,
+            "backup:last",
+            "files:*",
+            restore5_dir_expect_success,
+            timeout=restore_timeout,
+            log_base_name="restore5",
+        )
+        assert rr.ret == ExitCode.OK
+        with DirInfo(restore5_dir_expect_success) as restore_dir_info:
+            restore_dir_info.gather_info(start_gathering_digests=True)
+            assert len(source_dir_info.file_list) == expected_total_files_e
+            assert len(restore_dir_info.file_list) == expected_total_files_e
+            assert directories_match_entirely_by_order(
+                di1=source_dir_info, di2=restore_dir_info
+            )
     pass
 
 

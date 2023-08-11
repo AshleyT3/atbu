@@ -2799,11 +2799,11 @@ class Backup:
         #
         # Post-hashing result is available for --incremental-plus backups.
         #
-        if self._backup_type != ATBU_BACKUP_TYPE_INCREMENTAL_PLUS:
+        if self._backup_type not in ATBU_BACKUP_TYPE_ALL_PLUS:
             #
-            # Not incremental plus so backup status of this file
-            # was determined at the time it was discovered, before
-            # hashing, etc. Backup this file.
+            # Backup type if neither incremental plus nor hybrid so backup
+            # status of this file was determined at the time it was discovered,
+            # before hashing, etc. Backup this file.
             #
             return True
 
@@ -2827,6 +2827,7 @@ class Backup:
 
             #
             # Duplicates found, skip backup of this file.
+            # Test log line: Consumed by tests.
             #
             logging.info(
                 f"Skipping unchanged file (dedup='{self._deduplication_option}'): {file_info.path}"
@@ -2884,6 +2885,7 @@ class Backup:
         if not is_changed:
             #
             # Date/time and size not changed, skip this file.
+            # Test log line: Consumed by tests.
             #
             logging.debug(
                 f"Skipping unchanged file "
@@ -2999,7 +3001,10 @@ class Backup:
         try:
             logging.info(f"Scheduling hashing jobs...")
             for file_info in self._source_files:
-                if self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL:
+                if (
+                    self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL
+                    or self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID
+                ):
                     (
                         is_changed,
                         existing_fi,
@@ -3008,8 +3013,11 @@ class Backup:
                     )
                     if not is_changed:
                         # For incremental, skip based on size/modified-based checks.
+                        # Test log line: Consumed by tests.
                         if _is_verbose_info_logging():
-                            logging.info(f"Skipping unchanged file: {file_info.path}")
+                            logging.info(
+                                f"Skipping unchanged file (date/size check): {file_info.path}"
+                            )
                         self._unchanged_skipped_files.append(file_info)
                         file_info.is_unchanged_since_last = True
                         file_info.deduplication_option = (

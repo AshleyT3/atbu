@@ -639,13 +639,49 @@ since the prior backup.
         action="store_true",
     )
     group_backup_operation.add_argument(
-        f"--{ATBU_BACKUP_TYPE_INCREMENTAL_PLUS_SHORT_CMD_OPT}",
         f"--{ATBU_BACKUP_TYPE_INCREMENTAL_PLUS}",
+        f"--{ATBU_BACKUP_TYPE_INCREMENTAL_PLUS_SHORT_CMD_OPT}",
         help="""Perform a comprehensive incremental backup. Files whose modified date, size in bytes,
 or hash have changed since the prior backup. This reqiures generating the hash of all
 source files which can be intensive and time consuming. Generally, it may be a good
 idea, depending on the number of source files, to perform an incremental plus
 backup once a while to ensure maximum integrity.
+""",
+        action="store_true",
+    )
+    group_backup_operation.add_argument(
+        f"--{ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID}",
+        f"--{ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID_SHORT_CMD_OPT}",
+        help=f"""Perform a backup using a hybrid strategy consisting of {ATBU_BACKUP_TYPE_INCREMENTAL} and {ATBU_BACKUP_TYPE_INCREMENTAL_PLUS},
+where any change detection determined using a file's modified date and size can be vetoed
+later in the backup pipeline by the Incremental Plus digest and deduplication checks.
+
+Basically, the hybrid approach first performs change detection using mere file modified
+date and size typical of the {ATBU_BACKUP_TYPE_INCREMENTAL} approach, and for all such files detected to be
+new or changed, the backup will then use {ATBU_BACKUP_TYPE_INCREMENTAL_PLUS} digest and deduplication checks
+to omit any of those files which are detected to have already been backed up.
+
+The {ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID} approach is only useful if using deduplication options (see --dedup)
+because deduplication is the only way Incremental Plus can veto a file for backup. Therefore,
+the --dedup option must be specified when using hybrid.
+
+An example of where this can be useful is if a large backup source consists of a files mostly
+unchanged since the last backup, but where a notable portion of the backup source has
+nevertheless been moved or duplicated, causing a significant number files to be detected
+as new, impacting the total backup time and performance. The hybrid approach will detect
+changes using the incremental approach but later veto any such changes if they are observed
+to be duplicates.
+
+A more specific example might be the case of a backup source having 20K files, where 500 files
+have been moved and will therefore be detected as new files. Hybrid's incremental stage will
+detect all 500 for backup, where hybrid's later Incremental Plus stage with deduplication
+options will filter out those 500 files as duplicates. Without hybrid, normal Incremental Plus
+would perform its checks on all 20K files, making it an unnecessarily lengthy process.
+
+Example usage:
+
+    {ATBU_PROGRAM_NAME} backup c:\\MySource d:\\MyBackup --{ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID} --dedup digest
+
 """,
         action="store_true",
     )

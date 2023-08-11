@@ -198,18 +198,27 @@ def handle_backup(args):
         backup_type = ATBU_BACKUP_TYPE_FULL
     elif args.incremental:
         backup_type = ATBU_BACKUP_TYPE_INCREMENTAL
-    elif args.ip:
+    elif args.incremental_plus:
         backup_type = ATBU_BACKUP_TYPE_INCREMENTAL_PLUS
+    elif args.incremental_hybrid:
+        backup_type = ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID
     else:
         raise ValueError(f"Could not derive backup type.")
 
     deduplication_option = None
     if args.dedup is not None:
-        if backup_type != ATBU_BACKUP_TYPE_INCREMENTAL_PLUS:
+        if backup_type not in ATBU_BACKUP_TYPE_ALL_PLUS:
             raise InvalidCommandLineArgument(
-                f"The --dedup option is only valid with --incremental-plus"
+                f"The --dedup option can only be specified with "
+                f"--{ATBU_BACKUP_TYPE_INCREMENTAL_PLUS} or "
+                f"--{ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID}"
             )
         deduplication_option = args.dedup[0]
+
+    if backup_type == ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID and deduplication_option is None:
+        raise InvalidCommandLineArgument(
+            f"The --dedup option is required when using --{ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID}."
+        )
 
     source_locations: list[str] = args.source_dirs
     dest_location: str = args.dest_storage_specifier

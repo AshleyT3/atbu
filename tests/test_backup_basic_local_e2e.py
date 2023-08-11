@@ -106,7 +106,7 @@ def test_backup_restore(
         pytester=pytester,
         tmp_path=tmp_path,
         source_directory=source_directory,
-        expected_total_files=total_files,
+        initial_expected_total_files=total_files,
         storage_specifier=backup_directory,
         compression_type=compression_type,
         backup_timeout=60,
