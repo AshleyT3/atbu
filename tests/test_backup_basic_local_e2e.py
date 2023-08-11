@@ -42,6 +42,7 @@ from .common_helpers import (
     create_test_data_directory_basic,
     DirInfo,
     extract_dir_info_from_verify_log,
+    validate_backup_dryrun,
     validate_backup_recovery,
     validate_backup_restore,
     validate_backup_restore_history,
@@ -254,6 +255,36 @@ def test_backup_restore_history(
         expected_total_files=total_files,
         storage_specifier=backup_directory,
         compression_type=compression_type,
+        backup_timeout=60,
+        restore_timeout=60,
+        initial_backup_stdin=stdin_bytes,
+    )
+    pass  # pylint: disable=unnecessary-pass
+
+def test_backup_dryrun(
+    tmp_path: Path,
+    pytester: Pytester,
+):
+    establish_random_seed(tmp_path)  # bytes([0,1,2,3])
+
+    source_directory = tmp_path / "SourceDataDir"
+    backup_directory = tmp_path / "BackupDestination"
+
+    _, files_created = create_test_data_directory_minimal_vary(
+        path_to_dir=source_directory,
+    )
+    total_files = len(files_created)
+
+    stdin_bytes = (
+        f"{ATBU_TEST_BACKUP_NAME}{os.linesep}{os.linesep}{os.linesep}".encode()
+    )
+
+    validate_backup_dryrun(
+        pytester=pytester,
+        tmp_path=tmp_path,
+        source_directory=source_directory,
+        total_original_files=total_files,
+        storage_specifier=backup_directory,
         backup_timeout=60,
         restore_timeout=60,
         initial_backup_stdin=stdin_bytes,

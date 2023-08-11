@@ -1427,6 +1427,7 @@ class BackupFile(ProcessThreadContextMixin):
         object_name_hash_salt: bytes,
         object_name_reservations: BackupNameReservations,
         perform_cleartext_hashing: bool,
+        is_dryrun: bool,
     ):
         super().__init__()
         self.thread_exec = None
@@ -1437,6 +1438,7 @@ class BackupFile(ProcessThreadContextMixin):
         self.object_name_hash_salt = object_name_hash_salt
         self.object_name_reservations = object_name_reservations
         self.perform_cleartext_hashing = perform_cleartext_hashing
+        self.is_dryrun = is_dryrun
 
     def get_compression_decision(
         self,
@@ -1471,6 +1473,12 @@ class BackupFile(ProcessThreadContextMixin):
     def run(self, wi: BackupPipelineWorkItem):
         try:
             path = self.file_info.path
+
+            if self.is_dryrun:
+                logging.info(f"(dry run) BackupFile: Completed {path}")
+                self.file_info.is_successful = True
+                return (self.file_info, None)
+
             path_to_backup = path
             if self.file_info.compressed_file_path is not None:
                 path_to_backup = self.file_info.compressed_file_path
@@ -1759,7 +1767,8 @@ class BackupResultsManager:
         object_name_hash_salt: bytes,
         backup_type: str,
         primary_backup_info_dir: str,
-        secondary_backup_info_dirs: list[str] = None,
+        secondary_backup_info_dirs: list[str],
+        is_dryrun: bool,
     ):
         # pylint: disable=line-too-long
         """Construct BackupResultsManager which manages results during the backup.
@@ -1781,6 +1790,8 @@ class BackupResultsManager:
         ThreadA is not created by this instance, but is a BackupFile instance's thread calling into this instance to supply its results.
         ThreadB is created and maintained by this instance and is responsible for periodic saving of the .atbuinf.
         """
+        self.is_dryrun = is_dryrun
+
         if not backup_info_db:
             raise ValueError(f"The backup_info_db must be specified.")
         self.backup_info_db = backup_info_db
@@ -1935,6 +1946,10 @@ class BackupResultsManager:
             )
 
     def save_final_revision(self):
+        if self.is_dryrun:
+            logging.info(f"*** Dry run, not saving backup information.")
+            self.backup_info_file_tmp.unlink(missing_ok=True)
+            return
         logging.info(f"Saving backup info file: {self.backup_info_file}")
         # Save final individual backup into final per-backup file.
         self.final_results.save_to_file(path=self.backup_info_file)
@@ -2021,6 +2036,7 @@ def file_operation_future_result(
     f: Future,
     anomalies: list[BackupAnomaly],
     the_operation: str,
+    is_dryrun: bool = False,
 ):
     """Evaluate one future result which will return a BackupFileInformation
     instance from the future if deemed successful, else it will return None
@@ -2030,6 +2046,8 @@ def file_operation_future_result(
     error messages, choose one to your liking. For example, if
     the_operation="Backup" a message might then start "Backup failed...".
     """
+
+    dryrun_str = "(dry run) " if is_dryrun else ""
 
     # From the future, usually always expecting a result tuple
     # as follows:
@@ -2085,7 +2103,7 @@ def file_operation_future_result(
             # The BackupFileInformation has no record of an exception.
             # The second tuple element is None.
             #
-            logging.info(f"{the_operation} succeeded: {file_info.path_for_logging}")
+            logging.info(f"{dryrun_str}{the_operation} succeeded: {file_info.path_for_logging}")
             return file_info
 
         if (
@@ -2180,6 +2198,7 @@ def file_operation_futures_to_results(
     fi_list: list[BackupFileInformation],
     anomalies: list[BackupAnomaly],
     the_operation: str,
+    is_dryrun: bool = False,
 ) -> list[BackupFileInformation]:
     """Check all futures in fs, add any resulting file_info to the fi_list,
     record any errors to anomalies list. Return the resulting fi_list.
@@ -2195,6 +2214,7 @@ def file_operation_futures_to_results(
             f=f,
             anomalies=anomalies,
             the_operation=the_operation,
+            is_dryrun=is_dryrun,
         )
 
         if fi is not None:
@@ -2265,11 +2285,10 @@ class CompressionPipelineStage(SubprocessPipelineStage):
         ext_to_abort_count_dict: dict,
         ext_to_ratio: dict,
         shared_lock: multiprocessing.Lock,
-        fn_determiner: Callable[[PipelineWorkItem], bool] = None,
-        fn_worker: Callable[..., PipelineWorkItem] = None,
-        **stage_kwargs,
+        is_dryrun: bool,
     ) -> None:
-        super().__init__(fn_determiner, fn_worker, **stage_kwargs)
+        super().__init__()
+        self.is_dryrun = is_dryrun
         self.compression_settings = compression_settings
         self.upload_chunk_size = (upload_chunk_size,)
         self.backup_temp_dir = backup_temp_dir
@@ -2299,7 +2318,11 @@ class CompressionPipelineStage(SubprocessPipelineStage):
         return self.is_compression_active
 
     def is_for_stage(self, pwi: BackupPipelineWorkItem) -> bool:
-        return self.compression_level != BACKUP_COMPRESSION_NONE and pwi.is_qualified
+        return (
+            self.compression_level != BACKUP_COMPRESSION_NONE
+            and pwi.is_qualified
+            and not self.is_dryrun
+        )
 
     def update_compression_stats(
         self,
@@ -2590,7 +2613,9 @@ class Backup:
         secondary_backup_info_dirs: list[str],
         source_file_info_list: list[BackupFileInformation],
         storage_def: StorageDefinition,
+        is_dryrun: bool,
     ) -> None:
+        self.is_dryrun = is_dryrun
         if not source_file_info_list or not isinstance(source_file_info_list, list):
             raise ValueError(f"source_files must be a list.")
         if not isinstance(storage_def, StorageDefinition):
@@ -2615,6 +2640,7 @@ class Backup:
             backup_type=self._backup_type,
             primary_backup_info_dir=primary_backup_info_dir,
             secondary_backup_info_dirs=secondary_backup_info_dirs,
+            is_dryrun=self.is_dryrun,
         )
         self._unchanged_skipped_files: list[BackupFileInformation] = list()
         self._storage_def = storage_def
@@ -2637,6 +2663,10 @@ class Backup:
                 fn_worker=self._post_hasher_decision_making,
             )
         )
+        if self.is_dryrun:
+            # For dry run, do not create compression stage, but keep backup stage which will return
+            # success without performing a backup.
+            logging.info(f"*** Dry run, will not perform compression or backup work.")
         self._compression_stage = CompressionPipelineStage(
             compression_settings=self._compression_settings,
             backup_temp_dir=self._temp_dir,
@@ -2644,6 +2674,7 @@ class Backup:
             ext_to_abort_count_dict=multiprocessing.Manager().dict(),
             ext_to_ratio=multiprocessing.Manager().dict(),
             shared_lock=multiprocessing.Manager().Lock(),  # pylint: disable=no-member
+            is_dryrun=self.is_dryrun,
         )
         self._subprocess_pipeline.add_stage(
             stage=self._compression_stage,
@@ -2937,6 +2968,7 @@ class Backup:
                 object_name_hash_salt=self._object_name_hash_salt,
                 object_name_reservations=self._object_name_reservations,
                 perform_cleartext_hashing=False,
+                is_dryrun = self.is_dryrun,
             )
 
         return wi
@@ -3007,6 +3039,7 @@ class Backup:
                         fi_list=[],
                         anomalies=self.anomalies,
                         the_operation=BACKUP_OPERATION_NAME_BACKUP,
+                        is_dryrun=self.is_dryrun,
                     )
                 )
 
@@ -3028,6 +3061,7 @@ class Backup:
                         fi_list=list(),
                         anomalies=self.anomalies,
                         the_operation=BACKUP_OPERATION_NAME_BACKUP,
+                        is_dryrun=self.is_dryrun,
                     )
                 )
                 if _is_very_verbose_logging() and len(pending_backups) > 0:
@@ -3041,80 +3075,85 @@ class Backup:
             self._results_mgr.stop()
 
             if self.storage_def.storage_persisted_backup_info:
-                #
-                # Save backup information to the backup storage.
-                #
-                fi_backup_info = BackupFileInformation(
-                    path=str(self._results_mgr.backup_info_db.primary_db_full_path),
-                )
-
-                #
-                # Create a storage object name for the backup information.
-                # It will be BackupName-YYYYMMDD-HHMMSS.atbuinf where the date/time
-                # stamp derives from the specific backup start time.
-                #
-                sbi = self._results_mgr.final_results
-                backup_start_time_stamp = sbi.get_backup_start_time_stamp_utc()
-                # Store backup information with backup storage using a generic
-                # prefix BACKUP_INFO_STORAGE_PREFIX, where it will be renamed as
-                # needed during recovery.
-                db_storage_basename = (
-                    f"{BACKUP_INFO_STORAGE_PREFIX}-{backup_start_time_stamp}{BACKUP_INFO_EXTENSION}"
-                )
-                fi_backup_info.storage_object_name = db_storage_basename
-
-                f = self._subprocess_pipeline.submit(
-                    BackupPipelineWorkItem(
-                        operation_name=BACKUP_OPERATION_NAME_BACKUP,
-                        file_info=fi_backup_info,
-                        is_qualified=True,
+                if self.is_dryrun:
+                    logging.info(f"*** Dry run, not storing backup information to backup.")
+                else:
+                    #
+                    # Save backup information to the backup storage.
+                    #
+                    fi_backup_info = BackupFileInformation(
+                        path=str(self._results_mgr.backup_info_db.primary_db_full_path),
                     )
-                )
-                if f is None:
-                    msg = f"Failed to schedule backup of the backup info file."
-                    logging.error(msg)
-                    self.anomalies.append(
-                        BackupAnomaly(
-                            kind=ANOMALY_KIND_UNEXPECTED_STATE,
+
+                    #
+                    # Create a storage object name for the backup information.
+                    # It will be BackupName-YYYYMMDD-HHMMSS.atbuinf where the date/time
+                    # stamp derives from the specific backup start time.
+                    #
+                    sbi = self._results_mgr.final_results
+                    backup_start_time_stamp = sbi.get_backup_start_time_stamp_utc()
+                    # Store backup information with backup storage using a generic
+                    # prefix BACKUP_INFO_STORAGE_PREFIX, where it will be renamed as
+                    # needed during recovery.
+                    db_storage_basename = (
+                        f"{BACKUP_INFO_STORAGE_PREFIX}-"
+                        f"{backup_start_time_stamp}{BACKUP_INFO_EXTENSION}"
+                    )
+                    fi_backup_info.storage_object_name = db_storage_basename
+
+                    f = self._subprocess_pipeline.submit(
+                        BackupPipelineWorkItem(
+                            operation_name=BACKUP_OPERATION_NAME_BACKUP,
                             file_info=fi_backup_info,
-                            message=msg,
+                            is_qualified=True,
                         )
                     )
-                    return
-                done, not_done = futures.wait(fs=set([f]), return_when=ALL_COMPLETED)
-                if len(done) != 1 or f not in done:
-                    msg = (
-                        f"Expected backup info future to be completed but got "
-                        f"done={len(done)} not_done={len(not_done)} f.done()={f.done()}."
-                    )
-                    logging.error(msg)
-                    self.anomalies.append(
-                        BackupAnomaly(
-                            kind=ANOMALY_KIND_UNEXPECTED_STATE,
-                            file_info=fi_backup_info,
-                            message=msg,
+                    if f is None:
+                        msg = f"Failed to schedule backup of the backup info file."
+                        logging.error(msg)
+                        self.anomalies.append(
+                            BackupAnomaly(
+                                kind=ANOMALY_KIND_UNEXPECTED_STATE,
+                                file_info=fi_backup_info,
+                                message=msg,
+                            )
                         )
-                    )
-                    return
-                if f.exception():
-                    msg = (
-                        f"There was an error during backup of the backup information: "
-                        f"{exc_to_string(f.exception())}"
-                    )
-                    logging.error(msg)
-                    self.anomalies.append(
-                        BackupAnomaly(
-                            kind=ANOMALY_KIND_EXCEPTION,
-                            file_info=fi_backup_info,
-                            exception=f.exception(),
-                            message=msg,
+                        return
+                    done, not_done = futures.wait(fs=set([f]), return_when=ALL_COMPLETED)
+                    if len(done) != 1 or f not in done:
+                        msg = (
+                            f"Expected backup info future to be completed but got "
+                            f"done={len(done)} not_done={len(not_done)} f.done()={f.done()}."
                         )
-                    )
-                    return
+                        logging.error(msg)
+                        self.anomalies.append(
+                            BackupAnomaly(
+                                kind=ANOMALY_KIND_UNEXPECTED_STATE,
+                                file_info=fi_backup_info,
+                                message=msg,
+                            )
+                        )
+                        return
+                    if f.exception():
+                        msg = (
+                            f"There was an error during backup of the backup information: "
+                            f"{exc_to_string(f.exception())}"
+                        )
+                        logging.error(msg)
+                        self.anomalies.append(
+                            BackupAnomaly(
+                                kind=ANOMALY_KIND_EXCEPTION,
+                                file_info=fi_backup_info,
+                                exception=f.exception(),
+                                message=msg,
+                            )
+                        )
+                        return
 
-                logging.info(
-                    f"The backup information has been successfully backed up: {fi_backup_info.path}"
-                )
+                    logging.info(
+                        f"The backup information has been successfully backed up: "
+                        f"{fi_backup_info.path}"
+                    )
 
         except Exception as ex:
             logging.error(
@@ -3134,16 +3173,18 @@ class Backup:
             self._backup_files()
         finally:
             self._results_mgr.stop()
-        logging.info(f"All backup file operations have completed.")
+
+        dryrun_str = "(dry run) " if self.is_dryrun else ""
+        logging.info(f"{dryrun_str}All backup file operations have completed.")
         if (
             self._compression_stage is not None
             and self._compression_stage.ext_to_ratio is not None
         ):
             logging.info(f"")
-            logging.info(f"Extension compression ratio report (lower is better):")
+            logging.info(f"{dryrun_str}Extension compression ratio report (lower is better):")
             ext_to_ratio = self._compression_stage.ext_to_ratio
             if len(ext_to_ratio) == 0:
-                logging.info(f"  - No extension-to-ratio info captured -")
+                logging.info(f"{dryrun_str}  - No extension-to-ratio info captured -")
             else:
                 for k, v in sorted(ext_to_ratio.items(), key=lambda t: t[1]):
                     if len(k) == 0:
@@ -3151,22 +3192,33 @@ class Backup:
                     k = f" '{k}' "
                     logging.info(f"{k:.<45} {(v*100):5.1f}%")
                 logging.info(f"")
+
+        if self.is_dryrun:
+            logging.info(f"{dryrun_str}: Files that would have been backed up:")
+            total_bytes = 0
+            ONE_MB = 1024.0*1024.0
+            for fi in self._results_mgr.final_results.all_file_info:
+                if fi.is_successful and fi.exception is None:
+                    logging.info(f"{fi.path} ({fi.size_in_bytes/ONE_MB:.3f} MB)")
+                    total_bytes += fi.size_in_bytes
+            logging.info(f"{dryrun_str}: Total bytes all files: {total_bytes/ONE_MB:.3f} MB")
+
         if len(self.anomalies) == 0:
             logging.info(f"***************")
-            logging.info(f"*** SUCCESS ***")
+            logging.info(f"*** SUCCESS *** {dryrun_str}")
             logging.info(f"***************")
-            logging.info(f"No errors detected during backup.")
+            logging.info(f"{dryrun_str}No errors detected during backup.")
         else:
             log_anomalies_report(anomalies=self.anomalies)
         for fi in self._results_mgr.final_results.all_file_info:
             if fi.is_successful and fi.exception is None:
                 self.success_count += 1
-        logging.info(f"{'Total files ':.<45} {len(self._source_files)}")
+        logging.info(f"{dryrun_str}{'Total files ':.<45} {len(self._source_files)}")
         logging.info(
-            f"{'Total unchanged files ':.<45} {len(self._unchanged_skipped_files)}"
+            f"{dryrun_str}{'Total unchanged files ':.<45} {len(self._unchanged_skipped_files)}"
         )
         logging.info(
-            f"{'Total backup operations ':.<45} "
+            f"{dryrun_str}{'Total backup operations ':.<45} "
             f"{len(self._results_mgr.final_results) - len(self._unchanged_skipped_files)}"
         )
         unexpected_count_diff = len(self._source_files) - len(
@@ -3174,14 +3226,16 @@ class Backup:
         )
         if unexpected_count_diff != 0:
             logging.info(
+                f"{dryrun_str}"
                 f"{'Total unexpected files-results difference ':.<45} {unexpected_count_diff}"
             )
         if len(self._results_mgr.tmp_results) > 0:
             logging.info(
+                f"{dryrun_str}"
                 f"{'Total unexpected unsaved results ':.<45} {len(self._results_mgr.tmp_results)}"
             )
-        logging.info(f"{'Total errors ':.<45} {len(self.anomalies)}")
-        logging.info(f"{'Total successful backups ':.<45} {self.success_count}")
+        logging.info(f"{dryrun_str}{'Total errors ':.<45} {len(self.anomalies)}")
+        logging.info(f"{dryrun_str}{'Total successful backups ':.<45} {self.success_count}")
 
 
 class StorageFileRetriever(ProcessThreadContextMixin):

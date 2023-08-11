@@ -723,6 +723,12 @@ same since the last backup, but the digests are different.""",
         help=f"""Set the backup compression level. The default is '{BACKUP_COMPRESSION_DEFAULT}'.
 """,
     )
+    parser_backup.add_argument(
+        "--dryrun",
+        action="store_true",
+        default=False,
+        help="Show what files would be backed up without performing a backup.",
+    )
     parser_backup.set_defaults(func=handle_backup)
 
     #

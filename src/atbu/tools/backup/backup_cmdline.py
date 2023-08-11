@@ -187,6 +187,11 @@ def handle_new_local_filesystem_storage_def(
 
 
 def handle_backup(args):
+    is_dryrun  = args.dryrun
+    dryrun_str = "(dry run) " if is_dryrun else ""
+    if is_dryrun:
+        logging.info(f"*** Dry run, backup will *not* actually be performed.")
+
     backup_type = None
     sneaky_corruption_detection: bool = args.detect_bitrot
     if args.full:
@@ -290,14 +295,20 @@ def handle_backup(args):
         secondary_backup_info_dirs=backup_info_dirs[1:],
         source_file_info_list=file_info_list,
         storage_def=storage_def,
+        is_dryrun=is_dryrun,
     ) as backup:
         backup.backup_files()
 
     if backup.is_completely_successful():
-        logging.info(f"Success, no errors detected.")
-        return 0
+        logging.info(f"{dryrun_str}Success, no errors detected.")
+        if is_dryrun:
+            # Never return 0 for pseudo dry run backups.
+            # Return a non-zero success code to be interpreted by caller as needed.
+            return ATBU_BACKUP_DRYRUN_SUCCESS_EXIT_CODE
+        else:
+            return 0
     else:
         logging.info(
-            f"Some errors were detected. See prior messages and/or logs for details."
+            f"{dryrun_str}Some errors were detected. See prior messages and/or logs for details."
         )
         return 1

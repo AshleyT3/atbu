@@ -43,6 +43,8 @@ from libcloud.storage.drivers.azure_blobs import (
     AZURE_DOWNLOAD_CHUNK_SIZE,
     AZURE_UPLOAD_CHUNK_SIZE,
 )
+
+from atbu.tools.backup.constants import ATBU_BACKUP_DRYRUN_SUCCESS_EXIT_CODE
 from atbu.tools.backup.credentials import CredentialAesKey
 
 # Even for local-only tests, include chunk sizes for
@@ -623,12 +625,20 @@ class LogSummaryInfo:
     total_bitrot_detection_info: int = 0
 
 
-def extract_backup_summary_from_log(output_lines: list[str]) -> LogSummaryInfo:
+def extract_backup_summary_from_log(
+    output_lines: list[str],
+    is_dryrun: bool = False
+) -> LogSummaryInfo:
     lsi = LogSummaryInfo()
     lsi.bitrot_detection_files = []
-    re_extract_summary = re.compile(
-        r"^(Total files|Total unchanged files|Total backup operations|Total errors|Total successful backups)\s+\.+\s+(\d+).*"
-    )
+    if is_dryrun:
+        re_extract_summary = re.compile(
+            r"^(\(dry run\) Total files|\(dry run\) Total unchanged files|\(dry run\) Total backup operations|\(dry run\) Total errors|\(dry run\) Total successful backups)\s+\.+\s+(\d+).*"
+        )
+    else:
+        re_extract_summary = re.compile(
+            r"^(Total files|Total unchanged files|Total backup operations|Total errors|Total successful backups)\s+\.+\s+(\d+).*"
+        )
     re_extract_detect_bitrot = re.compile(
         r"^(WARNING: |)Potential bitrot or sneaky corruption:.*\s+path=(.*)\s+modified_utc=.*"
     )
@@ -637,15 +647,15 @@ def extract_backup_summary_from_log(output_lines: list[str]) -> LogSummaryInfo:
         if m is not None:
             text = m.groups()[0]
             count = int(m.groups()[1])
-            if text == "Total files":
+            if text.find("Total files") != -1:
                 lsi.total_files = count
-            elif text == "Total unchanged files":
+            elif text.find("Total unchanged files") != -1:
                 lsi.total_unchanged_files = count
-            elif text == "Total backup operations":
+            elif text.find("Total backup operations") != -1:
                 lsi.total_backup_operations = count
-            elif text == "Total errors":
+            elif text.find("Total errors") != -1:
                 lsi.total_errors = count
-            elif text == "Total successful backups":
+            elif text.find("Total successful backups") != -1:
                 lsi.total_successful_backups = count
             continue
         m = re_extract_detect_bitrot.match(line)
@@ -1685,4 +1695,142 @@ def validate_backup_restore_history(
                 assert directories_match_entirely_by_order(
                     di1=source_dir_info, di2=restore_dir_info
                 )
+    pass
+
+
+def validate_backup_dryrun(
+    pytester,
+    tmp_path,
+    source_directory,
+    total_original_files,
+    storage_specifier,
+    backup_timeout,
+    restore_timeout,
+    initial_backup_stdin=None,
+):
+    source_directory = Path(source_directory)
+    restore_directory = source_directory.with_name(name=source_directory.name + f"-restore")
+    source_directory_original = source_directory.with_name(name=source_directory.name + f"-orig")
+
+    duplicate_tree(
+        src_dir=source_directory,
+        dst_dir=source_directory_original,
+    )
+
+    rr = run_atbu(
+        pytester,
+        tmp_path,
+        "backup",
+        "-f",
+        str(source_directory),
+        storage_specifier,
+        stdin=initial_backup_stdin,
+        timeout=backup_timeout,
+        log_base_name=f"backup-initial",
+    )
+    assert rr.ret == ExitCode.OK
+
+    rr = run_atbu(
+        pytester,
+        tmp_path,
+        "list",
+        storage_specifier,
+        "backup:*",
+        log_base_name=f"list-backups-before-dryrun",
+    )
+    assert rr.ret == ExitCode.OK
+
+    backup_names_before_dryrun = extract_backup_names_from_log(output_lines=rr.outlines)
+    assert len(backup_names_before_dryrun) == 1
+
+    atbu_cfg: AtbuConfig
+    (
+        atbu_cfg_to_use,
+        storage_def_name,
+        storage_def_dict,
+    ) = AtbuConfig.resolve_storage_location(
+        storage_location=str(storage_specifier),
+        resolve_storage_def_secrets=False,
+        create_if_not_exist=False,
+    )
+    assert atbu_cfg_to_use is not None
+    assert storage_def_name is not None
+    assert storage_def_dict is not None
+
+    for bid_after in atbu_cfg_to_use.get_backup_info_dirs():
+        bid_orig = bid_after.with_name(name=bid_after.name + f"-orig")
+        duplicate_tree(src_dir=bid_after, dst_dir=bid_orig)
+
+    _, files_created = create_test_data_directory_minimal_vary(
+        path_to_dir=source_directory,
+        add_files_to_existing=True,
+    )
+    total_files_after_adding_files = total_original_files + len(files_created)
+
+    rr = run_atbu(
+        pytester,
+        tmp_path,
+        "backup",
+        "-i",
+        str(source_directory),
+        storage_specifier,
+        "--dryrun",
+        stdin=None,
+        timeout=backup_timeout,
+        log_base_name=f"backup-dryrun",
+    )
+    assert rr.ret == ATBU_BACKUP_DRYRUN_SUCCESS_EXIT_CODE
+
+    lsi  = extract_backup_summary_from_log(output_lines=rr.outlines, is_dryrun=True)
+    assert lsi.total_backup_operations == len(files_created)
+    assert lsi.total_successful_backups == len(files_created)
+    assert lsi.total_unchanged_files == total_original_files
+    assert lsi.total_files == total_files_after_adding_files
+
+    for bid_after in atbu_cfg_to_use.get_backup_info_dirs():
+        bid_orig = bid_after.with_name(name=bid_after.name + f"-orig")
+        with (
+            DirInfo(bid_orig) as bid_before_dryrun,
+            DirInfo(bid_after) as bid_after_dryrun,
+        ):
+            bid_before_dryrun.gather_info(start_gathering_digests=True)
+            bid_after_dryrun.gather_info(start_gathering_digests=True)
+            assert directories_match_entirely_by_order(di1=bid_before_dryrun, di2=bid_after_dryrun)
+
+    rr = run_atbu(
+        pytester,
+        tmp_path,
+        "list",
+        storage_specifier,
+        "backup:*",
+        log_base_name=f"list-backups-after-dryrun",
+    )
+    assert rr.ret == ExitCode.OK
+
+    backup_names_after_dryrun = extract_backup_names_from_log(output_lines=rr.outlines)
+    assert len(backup_names_after_dryrun) == 1
+    assert backup_names_before_dryrun == backup_names_after_dryrun
+
+    backup_name = backup_names_after_dryrun[0]
+    with DirInfo(source_directory_original) as source_dir_info_orig:
+        source_dir_info_orig.gather_info(start_gathering_digests=True)
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            "restore",
+            storage_specifier,
+            f"backup:{backup_name}",
+            "files:*",
+            str(restore_directory),
+            timeout=restore_timeout,
+            log_base_name=f"restore-initial-{backup_name}",
+        )
+        assert rr.ret == ExitCode.OK
+        with DirInfo(restore_directory) as restore_dir_info:
+            restore_dir_info.gather_info(start_gathering_digests=True)
+            assert len(source_dir_info_orig.file_list) == total_original_files
+            assert len(restore_dir_info.file_list) == total_original_files
+            assert directories_match_entirely_by_order(
+                di1=source_dir_info_orig, di2=restore_dir_info
+            )
     pass

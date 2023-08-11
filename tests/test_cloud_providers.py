@@ -86,6 +86,7 @@ from .common_helpers import (
     run_atbu,
     directories_match_entirely_by_order,
     extract_storage_definition_and_config_file_path,
+    validate_backup_dryrun,
     validate_backup_recovery,
     validate_backup_restore,
     validate_backup_restore_history,
@@ -615,6 +616,60 @@ def test_backup_restore_history(
         expected_total_files=total_files,
         storage_specifier=storage_specifier,
         compression_type="normal",
+        backup_timeout=60 * 5,
+        restore_timeout=60 * 5,
+        initial_backup_stdin=None,
+    )
+
+    delete_storage_definition_json(tmp_path=tmp_path, pytester=pytester)
+    pass  # pylint: disable=unnecessary-pass
+
+
+
+@pytest.mark.parametrize(
+    "interface,provider,project_id,userkey,secret,secret_type",
+    backup_restore_parameters,
+)
+def test_backup_dryrun(
+    interface,
+    provider,
+    project_id,
+    userkey,
+    secret,
+    secret_type,
+    tmp_path: Path,
+    pytester: Pytester,
+):
+    storage_def_name, atbu_cfg_path, container_name = create_storage_definition_json(
+        interface,
+        provider,
+        project_id,
+        userkey,
+        secret,
+        tmp_path=tmp_path,
+        pytester=pytester,
+    )
+    assert storage_def_name == TEST_BACKUP_NAME
+    assert os.path.isfile(atbu_cfg_path)
+
+    establish_random_seed(tmp_path)
+
+    source_directory = tmp_path / "SourceDataDir"
+
+    _, files_created = create_test_data_directory_minimal_vary(
+        path_to_dir=source_directory,
+    )
+    total_files = len(files_created)
+    assert total_files > 0
+
+    storage_specifier = f"storage:{TEST_BACKUP_NAME}"
+
+    validate_backup_dryrun(
+        pytester=pytester,
+        tmp_path=tmp_path,
+        source_directory=source_directory,
+        total_original_files=total_files,
+        storage_specifier=storage_specifier,
         backup_timeout=60 * 5,
         restore_timeout=60 * 5,
         initial_backup_stdin=None,
