@@ -676,6 +676,18 @@ class BackupInformationDatabase:
         path = os.path.normcase(path_without_root)
         return self.path_to_info_all.get(path)
 
+    def has_backup(
+        self, backup_base_name: str,
+        specific_backup_name: str
+    ) -> bool:
+        if self.backup_base_name is not None and self.backup_base_name != backup_base_name:
+            raise ValueError(
+                f"Backup basename mismatch: db={self.backup_base_name} bn={backup_base_name}"
+            )
+        if self.backups.get(backup_base_name) is None:
+            return False
+        return specific_backup_name in self.backups[backup_base_name]
+
     def append(self, bi: SpecificBackupInformation, rebuild_indexes: bool = False):
         if self.backups.get(bi.backup_base_name) is None:
             if len(self.backups) > 0:
@@ -1834,17 +1846,35 @@ class BackupResultsManager:
         if not object_name_hash_salt:
             raise ValueError(f"The object_name_hash_salt must be specified.")
 
-        #
-        # Start time of backup.
-        #
-        self.backup_start_time_utc = datetime.now(timezone.utc)
+        self._backup_base_name = storage_def_name
 
-        #
-        # The specific name for this backup.
-        #
-        specific_backup_name = (
-            f"{storage_def_name}-{self.backup_start_time_utc.strftime('%Y%m%d-%H%M%S')}"
-        )
+        # Some tests run multiple backups in succession, possibly back-to-back intra-second.
+        # Otherwise, this should generally require only a single iteration.
+        attempts = 999
+        while attempts > 0:
+            #
+            # Start time of backup.
+            #
+            self.backup_start_time_utc = datetime.now(timezone.utc)
+            #
+            # The specific name for this backup.
+            #
+            specific_backup_name = (
+                f"{self._backup_base_name}-{self.backup_start_time_utc.strftime('%Y%m%d-%H%M%S')}"
+            )
+            if not self.backup_info_db.has_backup(
+                backup_base_name=self._backup_base_name,
+                specific_backup_name=specific_backup_name,
+            ):
+                break
+            specific_backup_name = None
+            attempts -= 1
+            time.sleep(0.1)
+
+        if specific_backup_name is None:
+            raise BackupException(
+                f"Cannot find nonexistent backup name: bn={self._backup_base_name}"
+            )
 
         #
         # The backup information file name for this backup.
@@ -1856,7 +1886,6 @@ class BackupResultsManager:
         #
         # Primary parameters validated/setup, assign to self.
         #
-        self._backup_base_name = storage_def_name
         self._specific_backup_name = specific_backup_name
         self.backup_info_dir: Path = primary_backup_info_dir
         self.secondary_backup_info_dirs: list[str] = secondary_backup_info_dirs
