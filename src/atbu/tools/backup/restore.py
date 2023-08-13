@@ -62,6 +62,7 @@ from .backup_core import (
     run_operation_stage,
 )
 from .backup_selections import (
+    SpecificBackupSelection,
     ensure_glob_pattern_for_dir,
     get_all_specific_backup_file_info,
     verify_specific_backup_selection_list,
@@ -632,34 +633,50 @@ def handle_restore(args):
     allow_overwrite = args.overwrite
     auto_path_mapping = args.auto_mapping
 
-    sbs_list_list = user_specifiers_to_selections(specifiers=source_specifiers)
-    for sbs_list in sbs_list_list:
-        sbs_fi_count = 0
-        for sbs in sbs_list:
-            sbs_fi_count += len(sbs.selected_fi)
-        logging.info(
-            f"Will restore {sbs_fi_count} files from '{sbs_list[0].storage_def_name}'"
+    sbs_list_list: list[list[SpecificBackupSelection]] = None
+    is_overall_success: bool = False
+    try:
+        sbs_list_list = user_specifiers_to_selections(specifiers=source_specifiers)
+        for sbs_list in sbs_list_list:
+            sbs_fi_count = 0
+            for sbs in sbs_list:
+                sbs_fi_count += len(sbs.selected_fi)
+            logging.info(
+                f"Will restore {sbs_fi_count} files from '{sbs_list[0].storage_def_name}'"
+            )
+
+        # No selections is failure.
+        is_overall_success = len(sbs_list_list) > 0
+        for sbs_list in sbs_list_list:
+
+            verify_specific_backup_selection_list(sbs_list=sbs_list)
+            if not isinstance(sbs_list[0].storage_def, StorageDefinition):
+                raise InvalidStateError(f"The storage_def must be a StorageDefinition.")
+            storage_def = sbs_list[0].storage_def
+            selections = get_all_specific_backup_file_info(sbs_list=sbs_list)
+
+            is_this_successful = restore_from_storage(
+                storage_def=storage_def,
+                selections=selections,
+                dest_root_location=dest_root_location,
+                allow_overwrite=allow_overwrite,
+                auto_path_mapping=auto_path_mapping,
+            )
+            if not is_this_successful:
+                is_overall_success = False
+    except LockError as ex:
+        logging.debug(exc_to_string(ex=ex))
+        logging.error(
+            f"The backup '{ex.cause}' is already in use. "
+            f"This part of the restore will be skipped. "
+            f"Use --loglevel DEBUG for more information."
         )
+    finally:
+        if sbs_list_list is not None:
+            for sbs_list in sbs_list_list:
+                for sbs in sbs_list:
+                    sbs.sel_info.storage_def_process_lock.release()
 
-    # No selections is failure.
-    is_overall_success = len(sbs_list_list) > 0
-    for sbs_list in sbs_list_list:
-
-        verify_specific_backup_selection_list(sbs_list=sbs_list)
-        if not isinstance(sbs_list[0].storage_def, StorageDefinition):
-            raise InvalidStateError(f"The storage_def must be a StorageDefinition.")
-        storage_def = sbs_list[0].storage_def
-        selections = get_all_specific_backup_file_info(sbs_list=sbs_list)
-
-        is_this_successful = restore_from_storage(
-            storage_def=storage_def,
-            selections=selections,
-            dest_root_location=dest_root_location,
-            allow_overwrite=allow_overwrite,
-            auto_path_mapping=auto_path_mapping,
-        )
-        if not is_this_successful:
-            is_overall_success = False
     if is_overall_success:
         logging.info(f"Finished... no errors detected.")
         return 0

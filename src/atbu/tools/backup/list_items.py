@@ -16,9 +16,10 @@ r"""List various ATBU items: storage definitions, specific backups, files within
 import logging
 from tabulate import tabulate
 
-from atbu.common.exception import InvalidStateError
+from atbu.common.exception import InvalidStateError, LockError, exc_to_string
 from .constants import CONFIG_SECTION_STORAGE_DEFINITION_SPECIFIER_PREFIX
 from .backup_selections import (
+    SpecificBackupSelection,
     get_storage_defintions_from_sbs_list_list,
     user_specifiers_to_selections,
 )
@@ -32,53 +33,68 @@ def handle_list(args):
     if not specifiers:
         specifiers = [f"{CONFIG_SECTION_STORAGE_DEFINITION_SPECIFIER_PREFIX}:*"]
 
-    sbs_list_list = user_specifiers_to_selections(
-        specifiers=specifiers, no_selections_ok=True
-    )
-
-    headers = [
-        "Storage Definition",
-        "Provider",
-        "Container",
-        "Interface",
-        "Encrypted",
-        "Persisted IV",
-    ]
-    records = []
-    storage_def_list: list[
-        StorageDefinition
-    ] = get_storage_defintions_from_sbs_list_list(sbs_list_list=sbs_list_list)
-    for storage_def in storage_def_list:
-        storage_def_name = storage_def.storage_def_name
-        records.append(
-            [
-                storage_def_name,
-                storage_def.driver_factory.provider_name,
-                storage_def.container_name,
-                storage_def.driver_factory.interface_type,
-                storage_def.is_encryption_used,
-                storage_def.storage_persisted_encryption_IV,
-            ]
+    sbs_list_list: list[list[SpecificBackupSelection]] = None
+    try:
+        sbs_list_list = user_specifiers_to_selections(
+            specifiers=specifiers, no_selections_ok=True
         )
-    logging.info(
-        "\n" + tabulate(tabular_data=records, headers=headers, tablefmt="simple")
-    )
 
-    for sbs_list in sbs_list_list:  # pylint: disable=not-an-iterable
-        storage_def_name = None
-        for sbi in sbs_list:
-            if sbi.specific_backup_info is None:
-                continue
-            if not storage_def_name:
-                storage_def_name = sbi.storage_def_name
-                logging.info(
-                    f"Specific backups from storage definition '{storage_def_name}'"
-                )
-            elif storage_def_name != sbi.storage_def_name:
-                raise InvalidStateError(
-                    f"Expected entire list to belong to the same storage def '{storage_def_name}'"
-                )
-            logging.info(f"  {sbi.specific_backup_name}")
-            list_fi_sorted = sorted(sbi.selected_fi.values(), key=lambda fi: fi.path)
-            for sb_fi in list_fi_sorted:
-                logging.info(f"    {sb_fi.path}")
+        headers = [
+            "Storage Definition",
+            "Provider",
+            "Container",
+            "Interface",
+            "Encrypted",
+            "Persisted IV",
+        ]
+        records = []
+        storage_def_list: list[
+            StorageDefinition
+        ] = get_storage_defintions_from_sbs_list_list(sbs_list_list=sbs_list_list)
+        for storage_def in storage_def_list:
+            storage_def_name = storage_def.storage_def_name
+            records.append(
+                [
+                    storage_def_name,
+                    storage_def.driver_factory.provider_name,
+                    storage_def.container_name,
+                    storage_def.driver_factory.interface_type,
+                    storage_def.is_encryption_used,
+                    storage_def.storage_persisted_encryption_IV,
+                ]
+            )
+        logging.info(
+            "\n" + tabulate(tabular_data=records, headers=headers, tablefmt="simple")
+        )
+
+        for sbs_list in sbs_list_list:  # pylint: disable=not-an-iterable
+            storage_def_name = None
+            for sbi in sbs_list:
+                if sbi.specific_backup_info is None:
+                    continue
+                if not storage_def_name:
+                    storage_def_name = sbi.storage_def_name
+                    logging.info(
+                        f"Specific backups from storage definition '{storage_def_name}'"
+                    )
+                elif storage_def_name != sbi.storage_def_name:
+                    raise InvalidStateError(
+                        f"Expected entire list to belong to the same storage def "
+                        f"'{storage_def_name}'"
+                    )
+                logging.info(f"  {sbi.specific_backup_name}")
+                list_fi_sorted = sorted(sbi.selected_fi.values(), key=lambda fi: fi.path)
+                for sb_fi in list_fi_sorted:
+                    logging.info(f"    {sb_fi.path}")
+    except LockError as ex:
+        logging.debug(exc_to_string(ex=ex))
+        logging.error(
+            f"The backup '{ex.cause}' is already in use. "
+            f"Please try again after the current operation is complete. "
+            f"Use --loglevel DEBUG for more information."
+        )
+    finally:
+        if sbs_list_list is not None:
+            for sbs_list in sbs_list_list:
+                for sbs in sbs_list:
+                    sbs.sel_info.storage_def_process_lock.release()

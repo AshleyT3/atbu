@@ -40,6 +40,7 @@ from atbu.common.util_helpers import (
     create_numbered_backup_of_file,
     get_trash_bin_name,
 )
+from atbu.common.process_file_lock import ProcessFileLock
 
 from atbu.tools.backup.config_migration_helpers import (
     upgrade_storage_definitions_from_001_to_002,
@@ -1439,6 +1440,17 @@ in this backup if you delete this configuration.
         self.save_config_file()
         logging.info(f"Configuration updated... restore complete")
         return storage_def_name
+
+    @staticmethod
+    def access_process_lock_by_storage_def_name(storage_def_name: str) -> ProcessFileLock:
+        lock_filename = f".{storage_def_name}-{ATBU_ACRONYM}-lock"
+        lock_full_path = AtbuConfig.get_user_default_config_dir() / lock_filename
+        return ProcessFileLock(filename=lock_full_path, diag_name=storage_def_name)
+
+    def access_process_lock(self) -> ProcessFileLock:
+        return AtbuConfig.access_process_lock_by_storage_def_name(
+            storage_def_name=self.storage_def_name,
+        )
 
 
 def get_atbu_config_from_file(

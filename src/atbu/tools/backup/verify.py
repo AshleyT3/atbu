@@ -40,6 +40,7 @@ from atbu.common.exception import (
     exc_to_string,
     AlreadyUsedError,
 )
+
 from .exception import *
 from .backup_core import (
     BACKUP_OPERATION_NAME_VERIFY,
@@ -428,25 +429,40 @@ def verify_storage(
 def handle_verify(args):
     logging.debug(f"handle_verify")
     source_specifiers: list[str] = args.source_storage_specifiers
-    sbs_list_list = user_specifiers_to_selections(specifiers=source_specifiers)
-    for sbs_list in sbs_list_list:
-        sbs_fi_count = 0
-        for sbs in sbs_list:
-            sbs_fi_count += len(sbs.selected_fi)
-        logging.info(
-            f"Will verify {sbs_fi_count} files in '{sbs_list[0].storage_def_name}'"
-        )
+    sbs_list_list: list[list[SpecificBackupSelection]] = None
+    is_overall_success: bool = False
+    try:
+        sbs_list_list = user_specifiers_to_selections(specifiers=source_specifiers)
+        for sbs_list in sbs_list_list:
+            sbs_fi_count = 0
+            for sbs in sbs_list:
+                sbs_fi_count += len(sbs.selected_fi)
+            logging.info(
+                f"Will verify {sbs_fi_count} files in '{sbs_list[0].storage_def_name}'"
+            )
 
-    # No selections is failure.
-    is_overall_success = len(sbs_list_list) > 0
-    for sbs_list in sbs_list_list:
-        is_this_successful = verify_storage(
-            sbs_list=sbs_list,
-            local_compare=args.compare,
-            local_compare_root_location=args.compare_root,
+        # No selections is failure.
+        is_overall_success = len(sbs_list_list) > 0
+        for sbs_list in sbs_list_list:
+            is_this_successful = verify_storage(
+                sbs_list=sbs_list,
+                local_compare=args.compare,
+                local_compare_root_location=args.compare_root,
+            )
+            if not is_this_successful:
+                is_overall_success = False
+    except LockError as ex:
+        logging.debug(exc_to_string(ex=ex))
+        logging.error(
+            f"The backup '{ex.cause}' is already in use. "
+            f"Please try again after the current operation is complete. "
+            f"Use --loglevel DEBUG for more information."
         )
-        if not is_this_successful:
-            is_overall_success = False
+    finally:
+        if sbs_list_list is not None:
+            for sbs_list in sbs_list_list:
+                for sbs in sbs_list:
+                    sbs.sel_info.storage_def_process_lock.release()
     if is_overall_success:
         logging.info(f"Finished... no errors detected.")
         return 0

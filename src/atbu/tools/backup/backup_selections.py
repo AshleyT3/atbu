@@ -28,6 +28,9 @@ from atbu.common.exception import (
 from atbu.common.util_helpers import (
     iwalk_fnmatch,
 )
+from atbu.common.process_file_lock import (
+    ProcessFileLock,
+)
 from .exception import *
 from .constants import *
 from .config import (
@@ -83,6 +86,7 @@ class StorageSelectionInfo:
     location: str
     location_derivation_source_arg: str
     storage_def_name: str
+    storage_def_process_lock: ProcessFileLock
     storage_def: dict
     backup_info_dir: Path
     selection_patterns: list[SelectionPattern]
@@ -186,9 +190,17 @@ def parse_storage_def_specifiers_patterns(
                     location_derivation_source_arg=raw_arg,
                     storage_def_name=storage_def_name,
                     storage_def=storage_def,
+                    storage_def_process_lock=atbu_cfg_to_use.access_process_lock(),
                     backup_info_dir=atbu_cfg_to_use.get_primary_backup_info_dir(),
                     selection_patterns=[],
                 )
+
+                sel_info_dict[storage_def_name] = storage_sel_info
+
+                # If this acquire fails, an exception returns to caller.
+                # If successful, caller must release these.
+                storage_sel_info.storage_def_process_lock.acquire()
+
                 # Add to ordered list of StorageSelectionInfo instance results.
                 result.append(storage_sel_info)
 

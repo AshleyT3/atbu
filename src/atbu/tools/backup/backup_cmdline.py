@@ -265,59 +265,71 @@ def handle_backup(args):
             default_storage_def_name=None, storage_location=dest_location
         )
 
-    backup_info_dirs: list[str] = [str(bid) for bid in atbu_cfg_to_use.get_backup_info_dirs()]
+    backup_process_lock = atbu_cfg_to_use.access_process_lock()
+    try:
+        with backup_process_lock:
 
-    storage_def_dict = atbu_cfg_to_use.get_storage_def_with_resolved_secrets_deep_copy(
-        storage_def_name=storage_def_name
-    )
+            backup_info_dirs = [str(bid) for bid in atbu_cfg_to_use.get_backup_info_dirs()]
 
-    storage_def = StorageDefinition.storage_def_from_dict(
-        storage_def_name=storage_def_name, storage_def_dict=storage_def_dict
-    )
+            storage_def_dict = atbu_cfg_to_use.get_storage_def_with_resolved_secrets_deep_copy(
+                storage_def_name=storage_def_name
+            )
 
-    logging.info(f"Backup location(s)...")
-    for idx, source_location in enumerate(source_locations):
-        idx_str = f"  Source location #{idx} "
-        logging.info(f"{idx_str:.<35} {source_location}")
+            storage_def = StorageDefinition.storage_def_from_dict(
+                storage_def_name=storage_def_name, storage_def_dict=storage_def_dict
+            )
 
-    logging.info(f"Searching for files...")
-    file_info_list = get_local_file_information(
-        src_dirs_wc=source_locations, exclude_patterns=exclude_patterns
-    )
-    if len(file_info_list) == 0:
-        logging.info(f"No files found, nothing to backup.")
-        return
+            logging.info(f"Backup location(s)...")
+            for idx, source_location in enumerate(source_locations):
+                idx_str = f"  Source location #{idx} "
+                logging.info(f"{idx_str:.<35} {source_location}")
 
-    compression_settings = atbu_cfg_to_use.get_compression_settings_deep_copy(
-        storage_def_name=storage_def_name,
-    )
-    if args.compression is not None:
-        compression_settings[CONFIG_VALUE_NAME_COMPRESSION_LEVEL] = args.compression
+            logging.info(f"Searching for files...")
+            file_info_list = get_local_file_information(
+                src_dirs_wc=source_locations, exclude_patterns=exclude_patterns
+            )
+            if len(file_info_list) == 0:
+                logging.info(f"No files found, nothing to backup.")
+                return
 
-    logging.info(f"Backup destination: {dest_location}")
-    with Backup(
-        backup_type=backup_type,
-        deduplication_option=deduplication_option,
-        compression_settings=compression_settings,
-        sneaky_corruption_detection=sneaky_corruption_detection,
-        primary_backup_info_dir=backup_info_dirs[0],
-        secondary_backup_info_dirs=backup_info_dirs[1:],
-        source_file_info_list=file_info_list,
-        storage_def=storage_def,
-        is_dryrun=is_dryrun,
-    ) as backup:
-        backup.backup_files()
+            compression_settings = atbu_cfg_to_use.get_compression_settings_deep_copy(
+                storage_def_name=storage_def_name,
+            )
+            if args.compression is not None:
+                compression_settings[CONFIG_VALUE_NAME_COMPRESSION_LEVEL] = args.compression
 
-    if backup.is_completely_successful():
-        logging.info(f"{dryrun_str}Success, no errors detected.")
-        if is_dryrun:
-            # Never return 0 for pseudo dry run backups.
-            # Return a non-zero success code to be interpreted by caller as needed.
-            return ATBU_BACKUP_DRYRUN_SUCCESS_EXIT_CODE
-        else:
-            return 0
-    else:
-        logging.info(
-            f"{dryrun_str}Some errors were detected. See prior messages and/or logs for details."
-        )
-        return 1
+            logging.info(f"Backup destination: {dest_location}")
+            with Backup(
+                backup_type=backup_type,
+                deduplication_option=deduplication_option,
+                compression_settings=compression_settings,
+                sneaky_corruption_detection=sneaky_corruption_detection,
+                primary_backup_info_dir=backup_info_dirs[0],
+                secondary_backup_info_dirs=backup_info_dirs[1:],
+                source_file_info_list=file_info_list,
+                storage_def=storage_def,
+                is_dryrun=is_dryrun,
+            ) as backup:
+                backup.backup_files()
+
+            if backup.is_completely_successful():
+                logging.info(f"{dryrun_str}Success, no errors detected.")
+                if is_dryrun:
+                    # Never return 0 for pseudo dry run backups.
+                    # Return a non-zero success code to be interpreted by caller as needed.
+                    return ATBU_BACKUP_DRYRUN_SUCCESS_EXIT_CODE
+                else:
+                    return 0
+            else:
+                logging.info(
+                    f"{dryrun_str}Some errors were detected. "
+                    f"See prior messages and/or logs for details."
+                )
+                return 1
+    except LockError as ex:
+        logging.debug(exc_to_string(ex=ex))
+        raise BackupAlreadyInUseError(
+            f"The backup '{ex.cause}' is already in use. "
+            f"Wait for the current operation to complete and try again later. "
+            f"Use --loglevel DEBUG for more information."
+        ).with_traceback(ex.__traceback__) from ex
