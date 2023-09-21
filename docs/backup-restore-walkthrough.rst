@@ -305,7 +305,7 @@ The following command will restore *all* files from the *last* "D:\\MyBackupDire
     Finished... no errors detected.
     (venv2-3.9.12) PS C:\>
 
-After restoring, you can see both C:\MyRestore and the original C:\MyData contain the same files...
+After restoring, you can see both C:\\MyRestore and the original C:\\MyData contain the same files...
 
 .. code-block:: console
 
@@ -834,7 +834,7 @@ Google Storage service account OAuth2 .json file downloaded to the local compute
 
 .. code-block:: console
 
-    C:\\MyCrednetials\\example-service-account-c98754699abb.json
+    C:\MyCrednetials\example-service-account-c98754699abb.json
 
 If you are using a service account with OAuth2 .json credentials, if you open it up, you will see it contains a bit of information, one being a field named client_email. When you configure |PROJNAME|, you can use the value of client_email anywhere a key or user name is required (example given later below).
 
@@ -847,7 +847,7 @@ Given the above, if using a GCS account with OAuth2 .json credentials, your resu
 .. code-block:: console
 
     Username (aka key): atbuserviceaccount8838384784782@project-name-2135551212.iam.gserviceaccount.com
-    Password (aka secret): C:\\MyCrednetials\\example-service-account-c98754699abb.json
+    Password (aka secret): C:\MyCrednetials\example-service-account-c98754699abb.json
 
 When |PROJNAME| needs to access your GCS acocunt, it would use the .json file with the Google APIs.
 

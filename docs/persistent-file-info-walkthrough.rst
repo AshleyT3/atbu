@@ -90,13 +90,17 @@ Both directories contain the following contents:
 
 Let's capture persistent file information for all files in both C:\\MyData and D:\\MyData by running the following command:
 
-``atbu update-digests C:\MyData\ D:\MyData\``
+``atbu update-digests --per-dir --locations C:\MyData\ D:\MyData\``
+
+Or using shorter argument names:
+
+``atbu update-digests --pd -l C:\MyData\ D:\MyData\``
 
 **Example output:**
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu update-digests C:\MyData\ D:\MyData\
+    (venv2-3.9.12) PS C:\> atbu update-digests --per-dir --locations C:\MyData\ D:\MyData\
     atbu - v0.01
     Updating files in C:\MyData...
     Creating info for C:\MyData\Documents\2021-Budget.xlsx...
@@ -259,11 +263,15 @@ Diff Locations
 ^^^^^^^^^^^^^^
 With both C:\\MyData and D:\\MyData each having an updated persistent file information database, let's diff them as follows:
 
-``atbu diff C:\MyData\ D:\MyData\``
+``atbu diff --per-dir --location-a C:\MyData\ --location-b D:\MyData\``
+
+Or using shorter argument names:
+
+``atbu diff --pd --la C:\MyData\ --lb D:\MyData\``
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu diff C:\MyData\ D:\MyData\
+    (venv2-3.9.12) PS C:\> atbu diff --per-dir --location-a C:\MyData\ --location-b D:\MyData\
     atbu - v0.01
     Location A ............................. C:\MyData
     Location A persist types ............... ['per-dir']
@@ -404,7 +412,7 @@ In our example scenario, let's say it has been many years since D:\\MyData was c
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu update-digests --change-detection-type digest D:\MyData\
+    (venv2-3.9.12) PS C:\> atbu update-digests --pd --change-detection-type digest -l D:\MyData\
     atbu - v0.01
     Updating files in D:\MyData...
     Checking for changes to D:\MyData\Documents\2021-Budget.xlsx...
@@ -469,7 +477,7 @@ With the persistent info of D:\\MyData up to date, let's perform another diff be
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu diff C:\MyData\ D:\MyData\
+    (venv2-3.9.12) PS C:\> atbu diff --pd --la C:\MyData\ --lb D:\MyData\
     atbu - v0.01
     Location A ............................. C:\MyData
     Location A persist types ............... ['per-dir']
@@ -536,7 +544,7 @@ You can combine multiple locations into a single persistent file information .js
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu save-db --db c:\my-ext-drives-photo-inventory.json D:\MyData\ E:\MyData\
+    (venv2-3.9.12) PS C:\> atbu save-db --db c:\my-ext-drives-photo-inventory.json --pd -l D:\MyData\ E:\MyData\
     atbu - v0.01
     Database: c:\my-ext-drives-photo-inventory.json
     Checking for changes to D:\MyData\Documents\2021-Budget.xlsx...
@@ -644,7 +652,7 @@ Since c:\\my-ext-drives-photo-inventory.json is kept online, the two drives D:\\
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu diff C:\MyData\ C:\my-ext-drives-photo-inventory.json
+    (venv2-3.9.12) PS C:\> atbu diff --pd --la C:\MyData\ --lb C:\my-ext-drives-photo-inventory.json
     atbu - v0.01
     Location A ............................. C:\MyData
     Location A persist types ............... ['per-dir']
@@ -727,15 +735,15 @@ If you think of C:\\my-ext-drives-photo-inventory.json as "all of my backup data
 
 The above was merely to show you that you can combine multiple locations into a single .json DB for later use/diff'ing as desired. Perhaps a more effective use of offline .json DB is to save each drive in its own .json DB. Let's try that now by running these two commands...
 
-``atbu save-db --db c:\my-D-backup-drive-inventory.json D:\MyData\``
+``atbu save-db --db c:\my-D-backup-drive-inventory.json --pd -l D:\MyData\``
 
-``atbu save-db --db c:\my-E-backup-drive-inventory.json E:\MyData\``
+``atbu save-db --db c:\my-E-backup-drive-inventory.json --pd -l E:\MyData\``
 
 **Example...**
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu save-db --db c:\my-D-backup-drive-inventory.json D:\MyData\
+    (venv2-3.9.12) PS C:\> atbu save-db --db c:\my-D-backup-drive-inventory.json --pd -l D:\MyData\
     atbu - v0.01
     Database: c:\my-D-backup-drive-inventory.json
     Checking for changes to D:\MyData\Documents\2021-Budget.xlsx...
@@ -790,7 +798,7 @@ The above was merely to show you that you can combine multiple locations into a 
     All locations total unique files ...... 18
     All locations total physical files .... 18
     All locations skipped files ........... 0
-    (venv2-3.9.12) PS C:\> atbu save-db --db c:\my-E-backup-drive-inventory.json E:\MyData\
+    (venv2-3.9.12) PS C:\> atbu save-db --db c:\my-E-backup-drive-inventory.json --pd -l E:\MyData\
     atbu - v0.01
     Database: c:\my-E-backup-drive-inventory.json
     Checking for changes to E:\MyData\Documents\2021-Budget.xlsx...
@@ -856,7 +864,7 @@ We can use each of those to see if our C:\\MyData is backed up redundantly to bo
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu diff C:\MyData\ C:\my-D-backup-drive-inventory.json
+    (venv2-3.9.12) PS C:\> atbu diff --pd --la C:\MyData\ --lb C:\my-D-backup-drive-inventory.json
     atbu - v0.01
     Location A ............................. C:\MyData
     Location A persist types ............... ['per-dir']
@@ -1051,16 +1059,16 @@ The following is an example of one of the benefits to using sidecar .atbu files.
                 20210702_202504.jpg
                 20210702_202530.jpg
 
-Let's update-digests as before, but this time we will specify 'pf:' or 'per-file:' before the directory as follows...
+Let's update-digests as before, but this time we will specify '--pf' or '--per-file' before the directory as follows...
 
-* ``atbu update-digests pf: C:\MyData``
-* ``atbu update-digests per-file: C:\MyData``
+* ``atbu update-digests --pf -l C:\MyData``
+* ``atbu update-digests --per-file -l C:\MyData``
 
-Specifying the 'pf:' or 'per-file:' as an argument before a location causes |PROJNAME| to store or use persistence information per-file (for each file). Or you can think of it as "persistence file" as opposed to "persistence directory .json db."
+Specifying the '--pf' or '--per-file' as an argument before a location causes |PROJNAME| to store or use persistence information per-file (for each file). Or you can think of it as "persistence file" as opposed to "persistence directory .json db."
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu update-digests pf: C:\MyData
+    (venv2-3.9.12) PS C:\> atbu update-digests --pf -l C:\MyData
     atbu - v0.01
     Updating files in C:\MyData...
     Creating info for C:\MyData\Documents\2021-Budget.xlsx...
@@ -1267,13 +1275,13 @@ Let's say the year is 2015 and you have a hard drive with large/important media 
 
 Let's establish digests now in 2015... 
 
-``atbu update-digests per-file: d:\MyData-Year-2015-Hard-Drive``
+``atbu update-digests --per-file -l d:\MyData-Year-2015-Hard-Drive``
 
 **Example output:**
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu update-digests per-file: d:\MyData-Year-2015-Hard-Drive
+    (venv2-3.9.12) PS C:\> atbu update-digests --per-file -l d:\MyData-Year-2015-Hard-Drive
     atbu - v0.01
     Updating files in d:\MyData-Year-2015-Hard-Drive...
     Creating info for d:\MyData-Year-2015-Hard-Drive\Pictures\Events\2021-HolidayParty\20210704_223018.jpg...
@@ -1400,11 +1408,11 @@ Now let's say it's about 7 years later, in 2022, and you have a new hard drive E
 
 The 2015 hard drive D:\\MyData-Year-2015-Hard-Drive data has not had its digests checked in about 7 years, so the first thing we may want to do is update all digests...
 
-``atbu update-digests --cdt digest per-file: d:\MyData-Year-2015-Hard-Drive``
+``atbu update-digests --cdt digest --per-file -l d:\MyData-Year-2015-Hard-Drive``
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu update-digests --cdt digest per-file: d:\MyData-Year-2015-Hard-Drive
+    (venv2-3.9.12) PS C:\> atbu update-digests --cdt digest --per-file -l d:\MyData-Year-2015-Hard-Drive
     atbu - v0.01
     -------------------------------------------------------------------------
     Updating files in d:\MyData-Year-2015-Hard-Drive...
@@ -1489,7 +1497,7 @@ The 2015 hard drive D:\\MyData-Year-2015-Hard-Drive data has not had its digests
 
 A few important things to note when running update-digests above...
 
-* **Using the same persistence type:** First, let's note that, since we used "per-file:" in 2015, it is important to use "per-file:" again as shown above because, without doing that, |PROJNAME| would create a per-dir database by default, ignoring the information files already present. We want to take advantage of that history that has been living side-by-side with our important data files, so we use "per-file:" to instruct |PROJNAME| to check/update persisted file information in those locations. 
+* **Using the same persistence type:** First, let's note that, since we used "--per-file" in 2015, it is important to use "--per-file" again as shown above because, without doing that, |PROJNAME| would create a per-dir database by default, ignoring the information files already present. We want to take advantage of that history that has been living side-by-side with our important data files, so we use "--per-file" to instruct |PROJNAME| to check/update persisted file information in those locations. 
 * **Forcing digest check after many years:** By specifying -cdt digest, we instruct |PROJNAME| to re-generate all digests and compare them with the existing 2015 history. This is being done in this example because 7 years is a long time, and that old 2015 hard drive has been used for many purposes, inserted in various machines, and sitting in various storage locations, some perhaps not so cool. We re-gen digests after a long period of time in this example because it's a way of comparing current content with the 2015 content.
 * **New files discovered:** |PROJNAME| has observed that files within d:\\MyData-Year-2015-Hard-Drive\\files-while-traveling-in-2016 never had their persistent information saved so their information was saved as part of the above update-digests command (see lines with "Creating info").
 * **Potential corruption:** |PROJNAME| detected potential bitrot or other sneaky corruption for the file 20210704_222527.jpg. Sneaky corruption is when the digest for a file differs from the last time it was captured despite the file date/time and size not having changed. With the file 20210704_222527.jpg in the example, it had one digest in 2015, but has a different digest now in 2022, but the file's date/time and size have not changed. It is typically bad practice and not typical for programs to update files and force an older date so |PROJNAME| diff views such as a potentially bad thing and alerts you so you can investigate.
@@ -1499,11 +1507,11 @@ So already we see one issue with that older hard drive. Let's say you prefer a m
 
 .. code-block:: console
 
-    atbu diff per-file: d:\MyData-Year-2015-Hard-Drive e:\MyData-Year-2022-Hard-Drive --action move-duplicates --md d:\MyData-Year-2015-Hard-Drive-Duplicates
+    atbu diff --per-file --la d:\MyData-Year-2015-Hard-Drive --lb e:\MyData-Year-2022-Hard-Drive --action move-duplicates --md d:\MyData-Year-2015-Hard-Drive-Duplicates
 
 .. code-block:: console
 
-    (venv2-3.9.12) PS C:\> atbu diff per-file: d:\MyData-Year-2015-Hard-Drive e:\MyData-Year-2022-Hard-Drive --action move-duplicates --md d:\MyData-Year-2015-Hard-Drive-Duplicates
+    (venv2-3.9.12) PS C:\> atbu diff --per-file --la d:\MyData-Year-2015-Hard-Drive --lb e:\MyData-Year-2022-Hard-Drive --action move-duplicates --md d:\MyData-Year-2015-Hard-Drive-Duplicates
     atbu - v0.01
     Location A ............................. d:\MyData-Year-2015-Hard-Drive
     Location A persist types ............... ['per-file']
