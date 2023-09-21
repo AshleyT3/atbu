@@ -1,6 +1,6 @@
 .. |PROJNAMELONG| replace:: ATBU Backup & Persistent File Information
 .. |PROJNAME| replace:: ATBU
-.. |PKGNAME| replace:: atbu-pkg
+.. atbu-pkg replace:: atbu-pkg
 
 |PROJNAMELONG| is a local/cloud backup/restore command-line utility with optional deduplication and bitrot detection, plus a little utility with useful digest-based directory file diff'ing. Click to go to Setup, then read desired walkthroughs. Software is beta.
 
@@ -61,11 +61,11 @@ Setup
 
 After your environment is setup with Python...
 
-To use |PROJNAME|, first install it using pip |PKGNAME|:
+To use |PROJNAME|, first install it using pip atbu-pkg:
 
 .. code-block::
 
-   pip install |PKGNAME|
+   pip install atbu-pkg
 
 The remaining sections below flow from top to bottom as a form of general walkthrough, showing how to perform various key tasks.
 
@@ -1595,11 +1595,11 @@ Setup
 
 After your environment is setup with Python...
 
-To use |PROJNAME|, first install it using pip |PKGNAME|:
+To use |PROJNAME|, first install it using pip atbu-pkg:
 
 .. code-block::
 
-   pip install |PKGNAME|
+   pip install atbu-pkg
 
 
 .. contents:: Table of Contents
