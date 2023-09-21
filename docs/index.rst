@@ -9,8 +9,12 @@
    getting-started
    backup-restore-walkthrough
    securing-with-yubikey
+   technotes
+
+.. toctree::
+   :maxdepth: 3
+
    persistent-file-info-walkthrough
-   internals
 
 Indices and tables
 ==================

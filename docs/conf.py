@@ -44,11 +44,11 @@ if is_running_on_rtd:
 # -- Project information -----------------------------------------------------
 
 project = 'ATBU'
-copyright = '2022, Ashley R. Thomas'
+copyright = '2022, 2023, Ashley R. Thomas'
 author = 'Ashley R. Thomas'
 
 # The full version, including alpha/beta/rc tags
-release = '0.001'
+release = '0.036'
 
 
 # -- General configuration ---------------------------------------------------
