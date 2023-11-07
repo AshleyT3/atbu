@@ -3030,6 +3030,24 @@ class Backup:
         try:
             logging.info(f"Scheduling hashing jobs...")
             for file_info in self._source_files:
+
+                try:
+                    file_info.refresh_stat_info()
+                except OsStatError as ex:
+                    msg = (
+                        f"The 'stat' operation failed, skipping backup of file: "
+                        f"path={file_info.path} Error occurred: {exc_to_string(ex)}"
+                    )
+                    self.anomalies.append(
+                        BackupAnomaly(
+                            kind=ANOMALY_KIND_EXCEPTION,
+                            file_info=file_info,
+                            exception=ex,
+                            message=msg,
+                        )
+                    )
+                    continue
+
                 if (
                     self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL
                     or self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID

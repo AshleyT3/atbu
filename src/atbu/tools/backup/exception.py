@@ -216,3 +216,9 @@ class ConfigMigrationError(AtbuException):
     def __init__(self, message: str = None, cause=None):
         self._cause = cause
         super().__init__(message=message, cause=cause)
+
+
+class OsStatError(AtbuException):
+    def __init__(self, message: str = None, cause=None):
+        self._cause = cause
+        super().__init__(message=message, cause=cause)

@@ -38,6 +38,7 @@ from atbu.common.hasher import (
 )
 
 from ..backup.exception import (
+    OsStatError,
     PersistentFileInfoError,
     InvalidPersistentFileInfoError,
     PersistentFileInfoVersionMismatch,
@@ -165,7 +166,17 @@ class FileInformation:
             raise StateChangeDisallowedError(
                 f"Value should be set from persisted state, refresh disallowed."
             )
-        sr: os.stat_result = os.stat(self.path)
+        try:
+            sr: os.stat_result = os.stat(self.path)
+        except OSError as ex:
+            error_message = (
+                f"OS 'stat' failure, cannot retrieve file information. " +
+                f"{exc_to_string(ex)}"
+            )
+            logging.error(error_message)
+            raise OsStatError(
+                error_message
+            ).with_traceback(ex.__traceback__) from ex
         self._size_in_bytes = sr.st_size
         self._modified_time_posix = sr.st_mtime
         self._accessed_time_posix = sr.st_atime
