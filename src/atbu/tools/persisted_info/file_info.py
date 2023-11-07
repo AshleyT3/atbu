@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
 import configparser
 from typing import Callable, Union
@@ -206,9 +206,12 @@ class FileInformation:
     def _get_date_stamp_ISO8601(self, posix_timestamp: float, tz=None):
         if posix_timestamp is None:
             self.refresh_stat_info()
-        return FileInformation.get_datetime_stamp_ISO8601(
-            datetime.fromtimestamp(posix_timestamp, tz=tz)
+        dt_value = datetime(
+            1970, 1, 1, tzinfo=timezone.utc
+        ) + timedelta(
+            seconds=posix_timestamp
         )
+        return FileInformation.get_datetime_stamp_ISO8601(dt=dt_value)
 
     @property
     def modified_date_stamp_ISO8601_local(self):
