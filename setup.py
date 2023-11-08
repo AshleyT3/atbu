@@ -14,6 +14,11 @@
 
 import setuptools
 
+atbu_constants = {}
+with open("./src/atbu/tools/backup/constants.py", encoding="utf-8") as fp:
+    # pylint: disable-next=exec-used
+    exec(fp.read(), atbu_constants)
+
 # Redirect from long_description to github README.rst since
 # PyPi chokes on this particular README.rst.
 # with open("README.rst", "r", encoding="utf-8") as fh:
@@ -21,7 +26,7 @@ import setuptools
 
 setuptools.setup(
     name="atbu-pkg",
-    version="0.0.36",
+    version=atbu_constants['ATBU_VERSION_STRING'],
     author="Ashley R. Thomas",
     author_email="ashley.r.thomas.701@gmail.com",
     description= (
