@@ -245,21 +245,25 @@ class FileInformation:
             return self._get_date_stamp_ISO8601(
                 posix_timestamp=self.modified_time_posix, tz=timezone.utc
             )
-        except OSError as ex:
+        except Exception as ex: # Expecting OSError, OverflowError, but disallowing any popagation.
             if self.path not in FileInformation.path_stamp_failure_warning_tracker:
                 FileInformation.path_stamp_failure_warning_tracker.add(self.path)
                 logging.warning(
                     f"modified_date_stamp_ISO8601_utc: "
                     f"Failed to get ISO8601 stamp. "
-                    f"You can likely ignore this warning. "
+                    f"mt_posix={self.modified_time_posix} "
+                    f"The file has an invalid modified time. "
+                    f"Examine/repair the file if desired. "
                     f"path={self.path}: {exc_to_string(ex)}"
                 )
-            return (
-                f"failed-for-stamp:"
-                f"errno={ex.winerror},"
-                f"msg={ex.strerror},"
-                f"mt_posix={self.modified_time_posix}"
-            )
+            if ex is OSError:
+                return (
+                    f"failed-for-stamp:"
+                    f"errno={ex.winerror},"
+                    f"msg={ex.strerror},"
+                    f"mt_posix={self.modified_time_posix}"
+                )
+            return f"failed-for-stamp: ex={ex},mt_posix={self.modified_time_posix}"
 
     @property
     def accessed_date_stamp_ISO8601_local(self):
