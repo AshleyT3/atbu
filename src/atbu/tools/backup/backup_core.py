@@ -3165,11 +3165,10 @@ class Backup:
                     # Store backup information with backup storage using a generic
                     # prefix BACKUP_INFO_STORAGE_PREFIX, where it will be renamed as
                     # needed during recovery.
-                    db_storage_basename = (
+                    fi_backup_info.storage_object_name = (
                         f"{BACKUP_INFO_STORAGE_PREFIX}-"
                         f"{backup_start_time_stamp}{BACKUP_INFO_EXTENSION}"
                     )
-                    fi_backup_info.storage_object_name = db_storage_basename
 
                     f = self._subprocess_pipeline.submit(
                         BackupPipelineWorkItem(
