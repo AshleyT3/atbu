@@ -495,7 +495,6 @@ class SpecificBackupInformation:
                 json.dumps(
                     self,
                     cls=backup_info_json_enc_dec.get_json_encoder_class(),
-                    indent=4,
                 )
             )
 
@@ -838,12 +837,10 @@ class BackupInformationDatabase:
             path=backup_database_file_path, not_exist_ok=True
         )
         with open(backup_database_file_path, "w", encoding="utf-8") as backup_info_file:
-            backup_info_file.write(
-                json.dumps(
-                    self,
-                    cls=backup_info_json_enc_dec.get_json_encoder_class(),
-                    indent=4,
-                )
+            json.dump(
+                obj=self,
+                fp=backup_info_file,
+                cls=backup_info_json_enc_dec.get_json_encoder_class(),
             )
 
     @staticmethod
