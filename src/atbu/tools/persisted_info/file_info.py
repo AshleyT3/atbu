@@ -306,7 +306,7 @@ class FileInformation:
         # By default, disallowed refresh of loaded persisted state.
         self._implicit_refresh_allowed = False
         self.path = d["path"]
-        # Follwoing saves original POSIX stamp for potential usage in
+        # Following saves original POSIX stamp for potential usage in
         # debugging and/or later time-handling code mods.
         self._modified_time_posix = d["lastmodified"]
         self._accessed_time_posix = d["lastaccessed"]
