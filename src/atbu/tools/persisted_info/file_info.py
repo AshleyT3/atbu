@@ -18,6 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import logging
 import os
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import re
 import configparser
@@ -67,12 +68,19 @@ class FileInformation:
     FILE_READ_SIZE_5MB = 1024 * 1024 * 5
     path_stamp_failure_warning_tracker = set()
 
-    def __init__(self, path: str):
+    def __init__(self, path: Union[str, Path]):
+        # Use 'pathlib.Path' for setup while retaining 'str' values.
+        lpath = path
+        if isinstance(lpath, Path):
+            path = str(path)
+        else:
+            lpath = Path(lpath)
         self._implicit_refresh_allowed = True
         self.path = path
-        self.dirname = os.path.dirname(path)
-        self.basename = os.path.basename(path)
-        self.basename_no_ext, self.ext = os.path.splitext(self.basename)
+        self.dirname = str(lpath.parent)
+        self.basename = str(lpath.name)
+        self.basename_no_ext = str(lpath.stem)
+        self.ext = str(lpath.suffix)
         self._size_in_bytes = None
         self._modified_time_posix = None
         self._accessed_time_posix = None  # Retained to allow use of utime.

@@ -56,8 +56,11 @@ from atbu.tools.backup.storage_interface.base import (
 
 from atbu.tools.backup.config import AtbuConfig
 from atbu.tools.backup.storage_def_credentials import StorageDefCredentialSet
+from atbu.tools.backup.backup_constants import DatabaseFileType
+from atbu.tools.backup.backup_dao import BackupInformationDatabase, DetectedFileType
 from atbu.common.exception import InvalidStateError  # pylint: disable=unused-import
 
+ALTERNATING_DB_TYPE = "alternating_db_type"
 
 def copy2_pacifier_patch(src, dst, *args, **kwargs):
     print(f"Copying {src} -> {dst}")
@@ -1349,6 +1352,37 @@ def validate_backup_recovery(
         pass
 
 
+def get_filesystem_storage_config(
+    storage_specifier
+) -> AtbuConfig:
+    (
+        atbu_cfg,
+        storage_def_name_from_cfg,
+        _,
+    ) = AtbuConfig.access_filesystem_storage_config(
+        storage_location_path=storage_specifier,
+        resolve_storage_def_secrets=False,
+        create_if_not_exist=False,
+        prompt_to_create=False,
+    )
+    return atbu_cfg
+
+def get_backup_info_db(
+    storage_specifier,
+    backup_base_name,
+    atbu_cfg = None,
+) -> tuple[BackupInformationDatabase, AtbuConfig]:
+    if not atbu_cfg:
+        atbu_cfg = get_filesystem_storage_config(storage_specifier=storage_specifier)
+    bid = BackupInformationDatabase.load(
+        backup_base_name=backup_base_name,
+        backup_info_dir=atbu_cfg.get_primary_backup_info_dir(),
+        force_db_type=DatabaseFileType.JSON,
+        create_if_not_exist=False,
+    )
+    return bid, atbu_cfg
+
+
 def validate_backup_restore(
     pytester,
     tmp_path,
@@ -1356,6 +1390,8 @@ def validate_backup_restore(
     initial_expected_total_files,
     storage_specifier,
     compression_type,
+    db_type,
+    backup_base_name,
     backup_timeout,
     restore_timeout,
     initial_backup_stdin=None,
@@ -1370,20 +1406,35 @@ def validate_backup_restore(
     with DirInfo(source_directory) as source_dir_info:
         source_dir_info.gather_info(start_gathering_digests=True)
 
-        rr = run_atbu(
-            pytester,
-            tmp_path,
+        args1 = [
             "backup",
             "--full",
             source_directory,
             storage_specifier,
             "-z",
             compression_type,
+        ]
+
+        if db_type is not None:
+            args1.extend(["--db-type", db_type])
+
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            *args1,
             stdin=initial_backup_stdin,
             timeout=backup_timeout,
             log_base_name="backup1",
         )
         assert rr.ret == ExitCode.OK
+
+        if db_type is not None:
+            bid, _ = get_backup_info_db(
+                storage_specifier=storage_specifier,
+                backup_base_name=backup_base_name
+            )
+            ft_to_check = DatabaseFileType.SQLITE if db_type == "default" else DatabaseFileType(db_type)
+            assert bid.loaded_backup_db_file_type == ft_to_check
 
         lsi = extract_backup_summary_from_log(
             output_lines=rr.outlines,
@@ -1758,6 +1809,90 @@ class SourceDirInfo:
     restore_path: Path
 
 
+def validate_db_matches_after_alternating_db_types(
+    storage_specifier: str,
+    backup_base_name,
+):
+    atbu_cfg: AtbuConfig
+    (
+        atbu_cfg,
+        storage_def_name_from_cfg,
+        _,
+    ) = AtbuConfig.access_filesystem_storage_config(
+        storage_location_path=storage_specifier,
+        resolve_storage_def_secrets=False,
+        create_if_not_exist=False,
+        prompt_to_create=False,
+    )
+    assert backup_base_name.lower() == storage_def_name_from_cfg
+
+    db_num = 0
+    db_json_n = os.path.join(
+        atbu_cfg.get_primary_backup_info_dir(),
+        f"{db_num}.json",
+    )
+    db_json_first = db_json_n
+
+    # Load last history DB from above backup, and then save it as JSON.
+    bid1 = BackupInformationDatabase.load(
+        backup_base_name=backup_base_name,
+        backup_info_dir=atbu_cfg.get_primary_backup_info_dir(),
+        force_db_type=DatabaseFileType.JSON,
+        create_if_not_exist=False,
+    )
+    bid1.save(
+        backup_database_file_path=db_json_n,
+        json_indent=4,
+    )
+
+    # The first (starting) JSON history DB is db_json_n.
+    # Load that JSON, save it as SQLite, load that SQLite, save it as JSON, rinse/repeat.
+    # Finally, verify contents of db_json_first == db_json_last (see below).
+    for j in range(0, 2):
+
+        # Load JSON, save SQLite:
+        bid2 = BackupInformationDatabase.load(
+            backup_database_file_path=db_json_n,
+            create_if_not_exist=False,
+            force_db_type=DatabaseFileType.SQLITE, # affects saving.
+        )
+        assert bid2.loaded_backup_db_file_type == DatabaseFileType.JSON
+        db_num += 1
+        db_sqlite_n = os.path.join(
+            atbu_cfg.get_primary_backup_info_dir(),
+            f"{db_num}.sqlite",
+        )
+        bid2.save(
+            backup_database_file_path=db_sqlite_n,
+        )
+
+        # Load SQLite, save JSON:
+        bid3 = BackupInformationDatabase.load(
+            backup_database_file_path=db_sqlite_n,
+            create_if_not_exist=False,
+            force_db_type=DatabaseFileType.JSON, # affects saving.
+        )
+        assert bid3.loaded_backup_db_file_type == DatabaseFileType.SQLITE
+        db_num += 1
+        db_json_n = os.path.join(
+            atbu_cfg.get_primary_backup_info_dir(),
+            f"{db_num}.json",
+        )
+        bid3.save(
+            backup_database_file_path=db_json_n,
+            json_indent=4,
+        )
+        db_json_last = db_json_n
+
+    # Verify the first JSON matches the last/final JSON:
+    with (
+        open(db_json_first, mode="r", encoding="utf-8") as first_json_db,
+        open(db_json_last, mode="r", encoding="utf-8") as last_json_db,
+    ):
+        first_json_content = first_json_db.readlines()
+        last_json_content = last_json_db.readlines()
+        assert first_json_content == last_json_content
+
 def validate_backup_restore_history(
     pytester,
     tmp_path,
@@ -1766,10 +1901,15 @@ def validate_backup_restore_history(
     expected_total_files,
     storage_specifier,
     compression_type,
+    db_type,
+    backup_base_name,
     backup_timeout,
     restore_timeout,
     initial_backup_stdin=None,
 ):
+    is_alternating_db_type_test = db_type == ALTERNATING_DB_TYPE
+    cur_alternating_db_type = DatabaseFileType.SQLITE
+
     source_directory = Path(source_directory)
     test_backup_restore_dir_info: list[SourceDirInfo] = [
         SourceDirInfo(
@@ -1803,15 +1943,29 @@ def validate_backup_restore_history(
         test_backup_restore_dir_info.append(last_br_info)
 
     for i, br_info in enumerate(test_backup_restore_dir_info):
-        rr = run_atbu(
-            pytester,
-            tmp_path,
+
+        args1 =[
             "backup",
             "-f" if i == 0 else "-i",
             str(br_info.dir_path),
             storage_specifier,
             "-z",
             compression_type,
+        ]
+
+        if is_alternating_db_type_test:
+            if cur_alternating_db_type == DatabaseFileType.JSON:
+                cur_alternating_db_type = DatabaseFileType.SQLITE
+            else:
+                cur_alternating_db_type = DatabaseFileType.JSON
+            args1.extend(["--db-type", cur_alternating_db_type.value])
+        elif db_type is not None:
+            args1.extend(["--db-type", db_type])
+
+        rr = run_atbu(
+            pytester,
+            tmp_path,
+            *args1,
             stdin=initial_backup_stdin if i == 0 else None,
             timeout=backup_timeout,
             log_base_name=f"backup{i}",
@@ -1855,6 +2009,12 @@ def validate_backup_restore_history(
                 assert directories_match_entirely_by_order(
                     di1=source_dir_info, di2=restore_dir_info
                 )
+
+    if is_alternating_db_type_test:
+        validate_db_matches_after_alternating_db_types(
+            storage_specifier=storage_specifier,
+            backup_base_name=backup_base_name,
+        )
     pass
 
 

@@ -17,11 +17,9 @@ r"""Recover-related command line handlers.
 from concurrent.futures import Future
 from concurrent import futures
 from concurrent.futures import ALL_COMPLETED
-from datetime import datetime
 import glob
 import os
 import logging
-import re
 from shutil import copy2
 import tempfile
 
@@ -43,7 +41,6 @@ from atbu.mp_pipeline.mp_pipeline import (
 )
 
 from .exception import (
-    BackupInformationFileTimestampNotFound,
     BackupInformationRecoveryFailed,
     StorageDefinitionNotFoundError,
 )
@@ -56,46 +53,16 @@ from .backup_core import (
     BACKUP_OPERATION_NAME_RESTORE,
     ANOMALY_KIND_UNEXPECTED_STATE,
     BACKUP_INFO_EXTENSION,
-    BACKUP_INFO_TIME_STAMP_FORMAT,
     BackupAnomaly,
     BackupFileInformation,
     StorageDefinition,
     file_operation_future_result,
     BackupPipelineWorkItem,
     is_qualified_for_operation,
+    remove_timestamp_from_backupinfo_filename,
     run_operation_stage,
+    sort_backup_info_filename_list,
 )
-
-
-def sort_backup_info_filename_list(filename_list: list[str]):
-    re_match_time_stamp = re.compile(rf"(.*)-(\d{{8}}-\d{{6}}){BACKUP_INFO_EXTENSION}")
-    temp_list: list[str] = []
-    for filename in filename_list:
-        m = re_match_time_stamp.match(string=filename)
-        if not m:
-            continue
-        date_time_stamp_str = m.groups()[1]
-        dt = datetime.strptime(date_time_stamp_str, BACKUP_INFO_TIME_STAMP_FORMAT)
-        temp_list.append(
-            (
-                filename,
-                dt,
-            )
-        )
-    temp_list.sort(key=lambda t: t[1])
-    return list(map(lambda t: t[0], temp_list))
-
-
-def remove_timestamp_from_backupinfo_filename(filename: str):
-    re_match_time_stamp = re.compile(
-        rf"(.*)(-\d{{8}}-\d{{6}})({BACKUP_INFO_EXTENSION})"
-    )
-    m = re_match_time_stamp.match(filename)
-    if not m:
-        raise BackupInformationFileTimestampNotFound(
-            f"The backup information timestamp was not found: {filename}"
-        )
-    return f"{m.groups()[0]}{m.groups()[2]}"
 
 
 def handle_restore_backup_info(
@@ -141,7 +108,9 @@ listed above. If you are uncertain, you may want to backup those files before pr
             c = interface.get_container(container_name=sd.container_name)
             restore_file_list: list[RestoreFile] = []
             backup_info_objects = c.list_objects(prefix=sd.storage_def_name)
-            backup_info_objects.extend(c.list_objects(prefix=BACKUP_INFO_STORAGE_PREFIX))
+            backup_info_objects.extend(
+                c.list_objects(prefix=BACKUP_INFO_STORAGE_PREFIX)
+            )
             for bio in backup_info_objects:
                 restore_name = bio.name.lower()
                 if restore_name.startswith(BACKUP_INFO_STORAGE_PREFIX):
@@ -149,7 +118,8 @@ listed above. If you are uncertain, you may want to backup those files before pr
                     # Upon recovery, replace the generic portion with the specific
                     # storage definition name
                     restore_name = (
-                        sd.storage_def_name + restore_name[len(BACKUP_INFO_STORAGE_PREFIX):]
+                        sd.storage_def_name
+                        + restore_name[len(BACKUP_INFO_STORAGE_PREFIX) :]
                     )
                 print("Building file information for storage objects...")
                 print(f"    object name .... {bio.name}")
@@ -308,9 +278,7 @@ def handle_recover(args):
     else:
         # Non-filesystem (cloud) case.
         if storage_def_name is None:
-            atbu_stg_cfg = AtbuConfig.create_from_file(
-                path=storage_def_config_filename
-            )
+            atbu_stg_cfg = AtbuConfig.create_from_file(path=storage_def_config_filename)
             storage_def_name = atbu_stg_cfg.storage_def_name
             storage_def_name = storage_def_name.lower()
         atbu_cfg, _, _ = AtbuConfig.access_cloud_storage_config(

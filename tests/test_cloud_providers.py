@@ -84,7 +84,6 @@ from .common_helpers import (
     create_test_data_directory_minimal,
     DirInfo,
     run_atbu,
-    directories_match_entirely_by_order,
     extract_storage_definition_and_config_file_path,
     validate_backup_dryrun,
     validate_backup_recovery,
@@ -92,6 +91,8 @@ from .common_helpers import (
     validate_backup_restore_history,
     validate_cred_export_import,
 )
+
+from atbu.tools.backup.backup_constants import DatabaseFileType
 
 TEST_BACKUP_NAME = "atbu-backup-5b497bb3-c9ef-48a9-af7b-2327fc17fb65"
 TEST_CONTAINER_BASE_NAME = "atbu-bucket"
@@ -506,6 +507,8 @@ def test_backup_restore(
         initial_expected_total_files=total_files,
         storage_specifier=storage_specifier,
         compression_type="normal",
+        db_type=None,
+        backup_base_name=None,
         backup_timeout=60 * 5,
         restore_timeout=60 * 5,
         initial_backup_stdin=None,
@@ -561,6 +564,8 @@ def test_backup_restore__secrets_prompt(
         initial_expected_total_files=total_files,
         storage_specifier=storage_specifier,
         compression_type="normal",
+        db_type=None,
+        backup_base_name=None,
         backup_timeout=60 * 5,
         restore_timeout=60 * 5,
         initial_backup_stdin=None,
@@ -616,6 +621,8 @@ def test_backup_restore_history(
         expected_total_files=total_files,
         storage_specifier=storage_specifier,
         compression_type="normal",
+        db_type=None,
+        backup_base_name=None,
         backup_timeout=60 * 5,
         restore_timeout=60 * 5,
         initial_backup_stdin=None,

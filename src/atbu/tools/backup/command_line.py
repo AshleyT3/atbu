@@ -44,16 +44,16 @@ from atbu.mp_pipeline.mp_global import (
 from atbu.common.hasher import (
     DEFAULT_HASH_ALGORITHM,
 )
-from atbu.tools.backup.config import (
-    set_automated_testing_mode,
-    get_automated_testing_mode,
-    register_storage_def_config_override,
-)
-
 
 from .constants import *
 from .exception import CredentialSecretFileNotFoundError, YubiKeyBackendNotAvailableError
 from .global_hasher import GlobalHasherDefinitions
+from .config import (
+    set_automated_testing_mode,
+    get_automated_testing_mode,
+    register_storage_def_config_override,
+)
+from .backup_constants import DatabaseFileType
 from .backup_core import (
     BACKUP_COMPRESSION_CHOICES,
     BACKUP_COMPRESSION_DEFAULT,
@@ -481,12 +481,12 @@ def create_argparse():
 
     # Uncomment to allow --debug-server (for use with VS Code pydebug)
     # Activate the debug server to listen on specified port, wait for a client connect.
-    # parser.add_argument(
-    #     "--debug-server",
-    #     help=argparse.SUPPRESS,
-    #     type=int,
-    #     required=False,
-    # )
+    parser.add_argument(
+        "--debug-server",
+        help=argparse.SUPPRESS,
+        type=int,
+        required=False,
+    )
 
     # Specified by automated tests to be used by this utility as needed for E2E tests.
     parser.add_argument(
@@ -758,6 +758,22 @@ same since the last backup, but the digests are different.""",
         choices=BACKUP_COMPRESSION_CHOICES,
         help=f"""Set the backup compression level. The default is '{BACKUP_COMPRESSION_DEFAULT}'.
 """,
+    )
+    parser_backup.add_argument(
+        "--db-type",
+        choices=[
+            DatabaseFileType.DEFAULT.value,
+            DatabaseFileType.JSON.value,
+            DatabaseFileType.SQLITE.value,
+        ],
+        default=DatabaseFileType.DEFAULT.value,
+        help=
+"""When saving the history database, force using a particular history database type other than
+the default. The default is to use whatever was detected at the time the history database was
+loaded, or if a new database is being created, 'sqlite'. Specify 'json' to force using a textual
+JSON format. Once using a JSON format, specify 'sqlite' to force the format back to sqlite.
+The JSON format can be useful for those who have a relatively small set of files where the
+convenience of the JSON text file is both managable and worthwhile.""",
     )
     parser_backup.add_argument(
         "--dryrun",

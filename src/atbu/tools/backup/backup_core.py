@@ -1,4 +1,4 @@
-# Copyright 2022 Ashley R. Thomas
+# Copyright 2022-2024 Ashley R. Thomas
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import re
 import shutil
 import tempfile
 import time
-from shutil import copy2
 import logging
 from pathlib import Path
 from io import SEEK_SET
@@ -38,9 +37,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
 )
 import queue
-import json
 from typing import BinaryIO, Callable, Iterator, Union
-from collections import defaultdict
 import struct
 
 from atbu.common.simple_report import (
@@ -48,11 +45,8 @@ from atbu.common.simple_report import (
     SimpleReport,
 )
 from atbu.common.util_helpers import (
-    convert_to_pathlib_path,
-    create_numbered_backup_of_file,
     posix_timestamp_to_ISO8601_utc_stamp,
 )
-from atbu.common.multi_json_enc_dec import MultiEncoderDecoder
 from atbu.mp_pipeline.mp_global import (
     get_process_pool_exec_init_func,
     get_process_pool_exec_init_args,
@@ -78,59 +72,31 @@ from atbu.common.aes_cbc import (
     AesCbcPaddingDecryptor,
 )
 
+
 from .constants import *
 from .exception import *
 from .global_hasher import GlobalHasherDefinitions
-from .credentials import CredentialByteArray
-from ..persisted_info.file_info import FileInformation
 from .chunk_reader import (
     CHUNK_READER_CB_CIPHERTEXT,
     CHUNK_READER_CB_INPUT_BYTES_MANUAL_APPEND,
     open_chunk_reader,
 )
+from .credentials import CredentialByteArray
 from .storage_interface.base import (
     DEFAULT_MAX_SIMULTANEOUS_FILE_BACKUPS,
     StorageInterface,
     StorageInterfaceFactory,
 )
-
-BACKUP_INFO_STORAGE_PREFIX = f"zz-backup-info"
-
-BACKUP_INFO_EXTENSION = f".{ATBU_ACRONYM}inf"
-BACKUP_INFO_TEMP_EXTENSION = f".{ATBU_ACRONYM}inf.tmp"
-
-BACKUP_INFO_MAJOR_VERSION = 0
-BACKUP_INFO_MINOR_VERSION = 1
-BACKUP_INFO_MAJOR_VERSION_STRING = (
-    f"{BACKUP_INFO_MAJOR_VERSION}.{BACKUP_INFO_MINOR_VERSION:02}"
-)
-BACKUP_INFO_BACKUPS_SECTION_NAME = "backups"
-BACKUP_INFO_BASE_NAME = "backup_base_name"
-BACKUP_INFO_SPECIFIC_NAME = "backup_specific_name"
-BACKUP_INFO_START_TIME_NAME = "backup_start_time_utc"
-BACKUP_INFO_TIME_STAMP_FORMAT = "%Y%m%d-%H%M%S"
-BACKUP_INFO_STORAGE_OBJECT_NAME_SALT = "object_name_hash_salt"
-BACKUP_INFO_BACKUP_TYPE_NAME = "backup_type"
-BACKUP_INFO_ALL_SECTION_NAME = "all"
-
-BACKUP_OPERATION_NAME_BACKUP = "Backup"
-BACKUP_OPERATION_NAME_RESTORE = "Restore"
-BACKUP_OPERATION_NAME_VERIFY = "Verify"
-
-BACKUP_PIPE_CMD_COMPRESSION_VIA_PIPE_ABORT = "CompViaPipe=False"
-BACKUP_PIPE_CMD_COMPRESSION_VIA_PIPE_BEGIN = "CompViaPipe=True"
-
-BACKUP_PIPELINE_STAGE_HASHING = 0
-BACKUP_PIPELINE_STAGE_DECISIONS = 1
-BACKUP_PIPELINE_STAGE_COMPRESSION = 2
-BACKUP_PIPELINE_STAGE_BACKUP = 3
+from .backup_dao import *
 
 
 def _is_debug_logging():
     return logging.getLogger().getEffectiveLevel() <= logging.DEBUG
 
 
-def _is_logging_verbosity_at_level_or_more(required_level: int, required_verbosity: int) -> bool:
+def _is_logging_verbosity_at_level_or_more(
+    required_level: int, required_verbosity: int
+) -> bool:
     eff_level = logging.getLogger().getEffectiveLevel()
     if eff_level > required_level:
         return False
@@ -285,628 +251,6 @@ class StorageDefinition:
 
     def create_decryptor(self, IV):
         return AesCbcPaddingDecryptor(key=self.encryption_key, IV=IV)
-
-
-class BackupFileInformation(FileInformation):
-    def __init__(self, path: str, discovery_path: str = None):
-        """If adding/removing arguments, update backup_info_json_enc_dec."""
-        super().__init__(path=path)
-        self._path_without_root = os.path.splitdrive(path)[1]
-        if self._path_without_root[0] in ["\\", "/"]:
-            self._path_without_root = self._path_without_root[1:]
-        self._discovery_path = discovery_path
-        self._is_backup_encrypted = False
-        self.is_successful = False
-        self.exception = None
-        self._ciphertext_hash_during_backup = None
-        self.encryption_IV: bytes = None
-        self.storage_object_name = None
-        self.is_unchanged_since_last = False
-        self.deduplication_option = None
-        self.is_backing_fi_digest = False
-        self.backing_fi: BackupFileInformation = None  # Not persisted
-        self.cleartext_hash_during_restore = None  # Not persisted
-        self.ciphertext_hash_during_restore = None  # Not persisted
-        self._restore_path_override = None  # Not persisted
-        self.populate_from_header: bool = False  # Not persisted
-        self.is_decrypt_operation: bool = False  # Not persisted
-        self.is_compressed: bool = False  # Not peristed
-        self.compressed_file_path: str = None  # Not persisted
-        self.compressed_size: int = (
-            None  # Not persisted (what was written to pipe for file)
-        )
-
-    @property
-    def path_for_logging(self):
-        if self.discovery_path is not None:
-            return self.path_without_discovery_path
-        return self.path_without_root
-
-    @property
-    def path_without_root(self):
-        return self._path_without_root
-
-    @property
-    def nc_path_without_root(self):
-        return os.path.normcase(self.path_without_root)
-
-    @property
-    def discovery_path(self):
-        return self._discovery_path
-
-    @property
-    def nc_discovery_path(self):
-        return os.path.normcase(self.discovery_path)
-
-    @property
-    def path_without_discovery_path(self):
-        if self.discovery_path is None:
-            raise BackupFileInformationError(
-                f"The file information has no discovery path: {self.path}"
-            )
-        if not os.path.normcase(self.path).startswith(self.nc_discovery_path):
-            raise BackupFileInformationError(
-                f"The discovery path cannot be found: "
-                f"disc_path={self.discovery_path} path={self.path}"
-            )
-        if os.path.normcase(self.path) == self.nc_discovery_path:
-            return self.path
-        return self.path[len(self.discovery_path) + 1 :]
-
-    @property
-    def restore_path_override(self):
-        return self._restore_path_override
-
-    @restore_path_override.setter
-    def restore_path_override(self, value):
-        self._restore_path_override = value
-
-    @property
-    def restore_path(self):
-        if self._restore_path_override is not None:
-            return self.restore_path_override
-        return self.path_without_root
-
-    @property
-    def is_backup_encrypted(self):
-        if self.backing_fi:
-            return self.backing_fi.is_backup_encrypted
-        return self._is_backup_encrypted
-
-    @is_backup_encrypted.setter
-    def is_backup_encrypted(self, value):
-        self._is_backup_encrypted = value
-
-    @property
-    def ciphertext_hash_during_backup(self):
-        if not self.is_backup_encrypted:
-            raise InvalidStateError(
-                f"Call to ciphertext_hash_during_backup when backup not encrypted. "
-                f"If related to retrieval (i.e., restore/verify), "
-                f"was setting is_backup_encrypted overlooked?"
-            )
-        if self.is_unchanged_since_last and self.backing_fi:
-            return self.backing_fi.ciphertext_hash_during_backup
-        return self._ciphertext_hash_during_backup
-
-    @ciphertext_hash_during_backup.setter
-    def ciphertext_hash_during_backup(self, value):
-        self._ciphertext_hash_during_backup = value
-
-    def to_serialization_dict(self) -> dict:
-        d = super().to_serialization_dict()
-        d = d | {
-            "_type": "BackupFileInformation",
-            "_discovery_path": self._discovery_path,
-            "is_successful": self.is_successful,
-            "exception": self.exception
-            if self.exception is None
-            else str(self.exception),
-            "ciphertext_hash": self._ciphertext_hash_during_backup,
-            "encryption_IV": self.encryption_IV.hex() if self.encryption_IV else None,
-            "storage_object_name": self.storage_object_name,
-            "is_unchanged_since_last": self.is_unchanged_since_last,
-            "is_backing_fi_digest": self.is_backing_fi_digest,
-            "deduplication_option": self.deduplication_option,
-        }
-        return d
-
-    def from_serialization_dict(self, d: dict):
-        super().from_serialization_dict(d)
-        self._discovery_path = d["_discovery_path"]
-        self.is_successful = d["is_successful"]
-        self.exception = d["exception"]
-        self._ciphertext_hash_during_backup = d["ciphertext_hash"]
-        self.storage_object_name = d["storage_object_name"]
-        self.is_unchanged_since_last = d["is_unchanged_since_last"]
-        self.is_backing_fi_digest = d["is_backing_fi_digest"]
-        self.deduplication_option = d["deduplication_option"]
-        if isinstance(d["encryption_IV"], str):
-            self.encryption_IV = bytes.fromhex(d["encryption_IV"])
-            self._is_backup_encrypted = True
-        else:
-            self.encryption_IV = None
-            self._is_backup_encrypted = False
-
-
-class SpecificBackupInformation:
-    """Represents backup information, essential a list of BackupFileInformation instances
-    representing files that were backed up.
-
-    The information can be in-memory within the instance, or saved/loaded from disk. See ach
-    method for more details.
-
-    General structure/schema:
-
-        List of BackupFileInformation in memory or saved to an ATBU backup information file.
-
-        Can hold information for one or more backups (even though below saves for one backup).
-
-        Layout::
-
-            {
-                "name": "ATBU Backup Information",
-                "version": "0.1",
-                "backups": { // all backup information for this and any other backups
-                    "<storage_def_name>": {
-                        "<specific_backup_name_for_storage_def_name>": {
-                            "all": [
-                                BackupFileInformation instances
-                            ]
-                        }
-                    }
-
-                }
-            }
-
-    """
-
-    def __init__(
-        self,
-        backup_base_name: str = None,
-        specific_backup_name: str = None,
-        backup_start_time_utc: datetime = None,
-        object_name_hash_salt: bytes = None,
-        backup_type: str = None,
-    ):
-        """If adding/removing arguments, update backup_info_json_enc_dec."""
-        self.backup_start_time_utc = backup_start_time_utc
-        self.backup_base_name = backup_base_name
-        self.specific_backup_name = specific_backup_name
-        self.object_name_hash_salt = object_name_hash_salt
-        self.backup_type = backup_type
-        self.all_file_info: list[BackupFileInformation] = []
-
-    def get_backup_start_time_stamp_utc(self):
-        return self.backup_start_time_utc.strftime(BACKUP_INFO_TIME_STAMP_FORMAT)
-
-    def __len__(self):
-        return len(self.all_file_info)
-
-    def append(self, file_info: BackupFileInformation):
-        self.all_file_info.append(file_info)
-
-    def extend(self, file_info_list: list[BackupFileInformation]):
-        self.all_file_info.extend(file_info_list)
-
-    def save_to_file(self, path: str):
-        with open(path, "w", encoding="utf-8") as backup_info_file:
-            backup_info_file.write(
-                json.dumps(
-                    self,
-                    cls=backup_info_json_enc_dec.get_json_encoder_class(),
-                )
-            )
-
-    @staticmethod
-    def create_from_file(backup_info_filename: str) -> list:
-        backup_info_filename = convert_to_pathlib_path(backup_info_filename)
-        if not isinstance(backup_info_filename, Path):
-            raise ValueError(f"backup_info_path should be a str or Path.")
-        try:
-            # Open/parse...
-            with open(str(backup_info_filename), "r", encoding="utf-8") as file:
-                backup_info: SpecificBackupInformation = json.load(
-                    fp=file, cls=backup_info_json_enc_dec.get_json_decoder_class()
-                )
-            return backup_info
-        except Exception as ex:
-            raise BackupInformationError(
-                f"Error parsing backup information file: "
-                f"filename={backup_info_filename} {exc_to_string(ex)}"
-            ).with_traceback(ex.__traceback__) from ex
-
-    def to_serialization_dict(self) -> dict:
-        self.all_file_info.sort(key=lambda f: f.path)
-        d = {
-            BACKUP_INFO_BASE_NAME: self.backup_base_name,
-            BACKUP_INFO_SPECIFIC_NAME: self.specific_backup_name,
-            BACKUP_INFO_START_TIME_NAME: self.backup_start_time_utc.isoformat(
-                timespec="seconds"
-            ),
-            BACKUP_INFO_STORAGE_OBJECT_NAME_SALT: self.object_name_hash_salt.hex(),
-            BACKUP_INFO_BACKUP_TYPE_NAME: self.backup_type,
-            BACKUP_INFO_ALL_SECTION_NAME: self.all_file_info,
-        }
-        return d
-
-    def from_serialization_dict(self, d: dict):
-        self.backup_base_name = d[BACKUP_INFO_BASE_NAME]
-        self.specific_backup_name = d[BACKUP_INFO_SPECIFIC_NAME]
-        self.backup_start_time_utc = datetime.fromisoformat(
-            d[BACKUP_INFO_START_TIME_NAME]
-        )
-        self.object_name_hash_salt = bytes.fromhex(
-            d[BACKUP_INFO_STORAGE_OBJECT_NAME_SALT]
-        )
-        self.backup_type = d[BACKUP_INFO_BACKUP_TYPE_NAME]
-        self.all_file_info = d.get(BACKUP_INFO_ALL_SECTION_NAME)
-
-
-class BackupInformationDatabase:
-    def __init__(
-        self, backup_base_name: str = None, backup_info_dir: Union[str, Path] = None
-    ):
-        self.backup_base_name = backup_base_name
-        self.backup_info_dir = convert_to_pathlib_path(backup_info_dir)
-        self.all_backup_info: dict = {
-            CONFIG_VALUE_NAME_CONFIG_NAME: f"{ATBU_ACRONUM_U} Backup Information",
-            CONFIG_VALUE_NAME_VERSION: BACKUP_INFO_MAJOR_VERSION_STRING,
-            BACKUP_INFO_BACKUPS_SECTION_NAME: {},
-        }
-        self.backups: dict = self.all_backup_info[BACKUP_INFO_BACKUPS_SECTION_NAME]
-        if self.backup_base_name is not None:
-            self.backups[self.backup_base_name] = {}
-        self.path_to_info_all: dict[str, BackupFileInformation] = None
-        self.path_to_info_last: dict[str, BackupFileInformation] = None
-        self.digest_to_list_info: defaultdict[
-            str, list[BackupFileInformation]
-        ] = defaultdict(list[BackupFileInformation])
-
-    def get_file_date_size_modified_state(
-        self, cur_fi: BackupFileInformation
-    ) -> tuple[bool, BackupFileInformation]:
-        existing_fi = self.get_most_recent_backup_of_path(
-            path_without_root=cur_fi.path_without_root
-        )
-        is_changed = True
-        if (
-            existing_fi is not None
-            and cur_fi.size_in_bytes == existing_fi.size_in_bytes
-            and cur_fi.modified_time_posix == existing_fi.modified_time_posix
-        ):
-            is_changed = False
-        return is_changed, existing_fi
-
-    def get_primary_digest_changed_info(
-        self, cur_fi: BackupFileInformation
-    ) -> tuple[bool, BackupFileInformation]:
-        existing_fi = self.get_most_recent_backup_of_path(
-            path_without_root=cur_fi.path_without_root
-        )
-        is_changed = True
-        if (
-            existing_fi is not None
-            and cur_fi.primary_digest == existing_fi.primary_digest
-        ):
-            is_changed = False
-        return is_changed, existing_fi
-
-    def get_phys_backup_dup_list(
-        self,
-        cur_fi: BackupFileInformation,
-    ) -> list[BackupFileInformation]:
-        dup_list = self.digest_to_list_info.get(cur_fi.primary_digest)
-        return dup_list
-
-    def is_phys_backup_dup_exist(
-        self,
-        cur_fi: BackupFileInformation,
-    ) -> bool:
-        dup_list = self.get_phys_backup_dup_list(cur_fi=cur_fi)
-        if dup_list is not None and len(dup_list) > 0:
-            return True
-        return False
-
-    def get_potential_bitrot_or_sneaky_corruption_info(
-        self,
-        cur_fi: BackupFileInformation,
-    ) -> tuple[bool, BackupFileInformation]:
-        """So-called sneaky corruption is when the the prior backup for the same
-        path location as cur_fi has the same date/time and size, but the digests
-        are different. In such a case, the file content has been modified while
-        its date/time and size have not changed. This could be bitrot or a
-        normal/malicious program updating the modified date/time after changing
-        file content.
-
-        Args:
-            cur_fi (BackupFileInformation): The file info whose location will be
-                used to find existing sneaky corruption info.
-
-        Returns:
-            tuple[bool, BackupFileInformation]: Tuple (is_potential,
-                BackupFileInformation) where is_potential is True if there is
-                potential sneaky corruption, else False. BackupFileInformation
-                is the prior backup for the same path location as cur_fi.
-        """
-        # Get change state for same path location.
-        is_changed, existing_fi = self.get_file_date_size_modified_state(cur_fi=cur_fi)
-        if is_changed or existing_fi is None:
-            # Not changed or no history for path location.
-            return (False, existing_fi)
-        # File date/time and size are not changed.
-        # If digests are mismatched, potentially sneaky corruption exists.
-        return (cur_fi.primary_digest != existing_fi.primary_digest, existing_fi)
-
-    def get_duplicate_file(
-        self, deduplication_option: str, cur_fi: BackupFileInformation
-    ) -> BackupFileInformation:
-        """Given caller's deduplication_option and BackupFileInformation, return a discovered
-        duplicate file.
-        """
-        dup_list = self.get_phys_backup_dup_list(cur_fi=cur_fi)
-        if not dup_list:
-            # Duplicate not found.
-            return None
-        is_check_ext = deduplication_option == ATBU_BACKUP_DEDUPLICATION_TYPE_DIGEST_EXT
-        for dup_fi in dup_list:
-            if cur_fi.primary_digest != dup_fi.primary_digest:
-                # Digest sanity check failed.
-                raise InvalidStateError(
-                    f"get_duplicate_file: The digests should not be different: "
-                    f"path1={cur_fi.path} path2={dup_fi.path}"
-                )
-            if (
-                cur_fi.size_in_bytes == dup_fi.size_in_bytes
-                and cur_fi.modified_time_posix == dup_fi.modified_time_posix
-                and (
-                    not is_check_ext
-                    or (len(cur_fi.ext) != 0 and cur_fi.ext == dup_fi.ext)
-                )
-            ):
-                # Return discovered duplicate.
-                return dup_fi
-        # Duplicate not found.
-        return None
-
-    def get_most_recent_backup_of_path(
-        self, path_without_root
-    ) -> BackupFileInformation:
-        path = os.path.normcase(path_without_root)
-        return self.path_to_info_all.get(path)
-
-    def has_backup(
-        self, backup_base_name: str,
-        specific_backup_name: str
-    ) -> bool:
-        if self.backup_base_name is not None and self.backup_base_name != backup_base_name:
-            raise ValueError(
-                f"Backup basename mismatch: db={self.backup_base_name} bn={backup_base_name}"
-            )
-        if self.backups.get(backup_base_name) is None:
-            return False
-        return specific_backup_name in self.backups[backup_base_name]
-
-    def append(self, bi: SpecificBackupInformation, rebuild_indexes: bool = False):
-        if self.backups.get(bi.backup_base_name) is None:
-            if len(self.backups) > 0:
-                # Multiple backup definitions could be supported per
-                # file but current expectations is 1 per file.
-                first_key = next(iter(self.backups.keys()))
-                raise BackupInformationError(
-                    f"The backup '{bi.backup_base_name}' is mismatched "
-                    f"to existing backups such as '{first_key}'."
-                )
-            self.backups[bi.backup_base_name] = {}
-        if self.backups[bi.backup_base_name].get(bi.specific_backup_name) is not None:
-            raise BackupInformationError(
-                f"The backup information for '{bi.specific_backup_name}' already exists."
-            )
-        self.backups[bi.backup_base_name][bi.specific_backup_name] = bi
-        if rebuild_indexes:
-            self._build_indexes()
-
-    def get_specific_backup(
-        self, specific_backup_name: str
-    ) -> SpecificBackupInformation:
-        """Returns a specific backup instance."""
-        return self.backups[self.backup_base_name].get(specific_backup_name)
-
-    def get_specific_backups(self) -> list[SpecificBackupInformation]:
-        """Returns a list of specific backup instances in descending
-        chronological order (most recent first).
-        """
-        b = sorted(
-            [*self.backups[self.backup_base_name].values()],
-            key=lambda s: s.backup_start_time_utc,
-            reverse=True,
-        )
-        return b
-
-    def _build_indexes(self):
-        self.path_to_info_all: dict[str, BackupFileInformation] = {}
-        self.path_to_info_last: dict[str, BackupFileInformation] = {}
-        if len(self.backups) == 0:
-            return
-        # From most recent to oldest backup, build path_to_info. First set in path_to_info[path]
-        # for given path wins (i.e., newest is reachable via the index).
-        specific_backups: list[SpecificBackupInformation] = self.get_specific_backups()
-        is_last_backup = True
-        needs_backing_fi_dict: defaultdict[
-            str, list[BackupFileInformation]
-        ] = defaultdict(list[BackupFileInformation])
-        needs_backing_fi_from_dedup: list[BackupFileInformation] = []
-        for sb in specific_backups:
-            sb_fi: BackupFileInformation
-            for sb_fi in sb.all_file_info:
-
-                # The backup info file currently tracks unsuccessful backups.
-                # Do not use unsuccessful backup information for indexes.
-                # Check is_unchanged_since_last because unchanged files do not
-                # track success status given no operation occurs at time of
-                # backup though they are not failed items.
-                # TODO: Review whether or not to continue to track unnsuccessful
-                # backup file information.
-                if not sb_fi.is_successful and not sb_fi.is_unchanged_since_last:
-                    continue
-
-                #
-                # Two things performed in this 'for' ...
-                #   A) try to resolve any wanting fi using this sb_fi.
-                #   B) add the sb_fi to the digest_to_list_info (for later
-                #      digest-based lookups, such as deduplication).
-                #   C) index this sb_fi as needed.
-                #
-
-                #
-                # A) Resolve any wanting fi:
-                #
-                # A normcase path_without_location_root is needed for indexing below.
-                nc_path_wo_root = sb_fi.nc_path_without_root
-                # If this sb_fi needs resolving, add to "to be resolved" dict.
-                if sb_fi.is_unchanged_since_last and sb_fi.backing_fi is None:
-                    if not sb_fi.deduplication_option:
-                        needs_backing_fi_dict[nc_path_wo_root].append(sb_fi)
-                    else:
-                        needs_backing_fi_from_dedup.append(sb_fi)
-                # If this sb_fi does not need resolving, perhaps it can help resolve...
-                if not sb_fi.is_unchanged_since_last:
-                    # Any fi needing this fi for resolution?
-                    needs_backing_fi_list = needs_backing_fi_dict.get(nc_path_wo_root)
-                    if needs_backing_fi_list:
-                        # Yes, then resolve all of them to this sb_fi.
-                        for wanting_fi in needs_backing_fi_list:
-                            wanting_fi.backing_fi = sb_fi
-                        # The wanting fi are no longer wanting.
-                        del needs_backing_fi_dict[nc_path_wo_root]
-                    # B) Index the digest for all sb_fi representing physical backups.
-                    # For all sb_fi representing backups (is_unchanged_since_last==False),
-                    # index its digest, add it to the digest's list.
-                    self.digest_to_list_info[sb_fi.primary_digest].append(sb_fi)
-
-                #
-                # C) Index this sb_fi as needed:
-                #
-                if not self.path_to_info_all.get(nc_path_wo_root):
-                    # This path not indexed already, so it is the first most recent, index it.
-                    self.path_to_info_all[nc_path_wo_root] = sb_fi
-                    if is_last_backup:
-                        # Special case first iteration of 'for' captures 'last' backup info.
-                        self.path_to_info_last[nc_path_wo_root] = sb_fi
-            # After first iteration, last backup index handled.
-            is_last_backup = False
-        if len(needs_backing_fi_from_dedup) > 0:
-            for needs_backing_fi in list(needs_backing_fi_from_dedup):
-                # Find the duplicate using the same approach used when this file was backed up.
-                dup_fi = self.get_duplicate_file(
-                    deduplication_option=needs_backing_fi.deduplication_option,
-                    cur_fi=needs_backing_fi,
-                )
-                if dup_fi:
-                    assert needs_backing_fi.backing_fi is None
-                    needs_backing_fi.backing_fi = dup_fi
-                    needs_backing_fi_from_dedup.remove(needs_backing_fi)
-        if len(needs_backing_fi_dict) > 0:
-            failing_paths = [k for k in needs_backing_fi_dict.keys()]
-            raise InvalidStateError(
-                f"Unexpected state: BackupFileInformation instances still "
-                f"require backing BackupFileInformation: {failing_paths}"
-            )
-        if len(needs_backing_fi_from_dedup) > 0:
-            failing_paths = [fi.path for fi in needs_backing_fi_from_dedup]
-            raise InvalidStateError(
-                f"Unexpected state: BackupFileInformation instances for dedup "
-                f"still require backing BackupFileInformation: {failing_paths}"
-            )
-
-    @property
-    def db_base_filename(self):
-        return f"{self.backup_base_name}{BACKUP_INFO_EXTENSION}"
-
-    @property
-    def primary_db_full_path(self):
-        return self.backup_info_dir / self.db_base_filename
-
-    def save_to_file(self, dest_backup_info_dir: Union[str, Path] = None):
-        if not dest_backup_info_dir:
-            dest_backup_info_dir = self.backup_info_dir
-        else:
-            dest_backup_info_dir = convert_to_pathlib_path(dest_backup_info_dir)
-        backup_database_file_path = dest_backup_info_dir / self.db_base_filename
-        create_numbered_backup_of_file(
-            path=backup_database_file_path, not_exist_ok=True
-        )
-        with open(backup_database_file_path, "w", encoding="utf-8") as backup_info_file:
-            json.dump(
-                obj=self,
-                fp=backup_info_file,
-                cls=backup_info_json_enc_dec.get_json_encoder_class(),
-            )
-
-    @staticmethod
-    def create_from_file(backup_base_name: str, backup_info_dir: Union[str, Path]):
-        backup_info_dir: Path = convert_to_pathlib_path(backup_info_dir)
-        backup_database_file_path: Path = (
-            backup_info_dir / f"{backup_base_name}{BACKUP_INFO_EXTENSION}"
-        )
-        try:
-            if not backup_database_file_path.exists():
-                logging.info(
-                    f"No backup history for '{backup_base_name}'. Creating new history database."
-                )
-                db = BackupInformationDatabase(
-                    backup_base_name=backup_base_name, backup_info_dir=backup_info_dir
-                )
-                db.save_to_file(dest_backup_info_dir=backup_info_dir)
-                db._build_indexes()  # pylint: disable=protected-access
-                return db
-            # Open/parse...
-            with open(str(backup_database_file_path), "r", encoding="utf-8") as file:
-                db: BackupInformationDatabase = json.load(
-                    fp=file, cls=backup_info_json_enc_dec.get_json_decoder_class()
-                )
-            db.backup_base_name = backup_base_name
-            db.backup_info_dir = backup_info_dir
-            db._build_indexes()  # pylint: disable=protected-access
-            return db
-        except Exception as ex:
-            raise BackupInformationError(
-                f"Error parsing backup information file: "
-                f"filename={backup_database_file_path} {exc_to_string(ex)}"
-            ).with_traceback(ex.__traceback__) from ex
-
-    def to_serialization_dict(self) -> dict:
-        return self.all_backup_info
-
-    def from_serialization_dict(self, d: dict):
-        self.all_backup_info = d
-        self.backups: dict = self.all_backup_info[BACKUP_INFO_BACKUPS_SECTION_NAME]
-        self.path_to_info_all: dict[str, BackupFileInformation] = None
-        self.path_to_info_last: dict[str, BackupFileInformation] = None
-        self.digest_to_list_info: defaultdict[
-            str, list[BackupFileInformation]
-        ] = defaultdict(list[BackupFileInformation])
-
-
-backup_info_json_enc_dec = MultiEncoderDecoder()
-backup_info_json_enc_dec.add_def(
-    class_type=BackupFileInformation,
-    to_dict_method=BackupFileInformation.to_serialization_dict,
-    from_dict_method=BackupFileInformation.from_serialization_dict,
-    constructor_arg_names=["path"],
-)
-backup_info_json_enc_dec.add_def(
-    class_type=SpecificBackupInformation,
-    to_dict_method=SpecificBackupInformation.to_serialization_dict,
-    from_dict_method=SpecificBackupInformation.from_serialization_dict,
-    constructor_arg_names=[],
-)
-backup_info_json_enc_dec.add_def(
-    class_type=BackupInformationDatabase,
-    to_dict_method=BackupInformationDatabase.to_serialization_dict,
-    from_dict_method=BackupInformationDatabase.from_serialization_dict,
-    constructor_arg_names=[],
-)
 
 
 class BackupPipelineWorkItem(PipelineWorkItem):
@@ -1297,13 +641,15 @@ _PREAMBLE_FIELDS = [
     ("v", lambda fi: "1"),
     (
         _PREAMBLE_FIELD_COMPRESSION,
-        lambda fi: BACKUP_COMPRESSION_TYPE
-        if (
-            (fi.is_compressed is not None and fi.is_compressed)
-            or fi.compressed_file_path is not None
-            or fi.compressed_size is not None
-        )
-        else BACKUP_COMPRESSION_NONE,
+        lambda fi: (
+            BACKUP_COMPRESSION_TYPE
+            if (
+                (fi.is_compressed is not None and fi.is_compressed)
+                or fi.compressed_file_path is not None
+                or fi.compressed_size is not None
+            )
+            else BACKUP_COMPRESSION_NONE
+        ),
     ),
     (_PREAMBLE_HASHAGLO_MACRO, lambda fi: fi.primary_digest),
     ("size", lambda fi: fi.size_in_bytes),
@@ -1767,249 +1113,6 @@ class BackupFile(ProcessThreadContextMixin):
                     )
 
 
-class BackupResultsManager:
-    """BackupResultsManager performs the following duties:
-    The constructor establishes the specific name of the backup, which
-    includes UTC start time.
-
-    This BackupResultsManager accepts results from BackupFile Future
-    instances as they complete.
-
-    This BackupResultsManager periodically uses SpecificBackupInformation
-    to save the results to a temp file.
-
-    After backup completes, this BackupResultsManager finalizes the results
-    (aka backup information) by using SpecificBackupInformation to save the
-    final results (tmp to non-tmp file).
-    """
-
-    BACKUP_INFORMATION_SAVE_INTERVAL_SECONDS = 60
-
-    def __init__(
-        self,
-        backup_info_db: BackupInformationDatabase,
-        storage_def_name: str,
-        object_name_hash_salt: bytes,
-        backup_type: str,
-        primary_backup_info_dir: str,
-        secondary_backup_info_dirs: list[str],
-        is_dryrun: bool,
-    ):
-        # pylint: disable=line-too-long
-        """Construct BackupResultsManager which manages results during the backup.
-
-        At the end of the backup, creates a backup information info with details about a
-        particular backup...
-
-        Backup info file name: f"{storage_def_name}-YYYYMMDD-HHMMSS{BACKUP_INFO_EXTENSION}"
-        Example: MyBackup-20220503-072647.atbuinf
-
-        The primary .atbuinf file is stored in primary_backup_info_dir, and secondary copies will
-        be stored in each of secondary_backup_info_dirs.
-
-        General flow relating to this class:
-        ThreadA: BackupFile instances --> create --> backup results --> sent_to --> BackupResultsManager.extend_temp_results --> temp result list
-        ThreadB: BackupResultsManager.background_save --> periodically calls move_results_temp_to_final_list_and_save to move temp results to final results.
-        ThreadA at end of backup calls SpecificBackupInformation.save_final_revision to save final result list.
-
-        ThreadA is not created by this instance, but is a BackupFile instance's thread calling into this instance to supply its results.
-        ThreadB is created and maintained by this instance and is responsible for periodic saving of the .atbuinf.
-        """
-        self.is_dryrun = is_dryrun
-
-        if not backup_info_db:
-            raise ValueError(f"The backup_info_db must be specified.")
-        self.backup_info_db = backup_info_db
-
-        if not storage_def_name:
-            raise ValueError(f"The storage_def_name must be specified.")
-
-        #
-        # Ensure the primary_backup_info_dir was supplied, can be created as, or is already a directory.
-        #
-        if not primary_backup_info_dir:
-            raise ValueError(f"The primary_backup_info_dir must be specified.")
-        primary_backup_info_dir: Path = Path(primary_backup_info_dir)
-        if primary_backup_info_dir.is_file():
-            raise ValueError(
-                f"The backup info dir is a file. backup_info_dir={str(primary_backup_info_dir)}"
-            )
-        primary_backup_info_dir.mkdir(exist_ok=True)
-        if not primary_backup_info_dir.is_dir():
-            raise ValueError(
-                f"Cannot create backup info directory. backup_info_dir={str(primary_backup_info_dir)}"
-            )
-
-        if not object_name_hash_salt:
-            raise ValueError(f"The object_name_hash_salt must be specified.")
-
-        self._backup_base_name = storage_def_name
-
-        # Some tests run multiple backups in succession, possibly back-to-back intra-second.
-        # Otherwise, this should generally require only a single iteration.
-        attempts = 999
-        while attempts > 0:
-            #
-            # Start time of backup.
-            #
-            self.backup_start_time_utc = datetime.now(timezone.utc)
-            #
-            # The specific name for this backup.
-            #
-            specific_backup_name = (
-                f"{self._backup_base_name}-{self.backup_start_time_utc.strftime('%Y%m%d-%H%M%S')}"
-            )
-            if not self.backup_info_db.has_backup(
-                backup_base_name=self._backup_base_name,
-                specific_backup_name=specific_backup_name,
-            ):
-                break
-            specific_backup_name = None
-            attempts -= 1
-            time.sleep(0.1)
-
-        if specific_backup_name is None:
-            raise BackupException(
-                f"Cannot find nonexistent backup name: bn={self._backup_base_name}"
-            )
-
-        #
-        # The backup information file name for this backup.
-        #
-        self.backup_info_file = (
-            primary_backup_info_dir / f"{specific_backup_name}{BACKUP_INFO_EXTENSION}"
-        )
-
-        #
-        # Primary parameters validated/setup, assign to self.
-        #
-        self._specific_backup_name = specific_backup_name
-        self.backup_info_dir: Path = primary_backup_info_dir
-        self.secondary_backup_info_dirs: list[str] = secondary_backup_info_dirs
-        self.backup_info_file_tmp = self.backup_info_file.with_suffix(
-            BACKUP_INFO_TEMP_EXTENSION
-        )
-        self.is_dirty_for_tmp = False
-        self.tmp_results: list[BackupFileInformation] = list()
-        self.final_results = SpecificBackupInformation(
-            backup_base_name=self._backup_base_name,
-            specific_backup_name=self._specific_backup_name,
-            backup_start_time_utc=self.backup_start_time_utc,
-            object_name_hash_salt=object_name_hash_salt,
-            backup_type=backup_type,
-        )
-        self.lock = multiprocessing.Lock()
-        self.thread_stop_event = multiprocessing.Event()
-        self.thread_exec = ThreadPoolExecutor(
-            thread_name_prefix=f"BackupResultsManager-{specific_backup_name}"
-        )
-        self.background_save_thread_future = self.thread_exec.submit(
-            BackupResultsManager.background_save, self
-        )
-
-    @property
-    def backup_base_name(self):
-        return self._backup_base_name
-
-    @property
-    def specific_backup_name(self):
-        return self._specific_backup_name
-
-    def stop(self):
-        if self.background_save_thread_future:
-            self.thread_stop_event.set()
-            logging.info(f"Waiting for backup information to be saved...")
-            self.background_save_thread_future.result()
-            self.background_save_thread_future = None
-
-    @staticmethod
-    def background_save(o):
-        is_stop_initiated = False
-        try:
-            while not is_stop_initiated:
-                is_stop_initiated = o.thread_stop_event.wait(
-                    BackupResultsManager.BACKUP_INFORMATION_SAVE_INTERVAL_SECONDS
-                )
-                if is_stop_initiated:
-                    logging.info(
-                        f"SpecificBackupInformation thread stop initiated. Finishing up..."
-                    )
-                results_available = 0
-                with o.lock:
-                    results_available = len(o.tmp_results)
-                if results_available > 0:
-                    o.move_results_temp_to_final_list_and_save()
-            o.save_final_revision()
-        except Exception as ex:
-            logging.error(
-                f"SpecificBackupInformation thread exception detected: {exc_to_string(ex)}"
-            )
-            raise
-        finally:
-            logging.info(f"SpecificBackupInformation background thread ending.")
-
-    def extend_temp_results(self, results: list[BackupFileInformation]):
-        if isinstance(results, BackupFileInformation):
-            results = [results]
-        if not isinstance(results, list):
-            raise ValueError(
-                f"extend_temp_results requires either a BackupFileInformation "
-                f"or a list[BackupFileInformation]."
-            )
-        if len(results) == 0:
-            return
-        if not isinstance(results[0], BackupFileInformation):
-            raise ValueError(
-                f"list should contain only BackupFileInformation instances."
-            )
-        with self.lock:
-            self.tmp_results.extend(results)
-            self.is_dirty_for_tmp = True
-
-    def move_results_temp_to_final_list_and_save(self):
-        was_dirty = False
-        with self.lock:
-            was_dirty = self.is_dirty_for_tmp
-            if self.is_dirty_for_tmp:
-                self.final_results.extend(self.tmp_results)
-                self.tmp_results.clear()
-                self.is_dirty_for_tmp = False
-        if was_dirty:
-            logging.info(
-                f"Saving in-progress backup information: {self.backup_info_file_tmp}"
-            )
-            save_start = time.perf_counter()
-            self.final_results.save_to_file(path=str(self.backup_info_file_tmp))
-            save_seconds = time.perf_counter() - save_start
-            logging.info(
-                f"Saving backup information complete: "
-                f"It took {save_seconds:.3f} seconds to write "
-                f"{self.backup_info_file_tmp}"
-            )
-
-    def save_final_revision(self):
-        if self.is_dryrun:
-            logging.info(f"*** Dry run, not saving backup information.")
-            self.backup_info_file_tmp.unlink(missing_ok=True)
-            return
-        logging.info(f"Saving backup info file: {self.backup_info_file}")
-        # Save final individual backup into final per-backup file.
-        self.final_results.save_to_file(path=self.backup_info_file)
-        # Add the backup info to the db, save the db.
-        self.backup_info_db.append(bi=self.final_results)
-        self.backup_info_db.save_to_file()
-        logging.info(f"Backup info file saved: {self.backup_info_file}")
-        logging.debug(f"Removing temp backup info file: {self.backup_info_file_tmp}")
-        self.backup_info_file_tmp.unlink(missing_ok=True)
-        if self.secondary_backup_info_dirs is not None and isinstance(
-            self.secondary_backup_info_dirs, list
-        ):
-            for sbid in self.secondary_backup_info_dirs:
-                logging.info(f"Copying primary {self.backup_info_file} to {sbid}...")
-                copy2(src=self.backup_info_file, dst=sbid)
-                self.backup_info_db.save_to_file(dest_backup_info_dir=sbid)
-
-
 @dataclass
 class BackupAnomaly(Anomaly):
     file_info: BackupFileInformation = None
@@ -2145,7 +1248,9 @@ def file_operation_future_result(
             # The BackupFileInformation has no record of an exception.
             # The second tuple element is None.
             #
-            logging.info(f"{dryrun_str}{the_operation} succeeded: {file_info.path_for_logging}")
+            logging.info(
+                f"{dryrun_str}{the_operation} succeeded: {file_info.path_for_logging}"
+            )
             return file_info
 
         if (
@@ -2641,7 +1746,6 @@ def run_operation_stage(wi: BackupPipelineWorkItem):
         wi.append_exception(ex)
     return wi
 
-
 class Backup:
 
     MAX_SIMULTANEOUS_FILES = DEFAULT_MAX_SIMULTANEOUS_FILE_BACKUPS
@@ -2656,6 +1760,7 @@ class Backup:
         secondary_backup_info_dirs: list[str],
         source_file_info_list: list[BackupFileInformation],
         storage_def: StorageDefinition,
+        force_db_type: DatabaseFileType,
         is_dryrun: bool,
     ) -> None:
         self.is_dryrun = is_dryrun
@@ -2665,6 +1770,7 @@ class Backup:
             raise ValueError(f"The storage_def must be a StorageDefinition.")
         if backup_type not in ATBU_BACKUP_TYPE_ALL:
             raise ValueError(f"Invalid backup type '{backup_type}'.")
+        self._storage_def = storage_def
         self._backup_type = backup_type
         self._deduplication_option = deduplication_option
         self._compression_settings = compression_settings
@@ -2672,21 +1778,51 @@ class Backup:
         self._sneaky_corruption_detection = sneaky_corruption_detection
         self._source_files = source_file_info_list
         self._object_name_hash_salt = os.urandom(32)
-        self._backup_history = BackupInformationDatabase.create_from_file(
-            backup_base_name=storage_def.storage_def_name,
-            backup_info_dir=primary_backup_info_dir,
+        self.backup_start_time_utc = None
+        self._specific_backup_name = None
+        self.primary_backup_info_dir = Path(primary_backup_info_dir)
+        self.primary_backup_info_dir.mkdir(exist_ok=True)
+        self.secondary_backup_info_dirs = secondary_backup_info_dirs
+        logging.info(f"Loading backup history...")
+        self._backup_history = BackupInformationDatabase.load(
+            backup_base_name=self.storage_def.storage_def_name,
+            backup_info_dir=self.primary_backup_info_dir,
+            backup_database_file_path=None,
+            create_if_not_exist=True,
+            force_db_type=force_db_type,
         )
-        self._results_mgr: BackupResultsManager = BackupResultsManager(
-            backup_info_db=self._backup_history,
-            storage_def_name=storage_def.storage_def_name,
+        logging.info(f"Backup history loaded.")
+
+        # Find a specific backup name not already in the history database.
+        # Note, this is not about handling concurrent backups to the same DB,
+        # which is not currently supported, but rather some tests can call this
+        # intra-second, where the following ensures finding a unique time-based
+        # specific backup name. Generally, it should be read as if the 'while'
+        # loop did not exist.
+        while True:
+            # Start time of backup.
+            self.backup_start_time_utc = datetime.now(timezone.utc)
+            # The specific name for this backup (based on start time).
+            self._specific_backup_name = (
+                f"{self.storage_def.storage_def_name}-"
+                f"{self.backup_start_time_utc.strftime('%Y%m%d-%H%M%S')}"
+            )
+            if not self._backup_history.has_backup(
+                backup_base_name=self.storage_def.storage_def_name,
+                specific_backup_name=self._specific_backup_name,
+            ):
+                break
+            time.sleep(0.1)
+
+        self.final_results = SpecificBackupInformation(
+            backup_base_name=self.storage_def.storage_def_name,
+            specific_backup_name=self._specific_backup_name,
+            backup_start_time_utc=self.backup_start_time_utc,
             object_name_hash_salt=self._object_name_hash_salt,
             backup_type=self._backup_type,
-            primary_backup_info_dir=primary_backup_info_dir,
-            secondary_backup_info_dirs=secondary_backup_info_dirs,
-            is_dryrun=self.is_dryrun,
         )
+
         self._unchanged_skipped_files: list[BackupFileInformation] = list()
-        self._storage_def = storage_def
         self._mp_manager = BackupSyncManager()
         self._mp_manager.start()
         self._object_name_hash_salt = os.urandom(32)
@@ -2729,10 +1865,9 @@ class Backup:
             )
         )
         self._is_used = False
+        self._pending_backups = set[Future]()
 
     def shutdown(self):
-        if self._results_mgr:
-            self._results_mgr.stop()
         if self._subprocess_pipeline is not None:
             self._subprocess_pipeline.shutdown()
         try:
@@ -2767,6 +1902,55 @@ class Backup:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
         return False
+
+    def extend_final_results(self, results: list[BackupFileInformation]):
+        if isinstance(results, BackupFileInformation):
+            results = [results]
+        if not isinstance(results, list):
+            raise ValueError(
+                f"extend_temp_results requires either a BackupFileInformation "
+                f"or a list[BackupFileInformation]."
+            )
+        if len(results) == 0:
+            return
+        if not isinstance(results[0], BackupFileInformation):
+            raise ValueError(
+                f"list should contain only BackupFileInformation instances."
+            )
+        self.final_results.extend(results)
+
+    def save_final_revision(self):
+        if self.is_dryrun:
+            logging.info(f"*** Dry run, not saving backup information.")
+            return
+
+        # For debug purposes, save final individual backup into to separate file.
+        # backup_info_file = (
+        #     self.primary_backup_info_dir / f"{self._specific_backup_name}{BACKUP_INFO_EXTENSION}"
+        # )
+        # logging.info(f"Saving backup info file: {backup_info_file}")
+        # self.final_results.save_to_file(path=backup_info_file)
+        # logging.info(f"Backup info file saved: {backup_info_file}")
+
+        # Add the backup info to the db, save the db.
+        logging.info(f"Saving primary backup history information to '{self.primary_backup_info_dir}' ...")
+        self._backup_history.append(sbi=self.final_results)
+        self._backup_history.save(
+            dest_backup_info_dir=self.primary_backup_info_dir,
+            sbi_to_insert_hint=self.final_results,
+        )
+        if self.secondary_backup_info_dirs is not None and isinstance(
+            self.secondary_backup_info_dirs, list
+        ):
+            for sbid in self.secondary_backup_info_dirs:
+                # For debug purposes:
+                # logging.info(f"Copying primary {backup_info_file} to {sbid}...")
+                # copy2(src=backup_info_file, dst=sbid)
+                logging.info(f"Saving additional backup history information to '{sbid}' ...")
+                self._backup_history.save(
+                    dest_backup_info_dir=sbid,
+                    sbi_to_insert_hint=self.final_results,
+                )
 
     @property
     def storage_def(self) -> StorageDefinition:
@@ -2863,7 +2047,7 @@ class Backup:
             file_info.is_unchanged_since_last = True
             file_info.deduplication_option = self._deduplication_option
             file_info.backing_fi = dup_fi
-            self._results_mgr.extend_temp_results(file_info)
+            self.extend_final_results(file_info)
             return False
 
         #
@@ -2922,7 +2106,7 @@ class Backup:
             file_info.is_unchanged_since_last = True
             file_info.deduplication_option = existing_fi.deduplication_option
             file_info.backing_fi = existing_fi
-            self._results_mgr.extend_temp_results(file_info)
+            self.extend_final_results(file_info)
             return False
 
         #
@@ -3013,222 +2197,238 @@ class Backup:
                 object_name_hash_salt=self._object_name_hash_salt,
                 object_name_reservations=self._object_name_reservations,
                 perform_cleartext_hashing=False,
-                is_dryrun = self.is_dryrun,
+                is_dryrun=self.is_dryrun,
             )
 
         return wi
 
+    def _schedule_files(self):
+        #
+        # Schedule files for backup...
+        #
+
+        logging.info(f"Scheduling hashing jobs...")
+        for file_info in self._source_files:
+
+            try:
+                file_info.refresh_stat_info()
+            except OsStatError as ex:
+                msg = (
+                    f"The 'stat' operation failed, skipping backup of file: "
+                    f"path={file_info.path} Error occurred: {exc_to_string(ex)}"
+                )
+                self.anomalies.append(
+                    BackupAnomaly(
+                        kind=ANOMALY_KIND_EXCEPTION,
+                        file_info=file_info,
+                        exception=ex,
+                        message=msg,
+                    )
+                )
+                continue
+
+            if (
+                self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL
+                or self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID
+            ):
+                (
+                    is_changed,
+                    existing_fi,
+                ) = self._backup_history.get_file_date_size_modified_state(
+                    cur_fi=file_info
+                )
+                if not is_changed:
+                    # For incremental, skip based on size/modified-based checks.
+                    # Test log line: Consumed by tests.
+                    if _is_verbose_info_logging():
+                        logging.info(
+                            f"Skipping unchanged file (date/size check): {file_info.path}"
+                        )
+                    self._unchanged_skipped_files.append(file_info)
+                    file_info.is_unchanged_since_last = True
+                    file_info.deduplication_option = (
+                        existing_fi.deduplication_option
+                    )
+                    file_info.backing_fi = existing_fi
+                    # For incremental, there is only date/size check for same path
+                    # to see if there is a match. When such a match occurs, set
+                    # the current file's digest to that of the assumed duplicate.
+                    file_info.is_backing_fi_digest = True
+                    file_info.primary_digest = existing_fi.primary_digest
+                    self.extend_final_results(file_info)
+                    continue
+                elif existing_fi:
+                    logging.info(
+                        f"Scheduling backup of changed file: {file_info.path} "
+                        f"cur_date={file_info.modified_date_stamp_ISO8601_local} "
+                        f"old_date={existing_fi.modified_date_stamp_ISO8601_local} "
+                        f"cur_size={file_info.size_in_bytes} "
+                        f"old_size={existing_fi.size_in_bytes}"
+                    )
+                    logging.debug(
+                        f"POSIX timestamps: {file_info.path} "
+                        f"cur_posix={file_info.accessed_time_posix} "
+                        f"old_posix={file_info.accessed_time_posix}"
+                    )
+                else:
+                    logging.info(
+                        f"Scheduling backup of file never backed up before: {file_info.path}"
+                    )
+            wait_futures_to_regulate(
+                fs=self._pending_backups,
+                max_allowed_pending=Backup.MAX_SIMULTANEOUS_FILES,
+            )
+            pending_backup_fut = self._subprocess_pipeline.submit(
+                work_item=BackupPipelineWorkItem(
+                    operation_name=BACKUP_OPERATION_NAME_BACKUP,
+                    file_info=file_info,
+                )
+            )
+            self._pending_backups.add(pending_backup_fut)
+            self.extend_final_results(
+                file_operation_futures_to_results(
+                    fs=self._pending_backups,
+                    fi_list=[],
+                    anomalies=self.anomalies,
+                    the_operation=BACKUP_OPERATION_NAME_BACKUP,
+                    is_dryrun=self.is_dryrun,
+                )
+            )
+
+    def _wait_for_backup_completion(self):
+        logging.info(
+            f"Wait for {len(self._pending_backups)} backup file operations to complete..."
+        )
+        while len(self._pending_backups) > 0:
+            done, self._pending_backups = futures.wait(
+                fs=self._pending_backups, return_when=FIRST_COMPLETED
+            )
+            if _is_very_verbose_debug_logging():
+                logging.debug(
+                    f"Backup: observe {len(done)} completed, "
+                    f"{len(self._pending_backups)} remaining files."
+                )
+            self.extend_final_results(
+                file_operation_futures_to_results(
+                    fs=done,
+                    fi_list=list(),
+                    anomalies=self.anomalies,
+                    the_operation=BACKUP_OPERATION_NAME_BACKUP,
+                    is_dryrun=self.is_dryrun,
+                )
+            )
+            if _is_very_verbose_debug_logging() and len(self._pending_backups) > 0:
+                logging.info(
+                    f"Wait for {len(self._pending_backups)} backup file operations to complete..."
+                )
+
+    def _backup_history_db(self):
+        if not self.storage_def.storage_persisted_backup_info:
+            logging.warning(
+                f"WARNING: Storage-persisted backup information is disabled for this backup."
+            )
+            return
+        if self.is_dryrun:
+            logging.info(
+                f"*** Dry run, not storing backup information to backup."
+            )
+            return
+
+        logging.info(
+            f"Backing up all history information: '{self._backup_history.primary_db_full_path}' ..."
+        )
+
+        #
+        # Save backup information to the backup storage.
+        #
+        fi_backup_info = BackupFileInformation(
+            path=str(self._backup_history.primary_db_full_path),
+        )
+
+        #
+        # Create a storage object name for the backup information.
+        # It will be BackupName-YYYYMMDD-HHMMSS.atbuinf where the date/time
+        # stamp derives from the specific backup start time.
+        #
+        backup_start_time_stamp = self.final_results.get_backup_start_time_stamp_utc()
+        # Store backup information with backup storage using a generic
+        # prefix BACKUP_INFO_STORAGE_PREFIX, where it will be renamed as
+        # needed during recovery.
+        fi_backup_info.storage_object_name = (
+            f"{BACKUP_INFO_STORAGE_PREFIX}-"
+            f"{backup_start_time_stamp}{BACKUP_INFO_EXTENSION}"
+        )
+
+        f = self._subprocess_pipeline.submit(
+            BackupPipelineWorkItem(
+                operation_name=BACKUP_OPERATION_NAME_BACKUP,
+                file_info=fi_backup_info,
+                is_qualified=True,
+            )
+        )
+        if f is None:
+            msg = f"Failed to schedule backup of the backup info file."
+            logging.error(msg)
+            self.anomalies.append(
+                BackupAnomaly(
+                    kind=ANOMALY_KIND_UNEXPECTED_STATE,
+                    file_info=fi_backup_info,
+                    message=msg,
+                )
+            )
+            return
+        done, not_done = futures.wait(
+            fs=set([f]), return_when=ALL_COMPLETED
+        )
+        if len(done) != 1 or f not in done:
+            msg = (
+                f"Expected backup info future to be completed but got "
+                f"done={len(done)} not_done={len(not_done)} f.done()={f.done()}."
+            )
+            logging.error(msg)
+            self.anomalies.append(
+                BackupAnomaly(
+                    kind=ANOMALY_KIND_UNEXPECTED_STATE,
+                    file_info=fi_backup_info,
+                    message=msg,
+                )
+            )
+            return
+        if f.exception():
+            msg = (
+                f"There was an error during backup of the backup information: "
+                f"{exc_to_string(f.exception())}"
+            )
+            logging.error(msg)
+            self.anomalies.append(
+                BackupAnomaly(
+                    kind=ANOMALY_KIND_EXCEPTION,
+                    file_info=fi_backup_info,
+                    exception=f.exception(),
+                    message=msg,
+                )
+            )
+            return
+
+        logging.info(
+            f"All backup history information successfully backed up: "
+            f"{fi_backup_info.path}"
+        )
+
     def _backup_files(self):
-        logging.info(f"Starting backup '{self._results_mgr.specific_backup_name}'...")
+        logging.info(f"Starting backup '{self._specific_backup_name}'...")
         if self._is_used:
             raise AlreadyUsedError(f"This instance has already been used.")
         self._is_used = True
-        pending_backups = set[Future]()
         try:
-            logging.info(f"Scheduling hashing jobs...")
-            for file_info in self._source_files:
-
-                try:
-                    file_info.refresh_stat_info()
-                except OsStatError as ex:
-                    msg = (
-                        f"The 'stat' operation failed, skipping backup of file: "
-                        f"path={file_info.path} Error occurred: {exc_to_string(ex)}"
-                    )
-                    self.anomalies.append(
-                        BackupAnomaly(
-                            kind=ANOMALY_KIND_EXCEPTION,
-                            file_info=file_info,
-                            exception=ex,
-                            message=msg,
-                        )
-                    )
-                    continue
-
-                if (
-                    self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL
-                    or self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL_HYBRID
-                ):
-                    (
-                        is_changed,
-                        existing_fi,
-                    ) = self._backup_history.get_file_date_size_modified_state(
-                        cur_fi=file_info
-                    )
-                    if not is_changed:
-                        # For incremental, skip based on size/modified-based checks.
-                        # Test log line: Consumed by tests.
-                        if _is_verbose_info_logging():
-                            logging.info(
-                                f"Skipping unchanged file (date/size check): {file_info.path}"
-                            )
-                        self._unchanged_skipped_files.append(file_info)
-                        file_info.is_unchanged_since_last = True
-                        file_info.deduplication_option = (
-                            existing_fi.deduplication_option
-                        )
-                        file_info.backing_fi = existing_fi
-                        # For incremental, there is only date/size check for same path
-                        # to see if there is a match. When such a match occurs, set
-                        # the current file's digest to that of the assumed duplicate.
-                        file_info.is_backing_fi_digest = True
-                        file_info.primary_digest = existing_fi.primary_digest
-                        self._results_mgr.extend_temp_results(file_info)
-                        continue
-                    elif existing_fi:
-                        logging.info(
-                            f"Scheduling backup of changed file: {file_info.path} "
-                            f"cur_date={file_info.modified_date_stamp_ISO8601_local} "
-                            f"old_date={existing_fi.modified_date_stamp_ISO8601_local} "
-                            f"cur_size={file_info.size_in_bytes} "
-                            f"old_size={existing_fi.size_in_bytes}"
-                        )
-                        logging.debug(
-                            f"POSIX timestamps: {file_info.path} "
-                            f"cur_posix={file_info.accessed_time_posix} "
-                            f"old_posix={file_info.accessed_time_posix}"
-                        )
-                    else:
-                        logging.info(
-                            f"Scheduling backup of file never backed up before: {file_info.path}"
-                        )
-                wait_futures_to_regulate(
-                    fs=pending_backups,
-                    max_allowed_pending=Backup.MAX_SIMULTANEOUS_FILES,
-                )
-                pending_backup_fut = self._subprocess_pipeline.submit(
-                    work_item=BackupPipelineWorkItem(
-                        operation_name=BACKUP_OPERATION_NAME_BACKUP,
-                        file_info=file_info,
-                    )
-                )
-                pending_backups.add(pending_backup_fut)
-                self._results_mgr.extend_temp_results(
-                    file_operation_futures_to_results(
-                        fs=pending_backups,
-                        fi_list=[],
-                        anomalies=self.anomalies,
-                        the_operation=BACKUP_OPERATION_NAME_BACKUP,
-                        is_dryrun=self.is_dryrun,
-                    )
-                )
-
-            logging.info(
-                f"Wait for {len(pending_backups)} backup file operations to complete..."
-            )
-            while len(pending_backups) > 0:
-                done, pending_backups = futures.wait(
-                    fs=pending_backups, return_when=FIRST_COMPLETED
-                )
-                if _is_very_verbose_debug_logging():
-                    logging.debug(
-                        f"Backup: observe {len(done)} completed, "
-                        f"{len(pending_backups)} remaining files."
-                    )
-                self._results_mgr.extend_temp_results(
-                    file_operation_futures_to_results(
-                        fs=done,
-                        fi_list=list(),
-                        anomalies=self.anomalies,
-                        the_operation=BACKUP_OPERATION_NAME_BACKUP,
-                        is_dryrun=self.is_dryrun,
-                    )
-                )
-                if _is_very_verbose_debug_logging() and len(pending_backups) > 0:
-                    logging.info(
-                        f"Wait for {len(pending_backups)} backup file operations to complete..."
-                    )
-
-            #
-            # Stopping the results manager saves the final backup information file.
-            #
-            self._results_mgr.stop()
-
-            if self.storage_def.storage_persisted_backup_info:
-                if self.is_dryrun:
-                    logging.info(f"*** Dry run, not storing backup information to backup.")
-                else:
-                    #
-                    # Save backup information to the backup storage.
-                    #
-                    fi_backup_info = BackupFileInformation(
-                        path=str(self._results_mgr.backup_info_db.primary_db_full_path),
-                    )
-
-                    #
-                    # Create a storage object name for the backup information.
-                    # It will be BackupName-YYYYMMDD-HHMMSS.atbuinf where the date/time
-                    # stamp derives from the specific backup start time.
-                    #
-                    sbi = self._results_mgr.final_results
-                    backup_start_time_stamp = sbi.get_backup_start_time_stamp_utc()
-                    # Store backup information with backup storage using a generic
-                    # prefix BACKUP_INFO_STORAGE_PREFIX, where it will be renamed as
-                    # needed during recovery.
-                    fi_backup_info.storage_object_name = (
-                        f"{BACKUP_INFO_STORAGE_PREFIX}-"
-                        f"{backup_start_time_stamp}{BACKUP_INFO_EXTENSION}"
-                    )
-
-                    f = self._subprocess_pipeline.submit(
-                        BackupPipelineWorkItem(
-                            operation_name=BACKUP_OPERATION_NAME_BACKUP,
-                            file_info=fi_backup_info,
-                            is_qualified=True,
-                        )
-                    )
-                    if f is None:
-                        msg = f"Failed to schedule backup of the backup info file."
-                        logging.error(msg)
-                        self.anomalies.append(
-                            BackupAnomaly(
-                                kind=ANOMALY_KIND_UNEXPECTED_STATE,
-                                file_info=fi_backup_info,
-                                message=msg,
-                            )
-                        )
-                        return
-                    done, not_done = futures.wait(fs=set([f]), return_when=ALL_COMPLETED)
-                    if len(done) != 1 or f not in done:
-                        msg = (
-                            f"Expected backup info future to be completed but got "
-                            f"done={len(done)} not_done={len(not_done)} f.done()={f.done()}."
-                        )
-                        logging.error(msg)
-                        self.anomalies.append(
-                            BackupAnomaly(
-                                kind=ANOMALY_KIND_UNEXPECTED_STATE,
-                                file_info=fi_backup_info,
-                                message=msg,
-                            )
-                        )
-                        return
-                    if f.exception():
-                        msg = (
-                            f"There was an error during backup of the backup information: "
-                            f"{exc_to_string(f.exception())}"
-                        )
-                        logging.error(msg)
-                        self.anomalies.append(
-                            BackupAnomaly(
-                                kind=ANOMALY_KIND_EXCEPTION,
-                                file_info=fi_backup_info,
-                                exception=f.exception(),
-                                message=msg,
-                            )
-                        )
-                        return
-
-                    logging.info(
-                        f"The backup information has been successfully backed up: "
-                        f"{fi_backup_info.path}"
-                    )
-
+            try:
+                self._schedule_files()
+                self._wait_for_backup_completion()
+            finally:
+                self.save_final_revision()
+                self._backup_history_db()
         except Exception as ex:
-            logging.error(
-                f"Unexpected exception scheduling to hasher worker and file backup workers. "
-                f"{exc_to_string(ex)}"
-            )
+            logging.error(f"Unexpected exception during backup operations: {exc_to_string(ex)}")
             raise
         finally:
             self._subprocess_pipeline.shutdown()
@@ -3238,10 +2438,7 @@ class Backup:
         return len(self.anomalies) == 0
 
     def backup_files(self):
-        try:
-            self._backup_files()
-        finally:
-            self._results_mgr.stop()
+        self._backup_files()
 
         dryrun_str = "(dry run) " if self.is_dryrun else ""
         logging.info(f"{dryrun_str}All backup file operations have completed.")
@@ -3250,7 +2447,9 @@ class Backup:
             and self._compression_stage.ext_to_ratio is not None
         ):
             logging.info(f"")
-            logging.info(f"{dryrun_str}Extension compression ratio report (lower is better):")
+            logging.info(
+                f"{dryrun_str}Extension compression ratio report (lower is better):"
+            )
             ext_to_ratio = self._compression_stage.ext_to_ratio
             if len(ext_to_ratio) == 0:
                 logging.info(f"{dryrun_str}  - No extension-to-ratio info captured -")
@@ -3265,12 +2464,14 @@ class Backup:
         if self.is_dryrun:
             logging.info(f"{dryrun_str}: Files that would have been backed up:")
             total_bytes = 0
-            ONE_MB = 1024.0*1024.0
-            for fi in self._results_mgr.final_results.all_file_info:
+            ONE_MB = 1024.0 * 1024.0
+            for fi in self.final_results.all_file_info:
                 if fi.is_successful and fi.exception is None:
                     logging.info(f"{fi.path} ({fi.size_in_bytes/ONE_MB:.3f} MB)")
                     total_bytes += fi.size_in_bytes
-            logging.info(f"{dryrun_str}: Total bytes all files: {total_bytes/ONE_MB:.3f} MB")
+            logging.info(
+                f"{dryrun_str}: Total bytes all files: {total_bytes/ONE_MB:.3f} MB"
+            )
 
         if len(self.anomalies) == 0:
             logging.info(f"***************")
@@ -3279,7 +2480,7 @@ class Backup:
             logging.info(f"{dryrun_str}No errors detected during backup.")
         else:
             log_anomalies_report(anomalies=self.anomalies)
-        for fi in self._results_mgr.final_results.all_file_info:
+        for fi in self.final_results.all_file_info:
             if fi.is_successful and fi.exception is None:
                 self.success_count += 1
         logging.info(f"{dryrun_str}{'Total files ':.<45} {len(self._source_files)}")
@@ -3288,23 +2489,20 @@ class Backup:
         )
         logging.info(
             f"{dryrun_str}{'Total backup operations ':.<45} "
-            f"{len(self._results_mgr.final_results) - len(self._unchanged_skipped_files)}"
+            f"{len(self.final_results) - len(self._unchanged_skipped_files)}"
         )
         unexpected_count_diff = len(self._source_files) - len(
-            self._results_mgr.final_results
+            self.final_results
         )
         if unexpected_count_diff != 0:
             logging.info(
                 f"{dryrun_str}"
                 f"{'Total unexpected files-results difference ':.<45} {unexpected_count_diff}"
             )
-        if len(self._results_mgr.tmp_results) > 0:
-            logging.info(
-                f"{dryrun_str}"
-                f"{'Total unexpected unsaved results ':.<45} {len(self._results_mgr.tmp_results)}"
-            )
         logging.info(f"{dryrun_str}{'Total errors ':.<45} {len(self.anomalies)}")
-        logging.info(f"{dryrun_str}{'Total successful backups ':.<45} {self.success_count}")
+        logging.info(
+            f"{dryrun_str}{'Total successful backups ':.<45} {self.success_count}"
+        )
 
 
 class StorageFileRetriever(ProcessThreadContextMixin):

@@ -139,7 +139,9 @@ def parse_storage_def_specifiers_patterns(
 
         storage_specifiers = [
             f"{CONFIG_SECTION_STORAGE_DEFINITION_SPECIFIER_PREFIX}:{n}"
-            for n in AtbuConfig.get_user_storage_def_names(fnmatch_pattern=storage_pattern)
+            for n in AtbuConfig.get_user_storage_def_names(
+                fnmatch_pattern=storage_pattern
+            )
         ]
 
         if not storage_specifiers:
@@ -271,9 +273,11 @@ def get_specific_backup_selections(
             history_key = f"{si.storage_def_name}:{si.backup_info_dir}"
             backup_history = history_dict.get(history_key)
             if not backup_history:
-                backup_history = BackupInformationDatabase.create_from_file(
+                backup_history = BackupInformationDatabase.load(
                     backup_base_name=si.storage_def_name,
                     backup_info_dir=si.backup_info_dir,
+                    backup_database_file_path=None,
+                    create_if_not_exist=True,
                 )
             # For each specific backup, from newest to oldest...
             for sbi in backup_history.get_specific_backups():
@@ -327,9 +331,9 @@ def get_specific_backup_selections(
                     if not specific_backup_sel.selected_fi.get(
                         sel_fi.nc_path_without_root
                     ):
-                        specific_backup_sel.selected_fi[
-                            sel_fi.nc_path_without_root
-                        ] = sel_fi
+                        specific_backup_sel.selected_fi[sel_fi.nc_path_without_root] = (
+                            sel_fi
+                        )
         if specific_backup_selections:
             result.append(specific_backup_selections)
     return result

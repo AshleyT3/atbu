@@ -34,8 +34,10 @@ from pytest import (
 import pytest
 
 from atbu.tools.backup.config import AtbuConfig
+from atbu.tools.backup.backup_constants import DatabaseFileType
 
 from .common_helpers import (
+    ALTERNATING_DB_TYPE,
     create_test_data_directory_minimal,
     create_test_data_directory_minimal_vary,
     establish_random_seed,
@@ -69,22 +71,30 @@ def teardown_module(module):  # pylint: disable=unused-argument
 
 backup_restore_parameters = [
     pytest.param(
-        "none",
+        "none", DatabaseFileType.DEFAULT.value,
         id="no_compression",
     ),
     pytest.param(
-        "normal",
+        "normal", DatabaseFileType.DEFAULT.value,
         id="normal_compression",
+    ),
+    pytest.param(
+        "normal", DatabaseFileType.JSON.value,
+        id="normal_compression_json_db",
+    ),
+    pytest.param(
+        "normal", DatabaseFileType.SQLITE.value,
+        id="normal_compression_sqlite_db",
     ),
 ]
 
-
 @pytest.mark.parametrize(
-    "compression_type",
+    "compression_type,db_type",
     backup_restore_parameters,
 )
 def test_backup_restore(
     compression_type,
+    db_type,
     tmp_path: Path,
     pytester: Pytester,
 ):
@@ -109,6 +119,8 @@ def test_backup_restore(
         initial_expected_total_files=total_files,
         storage_specifier=backup_directory,
         compression_type=compression_type,
+        db_type=db_type,
+        backup_base_name=ATBU_TEST_BACKUP_NAME,
         backup_timeout=60,
         restore_timeout=60,
         initial_backup_stdin=stdin_bytes,
@@ -225,11 +237,12 @@ def test_verify_compare_local(
 
 
 @pytest.mark.parametrize(
-    "compression_type",
+    "compression_type,db_type",
     backup_restore_parameters,
 )
 def test_backup_restore_history(
     compression_type,
+    db_type,
     tmp_path: Path,
     pytester: Pytester,
 ):
@@ -255,6 +268,53 @@ def test_backup_restore_history(
         expected_total_files=total_files,
         storage_specifier=backup_directory,
         compression_type=compression_type,
+        db_type=db_type,
+        backup_base_name=ATBU_TEST_BACKUP_NAME,
+        backup_timeout=60,
+        restore_timeout=60,
+        initial_backup_stdin=stdin_bytes,
+    )
+    pass  # pylint: disable=unnecessary-pass
+
+@pytest.mark.parametrize(
+    "compression_type,db_type",
+    [
+        pytest.param(
+            "normal", ALTERNATING_DB_TYPE,
+            id="normal_compression_alternating_db_type",
+        ),
+    ]
+)
+def test_backup_restore_alternating_db_type(
+    compression_type,
+    db_type,
+    tmp_path: Path,
+    pytester: Pytester,
+):
+    establish_random_seed(tmp_path)  # bytes([0,1,2,3])
+
+    source_directory = tmp_path / "SourceDataDir"
+    backup_directory = tmp_path / "BackupDestination"
+
+    _, files_created = create_test_data_directory_minimal_vary(
+        path_to_dir=source_directory,
+    )
+    total_files = len(files_created)
+
+    stdin_bytes = (
+        f"{ATBU_TEST_BACKUP_NAME}{os.linesep}{os.linesep}{os.linesep}".encode()
+    )
+
+    validate_backup_restore_history(
+        pytester=pytester,
+        tmp_path=tmp_path,
+        max_history=5,
+        source_directory=source_directory,
+        expected_total_files=total_files,
+        storage_specifier=backup_directory,
+        compression_type=compression_type,
+        db_type=db_type,
+        backup_base_name=ATBU_TEST_BACKUP_NAME,
         backup_timeout=60,
         restore_timeout=60,
         initial_backup_stdin=stdin_bytes,

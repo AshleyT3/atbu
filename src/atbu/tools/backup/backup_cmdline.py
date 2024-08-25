@@ -35,6 +35,7 @@ from .config import (
 from .storage_def_credentials import StorageDefCredentialSet
 from .creds_cmdline import setup_backup_encryption_wizard
 from .backup_selections import get_local_file_information
+from .backup_constants import DatabaseFileType
 from .backup_core import Backup, StorageDefinition
 
 
@@ -192,6 +193,8 @@ def handle_backup(args):
     if is_dryrun:
         logging.info(f"*** Dry run, backup will *not* actually be performed.")
 
+    force_db_type = DatabaseFileType(value=args.db_type)
+
     backup_type = None
     sneaky_corruption_detection: bool = args.detect_bitrot
     if args.full:
@@ -308,6 +311,7 @@ def handle_backup(args):
                 secondary_backup_info_dirs=backup_info_dirs[1:],
                 source_file_info_list=file_info_list,
                 storage_def=storage_def,
+                force_db_type=force_db_type,
                 is_dryrun=is_dryrun,
             ) as backup:
                 backup.backup_files()
