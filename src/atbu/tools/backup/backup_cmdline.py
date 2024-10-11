@@ -295,6 +295,8 @@ def handle_backup(args):
                 logging.info(f"No files found, nothing to backup.")
                 return
 
+            file_info_list.sort(key=lambda fi: fi.nc_path)
+
             compression_settings = atbu_cfg_to_use.get_compression_settings_deep_copy(
                 storage_def_name=storage_def_name,
             )

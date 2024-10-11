@@ -2461,6 +2461,8 @@ class Backup:
                     logging.info(f"{k:.<45} {(v*100):5.1f}%")
                 logging.info(f"")
 
+        self.final_results.all_file_info.sort(key=lambda fie: fie.nc_path)
+
         if self.is_dryrun:
             logging.info(f"{dryrun_str}: Files that would have been backed up:")
             total_bytes = 0
