@@ -202,7 +202,6 @@ class BackupInformationDatabaseEntity:
         if self.backup_base_name is not None:
             self.backups[self.backup_base_name] = {}
         self.path_to_info_all: dict[str, BackupFileInformationEntity] = None
-        self.path_to_info_last: dict[str, BackupFileInformationEntity] = None
         self.digest_to_list_info: defaultdict[
             str, list[BackupFileInformationEntity]
         ] = defaultdict(list[BackupFileInformationEntity])

@@ -455,13 +455,11 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
 
     def _rebuild_hashes(self):
         self.path_to_info_all: dict[str, BackupFileInformation] = {}
-        self.path_to_info_last: dict[str, BackupFileInformation] = {}
         if len(self.backups) == 0:
             return
         # From most recent to oldest backup, build path_to_info. First set in path_to_info[path]
         # for given path wins (i.e., newest is reachable via the index).
         specific_backups: list[SpecificBackupInformation] = self.get_specific_backups()
-        is_last_backup = True
         needs_backing_fi_dict: defaultdict[str, list[BackupFileInformation]] = (
             defaultdict(list[BackupFileInformation])
         )
@@ -520,11 +518,6 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                 if not self.path_to_info_all.get(nc_path_wo_root):
                     # This path not tracked already, so it is the first most recent, track it.
                     self.path_to_info_all[nc_path_wo_root] = sb_fi
-                    if is_last_backup:
-                        # Special case first iteration of 'for' captures 'last' backup info.
-                        self.path_to_info_last[nc_path_wo_root] = sb_fi
-            # After first iteration, last backup tracking has been handled.
-            is_last_backup = False
         if len(needs_backing_fi_from_dedup) > 0:
             needs_backing_fi: BackupFileInformation
             for needs_backing_fi in list(needs_backing_fi_from_dedup):
@@ -681,7 +674,6 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
             )
 
             self.path_to_info_all: dict[str, BackupFileInformation] = None
-            self.path_to_info_last: dict[str, BackupFileInformation] = None
             self.digest_to_list_info: defaultdict[str, list[BackupFileInformation]] = (
                 defaultdict(list[BackupFileInformation])
             )
@@ -836,7 +828,6 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
         if len(self.backups):
             self.backup_base_name = next(iter(self.backups))
         self.path_to_info_all: dict[str, BackupFileInformation] = None
-        self.path_to_info_last: dict[str, BackupFileInformation] = None
         self.digest_to_list_info: defaultdict[str, list[BackupFileInformation]] = (
             defaultdict(list[BackupFileInformation])
         )
