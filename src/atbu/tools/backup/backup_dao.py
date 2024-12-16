@@ -454,7 +454,12 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
         return b
 
     def _rebuild_hashes(self):
-        self.path_to_info_all: dict[str, BackupFileInformation] = {}
+
+        self.path_to_info_all: dict[str, BackupFileInformationEntity] = {}
+        self.digest_to_list_info: defaultdict[
+            str, list[BackupFileInformationEntity]
+        ] = defaultdict(list[BackupFileInformationEntity])
+
         if len(self.backups) == 0:
             return
         # From most recent to oldest backup, build path_to_info. First set in path_to_info[path]
@@ -673,10 +678,6 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                 cls_entity=SpecificBackupInformation
             )
 
-            self.path_to_info_all: dict[str, BackupFileInformation] = None
-            self.digest_to_list_info: defaultdict[str, list[BackupFileInformation]] = (
-                defaultdict(list[BackupFileInformation])
-            )
             sbi: SpecificBackupInformation
             for sbi_name, sbi in self.backups[self.backup_base_name].items():
                 sbi.select_from_db(db_api)
@@ -827,10 +828,6 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
         self.backups: dict = self.all_backup_info[BACKUP_INFO_BACKUPS_SECTION_NAME]
         if len(self.backups):
             self.backup_base_name = next(iter(self.backups))
-        self.path_to_info_all: dict[str, BackupFileInformation] = None
-        self.digest_to_list_info: defaultdict[str, list[BackupFileInformation]] = (
-            defaultdict(list[BackupFileInformation])
-        )
 
 
 backup_info_json_enc_dec = MultiEncoderDecoder()
