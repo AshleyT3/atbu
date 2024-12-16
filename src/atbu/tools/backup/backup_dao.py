@@ -526,6 +526,7 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
             # After first iteration, last backup tracking has been handled.
             is_last_backup = False
         if len(needs_backing_fi_from_dedup) > 0:
+            needs_backing_fi: BackupFileInformation
             for needs_backing_fi in list(needs_backing_fi_from_dedup):
                 # Find the duplicate using the same approach used when this file was backed up.
                 dup_fi = self.get_duplicate_file(
@@ -533,7 +534,11 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                     cur_fi=needs_backing_fi,
                 )
                 if dup_fi:
-                    assert needs_backing_fi.backing_fi is None
+                    if needs_backing_fi.backing_fi is not None:
+                        raise InvalidStateError(
+                            f"Unexpected state: BackupFileInformation.backing_fi must be None: "
+                            f"{needs_backing_fi.path}"
+                        )
                     needs_backing_fi.backing_fi = dup_fi
                     needs_backing_fi_from_dedup.remove(needs_backing_fi)
         if len(needs_backing_fi_dict) > 0:
