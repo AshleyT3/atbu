@@ -458,7 +458,7 @@ class BackupQueueIterator:
                 f"Cannot read chunk size of {size} bytes, only chunk sizes of "
                 f"{self._chunk_size} are allowed."
             )
-        return self.__next__()
+        return next(self)
 
     def get_iterator_only_proxy(self):
         return ProxyIterator(self)
@@ -1517,33 +1517,36 @@ class CompressionPipelineStage(SubprocessPipelineStage):
     def has_file_poorly_compressed_to_many_times(
         self,
         fi: BackupFileInformation,
-    ):
+    ) -> bool:
         nc_ext = os.path.normcase(fi.ext)
-        if len(nc_ext) > 0:
-            with self.shared_lock:
-                abort_count = self.ext_to_poor_ratio_count.get(nc_ext)
-            if (
-                abort_count is not None
-                and abort_count >= self.compress_max_ftype_attempts
-            ):
-                logging.debug(
-                    f"Skipping compression for extension, "
-                    f"more than {self.compress_max_ftype_attempts} "
-                    f"poor compression results: "
-                    f"path={fi.path}"
-                )
-                return True
+        if len(nc_ext) <= 0:
+            return False
+        with self.shared_lock:
+            abort_count = self.ext_to_poor_ratio_count.get(nc_ext)
+        if (
+            abort_count is not None
+            and abort_count >= self.compress_max_ftype_attempts
+        ):
+            logging.debug(
+                f"Skipping compression for extension, "
+                f"more than {self.compress_max_ftype_attempts} "
+                f"poor compression results: "
+                f"path={fi.path}"
+            )
+            return True
+        return False
 
     def is_file_below_compress_size_threshold(
         self,
         fi: BackupFileInformation,
-    ):
+    ) -> bool:
         if fi.size_in_bytes < self.compress_min_file_size:
             logging.debug(
                 f"Skipping compression for file less than {self.compress_min_file_size} bytes: "
                 f"path={fi.path}"
             )
             return True
+        return False
 
     def compress_to_output_file(
         self,
@@ -1733,7 +1736,7 @@ def run_operation_stage(wi: BackupPipelineWorkItem):
     if wi.operation_runner is None:
         raise InvalidStateError(f"The operation runner is None.")
     # In case BackupFile sets any attributes to
-    # values that cannot be picked, set it to None.
+    # values that cannot be pickled, set it to None.
     operation_runner = wi.operation_runner
     wi.operation_runner = None
     # The old way of returning results via the
@@ -1815,6 +1818,8 @@ class Backup:
             time.sleep(0.1)
 
         self.final_results = SpecificBackupInformation(
+            is_persistent_db_conn=self._backup_history.is_persistent_db_conn,
+            backup_database_file_path=self._backup_history.primary_db_full_path,
             backup_base_name=self.storage_def.storage_def_name,
             specific_backup_name=self._specific_backup_name,
             backup_start_time_utc=self.backup_start_time_utc,
@@ -1822,13 +1827,16 @@ class Backup:
             backup_type=self._backup_type,
         )
 
-        self._unchanged_skipped_files: list[BackupFileInformation] = list()
+        self._unchanged_skipped_files: list[BackupFileInformation] = []
         self._mp_manager = BackupSyncManager()
         self._mp_manager.start()
         self._object_name_hash_salt = os.urandom(32)
         self._object_name_reservations = BackupNameReservations(self._mp_manager)
         self.anomalies: list[BackupAnomaly] = []
         self.success_count = 0
+        self.success_bytes = 0
+        self.backup_start_perfsec = 0
+        self.backup_end_perfsec = 0
         self._subprocess_pipeline = MultiprocessingPipeline(
             name="Backup",
             max_simultaneous_work_items=min(os.cpu_count() // 2, 15),
@@ -1843,8 +1851,6 @@ class Backup:
             )
         )
         if self.is_dryrun:
-            # For dry run, do not create compression stage, but keep backup stage which will return
-            # success without performing a backup.
             logging.info(f"*** Dry run, will not perform compression or backup work.")
         self._compression_stage = CompressionPipelineStage(
             compression_settings=self._compression_settings,
@@ -1933,7 +1939,9 @@ class Backup:
         # logging.info(f"Backup info file saved: {backup_info_file}")
 
         # Add the backup info to the db, save the db.
-        logging.info(f"Saving primary backup history information to '{self.primary_backup_info_dir}' ...")
+        logging.info(
+            f"Saving primary backup history information to '{self.primary_backup_info_dir}' ..."
+        )
         self._backup_history.append(sbi=self.final_results)
         self._backup_history.save(
             dest_backup_info_dir=self.primary_backup_info_dir,
@@ -2027,7 +2035,7 @@ class Backup:
 
             dup_fi = bh.get_duplicate_file(
                 deduplication_option=self._deduplication_option,
-                cur_fi=file_info,
+                bfi=file_info,
             )
             if dup_fi is None:
                 #
@@ -2201,14 +2209,18 @@ class Backup:
             )
 
         return wi
+    
+    def _prepare_file_info(self) -> list[BackupFileInformation]:
+        """From self._source_files, prepare and return a list of files that will be backed up.
+        """
+        logging.info(f"Preparing backup file information...")
 
-    def _schedule_files(self):
-        #
-        # Schedule files for backup...
-        #
-
-        logging.info(f"Scheduling hashing jobs...")
-        for file_info in self._source_files:
+        files_for_backup: list[BackupFileInformation] = []
+        for idx, file_info in enumerate(self._source_files):
+            if (idx % 1000 == 0):
+                logging.debug(
+                    f"Checking file {idx+1} of {len(self._source_files)}: {file_info.path}"
+                )
 
             try:
                 file_info.refresh_stat_info()
@@ -2246,9 +2258,8 @@ class Backup:
                         )
                     self._unchanged_skipped_files.append(file_info)
                     file_info.is_unchanged_since_last = True
-                    file_info.deduplication_option = (
-                        existing_fi.deduplication_option
-                    )
+                    file_info.deduplication_option = existing_fi.deduplication_option
+
                     file_info.backing_fi = existing_fi
                     # For incremental, there is only date/size check for same path
                     # to see if there is a match. When such a match occurs, set
@@ -2257,9 +2268,10 @@ class Backup:
                     file_info.primary_digest = existing_fi.primary_digest
                     self.extend_final_results(file_info)
                     continue
-                elif existing_fi:
+
+                if existing_fi:
                     logging.info(
-                        f"Scheduling backup of changed file: {file_info.path} "
+                        f"Modified file for backup: {file_info.path} "
                         f"cur_date={file_info.modified_date_stamp_ISO8601_local} "
                         f"old_date={existing_fi.modified_date_stamp_ISO8601_local} "
                         f"cur_size={file_info.size_in_bytes} "
@@ -2272,8 +2284,27 @@ class Backup:
                     )
                 else:
                     logging.info(
-                        f"Scheduling backup of file never backed up before: {file_info.path}"
+                        f"New file for backup: {file_info.path}"
                     )
+
+            files_for_backup.append(file_info)
+
+        return files_for_backup
+
+    def _schedule_files(self, files_for_backup: list[BackupFileInformation]):
+
+        #
+        # Schedule files for backup...
+        #
+
+        logging.info(f"Scheduling hashing jobs...")
+        for idx, file_info in enumerate(files_for_backup):
+
+            if (idx % 1000 == 0):
+                logging.debug(
+                    f"Scheduling file {idx+1} of {len(files_for_backup)}: {file_info.path}"
+                )
+
             wait_futures_to_regulate(
                 fs=self._pending_backups,
                 max_allowed_pending=Backup.MAX_SIMULTANEOUS_FILES,
@@ -2311,7 +2342,7 @@ class Backup:
             self.extend_final_results(
                 file_operation_futures_to_results(
                     fs=done,
-                    fi_list=list(),
+                    fi_list=[],
                     anomalies=self.anomalies,
                     the_operation=BACKUP_OPERATION_NAME_BACKUP,
                     is_dryrun=self.is_dryrun,
@@ -2421,8 +2452,10 @@ class Backup:
             raise AlreadyUsedError(f"This instance has already been used.")
         self._is_used = True
         try:
+            self.backup_start_perfsec = time.perf_counter()
             try:
-                self._schedule_files()
+                files_for_backup = self._prepare_file_info()
+                self._schedule_files(files_for_backup)
                 self._wait_for_backup_completion()
             finally:
                 self.save_final_revision()
@@ -2431,6 +2464,7 @@ class Backup:
             logging.error(f"Unexpected exception during backup operations: {exc_to_string(ex)}")
             raise
         finally:
+            self.backup_end_perfsec = time.perf_counter()
             self._subprocess_pipeline.shutdown()
             self.anomalies.extend(self._subprocess_pipeline.anomalies)
 
@@ -2482,9 +2516,17 @@ class Backup:
             logging.info(f"{dryrun_str}No errors detected during backup.")
         else:
             log_anomalies_report(anomalies=self.anomalies)
+
+        total_time_mins = (self.backup_end_perfsec - self.backup_start_perfsec) / 60.0
+        logging.info(
+            f"{dryrun_str}{'Total backup time ':.<45} {total_time_mins:.1f} minutes"
+        )
+
         for fi in self.final_results.all_file_info:
             if fi.is_successful and fi.exception is None:
                 self.success_count += 1
+                self.success_bytes += fi.size_in_bytes
+
         logging.info(f"{dryrun_str}{'Total files ':.<45} {len(self._source_files)}")
         logging.info(
             f"{dryrun_str}{'Total unchanged files ':.<45} {len(self._unchanged_skipped_files)}"
@@ -2493,6 +2535,7 @@ class Backup:
             f"{dryrun_str}{'Total backup operations ':.<45} "
             f"{len(self.final_results) - len(self._unchanged_skipped_files)}"
         )
+
         unexpected_count_diff = len(self._source_files) - len(
             self.final_results
         )
@@ -2501,11 +2544,17 @@ class Backup:
                 f"{dryrun_str}"
                 f"{'Total unexpected files-results difference ':.<45} {unexpected_count_diff}"
             )
+
         logging.info(f"{dryrun_str}{'Total errors ':.<45} {len(self.anomalies)}")
+        logging.info(
+            f"{dryrun_str}{'Total backup bytes ':.<45} {self.success_bytes:,} B "
+            f"({self.success_bytes/1000000.0:.3f} MB) "
+            f"({self.success_bytes/1000000000.0:.3f} GB)"
+        )
+
         logging.info(
             f"{dryrun_str}{'Total successful backups ':.<45} {self.success_count}"
         )
-
 
 class StorageFileRetriever(ProcessThreadContextMixin):
 

@@ -1,4 +1,4 @@
-# Copyright 2022 Ashley R. Thomas
+# Copyright 2022-2024 Ashley R. Thomas
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -217,27 +217,6 @@ def parse_storage_def_specifiers_patterns(
     # with any patterns extracted per above.
     return result
 
-
-def get_selections_from_file_info_dict(
-    sel_pat: SelectionPattern, nc_path_to_fi_dict: dict[str, BackupFileInformation]
-) -> list[BackupFileInformation]:
-    r: list[BackupFileInformation] = []
-    # Check each normcase'ed path against the glob-like pattern.
-    for normcase_path, fi in nc_path_to_fi_dict.items():
-        # path and pattern are already normcase so using fnmatchcase is fine.
-        if not fnmatchcase(normcase_path, sel_pat.normcase_pattern):
-            continue
-        # Sanity check state, ensure file is resolved with backing_fi.
-        if fi.is_unchanged_since_last and not fi.backing_fi:
-            # If unchanged file has unresolved backing_fi, fail.
-            raise BackingFileInformationNotFound(
-                f"An unchanged since last file has no backing file information: "
-                f"fi={fi.path}"
-            )
-        r.append(fi)
-    return r
-
-
 def get_specific_backup_selections(
     sel_info_list: list[StorageSelectionInfo],
 ) -> list[list[SpecificBackupSelection]]:
@@ -312,14 +291,11 @@ def get_specific_backup_selections(
             specific_backup_sel: SpecificBackupSelection
             # For each selected specific backup, from newest to oldest...
             for specific_backup_sel in specific_backup_selections:
-                # Place all specific backup file info into a dict keyed w/normcase path.
-                sb_nc_path_to_fi_dict: dict[str, BackupFileInformation] = {}
-                for sb_fi in specific_backup_sel.specific_backup_info.all_file_info:
-                    sb_nc_path_to_fi_dict[sb_fi.nc_path_without_root] = sb_fi
-                # Determine which specific backup file info matches the file selection pattern.
-                list_sel_fi = get_selections_from_file_info_dict(
-                    sel_pat=sp, nc_path_to_fi_dict=sb_nc_path_to_fi_dict
+
+                list_sel_fi = specific_backup_sel.specific_backup_info.get_bfi_matching_fnpat(
+                    normcase_pattern=sp.normcase_pattern,
                 )
+
                 # For each matching specific backup file info, if it has not already
                 # matched the same path with a newer file info, add it to the selection.
                 # There should not be duplicate paths per specific backup.

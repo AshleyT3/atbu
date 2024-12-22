@@ -1,4 +1,4 @@
-# Copyright 2022 Ashley R. Thomas
+# Copyright 2022-2024 Ashley R. Thomas
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -68,13 +68,13 @@ Documentation: https://atbu.readthedocs.io/en/latest/
     install_requires=[
         "atbu-common-pkg >= 0.0.12",
         "atbu-mp-pipeline-pkg >= 0.0.10",
-        "cryptography >= 43.0.0",
+        "cryptography >= 44.0.0",
         "pwinput >= 1.0.3",
-        "keyring >= 25.3.0",
+        "keyring >= 25.5.0",
         "apache-libcloud >= 3.8.0",
-        "azure-storage-blob >= 12.22.0",
-        "google-auth >= 2.34.0",
-        "google-cloud-storage >= 2.18.2",
+        "azure-storage-blob >= 12.24.0",
+        "google-auth >= 2.37.0",
+        "google-cloud-storage >= 2.19.0",
         "google-resumable-media >= 2.7.2",
         "tabulate >= 0.9.0",
         "Send2Trash >= 1.8.3",

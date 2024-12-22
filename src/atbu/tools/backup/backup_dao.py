@@ -14,6 +14,7 @@
 r"""Backup configuration/data access objects.
 """
 
+from fnmatch import fnmatchcase
 import os
 from pathlib import Path
 import logging
@@ -22,6 +23,7 @@ import re
 import json
 from collections import defaultdict
 from datetime import datetime
+import threading
 from typing import Union
 
 from atbu.common.util_helpers import (
@@ -36,11 +38,11 @@ from .backup_entities import (
     BackupFileInformationEntity,
     BackupInformationDatabaseEntity,
     SpecificBackupInformationEntity,
+    find_duplicate_in_list,
 )
 
 from .backup_constants import *
 from .db_api import DbAppApi
-
 
 class DetectedFileType(Enum):
     UNKNOWN = 0
@@ -79,6 +81,22 @@ def get_file_type(path):
         return DetectedFileType.NOTFOUND
 
 
+_DBAPI_INSTANCES = threading.local()
+
+
+def get_db_api(db_file_path):
+    if not hasattr(_DBAPI_INSTANCES, "db_api"):
+        _DBAPI_INSTANCES.db_api = DbAppApi.open_db(db_file_path=db_file_path)
+    return _DBAPI_INSTANCES.db_api
+
+
+def close_db_api():
+    if not hasattr(_DBAPI_INSTANCES, "db_api"):
+        return
+    _DBAPI_INSTANCES.db_api.close()
+    delattr(_DBAPI_INSTANCES, "db_api")
+
+
 def sort_backup_info_filename_list(filename_list: list[str]):
     re_match_time_stamp = re.compile(rf"(.*)-(\d{{8}}-\d{{6}}){BACKUP_INFO_EXTENSION}")
     temp_list: list[str] = []
@@ -115,8 +133,14 @@ def remove_timestamp_from_backupinfo_filename(
 
 
 class BackupFileInformation(BackupFileInformationEntity):
-    def __init__(self, path: str, discovery_path: str = None, bfi_id: int = None):
-        super().__init__(path=path, discovery_path=discovery_path, bfi_id=bfi_id)
+    def __init__(
+        self,
+        path: str,
+        discovery_path: str = None,
+        sb_id: int = None,
+        bfi_id: int = None
+    ):
+        super().__init__(path=path, discovery_path=discovery_path, sb_id=sb_id, bfi_id=bfi_id)
 
     def insert_into_db(
         self,
@@ -177,7 +201,6 @@ class BackupFileInformation(BackupFileInformationEntity):
             self.encryption_IV = None
             self._is_backup_encrypted = False
 
-
 class SpecificBackupInformation(SpecificBackupInformationEntity):
     """Represents information of a specific backup session, which includes a list
     BackupFileInformation instances representing files that were backed up.
@@ -185,6 +208,8 @@ class SpecificBackupInformation(SpecificBackupInformationEntity):
 
     def __init__(
         self,
+        is_persistent_db_conn: bool = False,
+        backup_database_file_path: str = None,
         backup_base_name: str = None,
         specific_backup_name: str = None,
         backup_start_time_utc: datetime = None,
@@ -193,6 +218,8 @@ class SpecificBackupInformation(SpecificBackupInformationEntity):
         sbi_id: int = None,
     ):
         super().__init__(
+            is_persistent_db_conn=is_persistent_db_conn,
+            backup_database_file_path=backup_database_file_path,
             backup_base_name=backup_base_name,
             specific_backup_name=specific_backup_name,
             backup_start_time_utc=backup_start_time_utc,
@@ -256,9 +283,13 @@ class SpecificBackupInformation(SpecificBackupInformationEntity):
 
     def insert_into_db(
         self,
-        db_api: DbAppApi,
         backups_root_id: int,
+        db_api: DbAppApi,
     ) -> int:
+        if db_api is None:
+            raise ValueError(
+                f"db_api cannot be None."
+            )
         return db_api.insert_specific_backup(
             parent_backups_id=backups_root_id,
             backup_specific_name=self.specific_backup_name,
@@ -270,22 +301,75 @@ class SpecificBackupInformation(SpecificBackupInformationEntity):
     def select_from_db(
         self,
         db_api: DbAppApi,
+        resolve_backing_fi: bool = False,
     ):
+        if db_api is None:
+            raise ValueError(
+                f"db_api cannot be None."
+            )
         self.all_file_info = db_api.get_specific_backup_file_info(
             specific_backup_id=self.sbi_id,
+            resolve_backing_fi=resolve_backing_fi,
             cls_entity=BackupFileInformation,
         )
         pass
 
+    def get_bfi_matching_fnpat(
+        self,
+        normcase_pattern: str,
+    ) -> list[BackupFileInformation]:
+
+        nc_path_to_fi_dict: dict[str, BackupFileInformation] = {}
+        if self.all_file_info is not None:
+            for sb_fi in self.all_file_info:
+                nc_path_to_fi_dict[sb_fi.nc_path_without_root] = sb_fi
+
+        if self.is_persistent_db_conn:
+            db_api = get_db_api(db_file_path=self.backup_database_file_path)
+            fi_list = db_api.get_bfi_matching_fn_pat(
+                specific_backup_id=self.sbi_id,
+                fn_pat=normcase_pattern,
+                cls_entity=BackupFileInformation,
+            )
+            if self.all_file_info is None:
+                self.all_file_info = fi_list
+                nc_path_to_fi_dict = {sb_fi.nc_path_without_root: sb_fi for sb_fi in fi_list}
+            else:
+                for sb_fi in fi_list:
+                    if nc_path_to_fi_dict.get(sb_fi.nc_path_without_root) is None:
+                        nc_path_to_fi_dict[sb_fi.nc_path_without_root] = sb_fi
+                        self.all_file_info.append(sb_fi)
+
+        result: list[BackupFileInformation] = []
+
+        # Check each normcase'ed path against the glob-like pattern.
+        for normcase_path, fi in nc_path_to_fi_dict.items():
+
+            # path and pattern are already normcase so using fnmatchcase is fine.
+            if not self.is_persistent_db_conn and not fnmatchcase(normcase_path, normcase_pattern):
+                continue
+
+            # Sanity check state, ensure file is resolved with backing_fi.
+            if fi.is_unchanged_since_last and not fi.backing_fi:
+                # If unchanged file has unresolved backing_fi, fail.
+                raise BackingFileInformationNotFound(
+                    f"An unchanged since last file has no backing file information: "
+                    f"fi={fi.path}"
+                )
+            result.append(fi)
+
+        return result
 
 class BackupInformationDatabase(BackupInformationDatabaseEntity):
     def __init__(
         self,
+        is_persistent_db_conn: bool = False,
         backup_base_name: str = None,
         backup_info_dir: Union[str, Path] = None,
         force_db_type: DatabaseFileType = DatabaseFileType.DEFAULT,
     ):
         super().__init__(
+            is_persistent_db_conn=is_persistent_db_conn,
             backup_base_name=backup_base_name,
             backup_info_dir=backup_info_dir,
         )
@@ -296,8 +380,10 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
     def get_file_date_size_modified_state(
         self, cur_fi: BackupFileInformation
     ) -> tuple[bool, BackupFileInformation]:
+        """For path, last backup info, if any, and related change status.
+        """
         existing_fi = self.get_most_recent_backup_of_path(
-            path_without_root=cur_fi.path_without_root
+            fi=cur_fi
         )
         is_changed = True
         if (
@@ -311,8 +397,10 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
     def get_primary_digest_changed_info(
         self, cur_fi: BackupFileInformation
     ) -> tuple[bool, BackupFileInformation]:
+        """For path, last backup info, if any, and related digest-based change status.
+        """
         existing_fi = self.get_most_recent_backup_of_path(
-            path_without_root=cur_fi.path_without_root
+            fi=cur_fi
         )
         is_changed = True
         if (
@@ -322,21 +410,16 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
             is_changed = False
         return is_changed, existing_fi
 
-    def get_phys_backup_dup_list(
-        self,
-        cur_fi: BackupFileInformation,
-    ) -> list[BackupFileInformation]:
-        dup_list = self.digest_to_list_info.get(cur_fi.primary_digest)
-        return dup_list
-
     def is_phys_backup_dup_exist(
         self,
         cur_fi: BackupFileInformation,
     ) -> bool:
-        dup_list = self.get_phys_backup_dup_list(cur_fi=cur_fi)
-        if dup_list is not None and len(dup_list) > 0:
-            return True
-        return False
+        if self.is_persistent_db_conn:
+            db_api = get_db_api(db_file_path=self.primary_db_full_path)
+            dup_list = db_api.get_phys_backup_dup_list(cur_fi=cur_fi)
+        else:
+            dup_list = self.digest_to_bfi_list.get(cur_fi.primary_digest)
+        return dup_list is not None and len(dup_list) > 0
 
     def get_potential_bitrot_or_sneaky_corruption_info(
         self,
@@ -362,48 +445,49 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
         # Get change state for same path location.
         is_changed, existing_fi = self.get_file_date_size_modified_state(cur_fi=cur_fi)
         if is_changed or existing_fi is None:
-            # Not changed or no history for path location.
             return (False, existing_fi)
         # File date/time and size are not changed.
         # If digests are mismatched, potentially sneaky corruption exists.
         return (cur_fi.primary_digest != existing_fi.primary_digest, existing_fi)
 
     def get_duplicate_file(
-        self, deduplication_option: str, cur_fi: BackupFileInformation
+        self,
+        deduplication_option: str,
+        bfi: BackupFileInformation,
     ) -> BackupFileInformation:
-        """Given caller's deduplication_option and BackupFileInformation, return a discovered
-        duplicate file.
-        """
-        dup_list = self.get_phys_backup_dup_list(cur_fi=cur_fi)
-        if not dup_list:
-            # Duplicate not found.
-            return None
-        is_check_ext = deduplication_option == ATBU_BACKUP_DEDUPLICATION_TYPE_DIGEST_EXT
-        for dup_fi in dup_list:
-            if cur_fi.primary_digest != dup_fi.primary_digest:
-                # Digest sanity check failed.
-                raise InvalidStateError(
-                    f"get_duplicate_file: The digests should not be different: "
-                    f"path1={cur_fi.path} path2={dup_fi.path}"
-                )
-            if (
-                cur_fi.size_in_bytes == dup_fi.size_in_bytes
-                and cur_fi.modified_time_posix == dup_fi.modified_time_posix
-                and (
-                    not is_check_ext
-                    or (len(cur_fi.ext) != 0 and cur_fi.ext == dup_fi.ext)
-                )
-            ):
-                # Return discovered duplicate.
-                return dup_fi
-        # Duplicate not found.
-        return None
+        if self.is_persistent_db_conn:
+            db_api = get_db_api(db_file_path=self.primary_db_full_path)
+            return db_api.get_duplicate_file(
+                deduplication_option=deduplication_option,
+                bfi=bfi
+            )
 
-    def get_most_recent_backup_of_path(
-        self, path_without_root
-    ) -> BackupFileInformation:
-        path = os.path.normcase(path_without_root)
-        return self.path_to_info_all.get(path)
+        dup_list = self.digest_to_bfi_list.get(bfi.primary_digest)
+        return find_duplicate_in_list(
+            deduplication_option=deduplication_option,
+            bfi=bfi,
+            dup_list=dup_list,
+        )
+
+    def get_most_recent_backup_of_path(self, fi: BackupFileInformation) -> BackupFileInformation:
+        if self.is_persistent_db_conn:
+            db_api = get_db_api(db_file_path=self.primary_db_full_path)
+            fi_most_recent = db_api.get_most_recent_backup_of_path(
+                path_substr=fi.path,
+                path_substr_pos=0,
+                cls_entity=BackupFileInformation,
+            )
+            # if fi_most_recent is not None:
+            #     db_api.resolve_backing_fi(
+            #         bfi=fi_most_recent,
+            #         cls_entity=BackupFileInformation,
+            #     )
+        else:
+            fi_most_recent = self.path_to_most_recent_bfi.get(
+                os.path.normcase(fi.path_without_root)
+            )
+        return fi_most_recent
+
 
     def has_backup(self, backup_base_name: str, specific_backup_name: str) -> bool:
         if (
@@ -455,8 +539,8 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
 
     def _rebuild_hashes(self):
 
-        self.path_to_info_all: dict[str, BackupFileInformationEntity] = {}
-        self.digest_to_list_info: defaultdict[
+        self.path_to_most_recent_bfi: dict[str, BackupFileInformationEntity] = {}
+        self.digest_to_bfi_list: defaultdict[
             str, list[BackupFileInformationEntity]
         ] = defaultdict(list[BackupFileInformationEntity])
 
@@ -486,7 +570,7 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                 #
                 # Two things performed in this 'for' ...
                 #   A) try to resolve any wanting fi using this sb_fi.
-                #   B) add the sb_fi to the digest_to_list_info (for later
+                #   B) add the sb_fi to the digest_to_bfi_list (for later
                 #      digest-based lookups, such as deduplication).
                 #   C) track via dict/structs (see below) this sb_fi as needed.
                 #
@@ -515,21 +599,21 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                     # B) Track (via dict) the digest for all sb_fi representing physical backups.
                     # For all sb_fi representing backups (is_unchanged_since_last==False),
                     # track (via dict) its digest, add it to the digest's list.
-                    self.digest_to_list_info[sb_fi.primary_digest].append(sb_fi)
+                    self.digest_to_bfi_list[sb_fi.primary_digest].append(sb_fi)
 
                 #
                 # C) Track (via dict) this sb_fi as needed:
                 #
-                if not self.path_to_info_all.get(nc_path_wo_root):
+                if not self.path_to_most_recent_bfi.get(nc_path_wo_root):
                     # This path not tracked already, so it is the first most recent, track it.
-                    self.path_to_info_all[nc_path_wo_root] = sb_fi
+                    self.path_to_most_recent_bfi[nc_path_wo_root] = sb_fi
         if len(needs_backing_fi_from_dedup) > 0:
             needs_backing_fi: BackupFileInformation
             for needs_backing_fi in list(needs_backing_fi_from_dedup):
                 # Find the duplicate using the same approach used when this file was backed up.
                 dup_fi = self.get_duplicate_file(
                     deduplication_option=needs_backing_fi.deduplication_option,
-                    cur_fi=needs_backing_fi,
+                    bfi=needs_backing_fi,
                 )
                 if dup_fi:
                     if needs_backing_fi.backing_fi is not None:
@@ -540,7 +624,7 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                     needs_backing_fi.backing_fi = dup_fi
                     needs_backing_fi_from_dedup.remove(needs_backing_fi)
         if len(needs_backing_fi_dict) > 0:
-            failing_paths = [k for k in needs_backing_fi_dict.keys()]
+            failing_paths = list(needs_backing_fi_dict.keys())
             raise InvalidStateError(
                 f"Unexpected state: BackupFileInformation instances still "
                 f"require backing BackupFileInformation: {failing_paths}"
@@ -630,8 +714,8 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
             if not backups_root_id:
                 backups_root_id, _ = db_api.get_backups_root()
             sbi.sbi_id = sbi.insert_into_db(
-                db_api=db_api,
                 backups_root_id=backups_root_id,
+                db_api=db_api,
             )
             fi: BackupFileInformation
             for fi in sbi.all_file_info:
@@ -650,7 +734,6 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
         logging.info(f"Creating new SQL database: {db_file_path}")
         with DbAppApi.create_new_db(
             db_file_path,
-            self.backup_database_name,
             self.backup_base_name,
             overwrite=overwrite,
         ) as db_api:
@@ -664,23 +747,44 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                 )
             db_api.commit()
 
-    def select_from_db(self, db_file_path: Union[str, Path]):
-        with DbAppApi.open_db(db_file_path=db_file_path) as db_api:
-            _, db_name, db_ver = db_api.get_backup_db_root()
-            self.all_backup_info[CONFIG_VALUE_NAME_CONFIG_NAME] = db_name
-            self.all_backup_info[CONFIG_VALUE_NAME_VERSION] = db_ver
-            _, self.backup_base_name = db_api.get_backups_root()
+    def _load_backup_info_from_db(self, db_api: DbAppApi):
 
-            # Currently only one backup config per DB.
-            # Remove anything present, replace it with this DB's backup config.
-            self.backups.clear() 
-            self.backups[self.backup_base_name] = db_api.get_specific_backups(
-                cls_entity=SpecificBackupInformation
-            )
+        _, db_name, db_ver = db_api.get_backup_db_root()
 
+        self.all_backup_info[CONFIG_VALUE_NAME_CONFIG_NAME] = db_name
+        self.all_backup_info[CONFIG_VALUE_NAME_VERSION] = db_ver
+
+        _, self.backup_base_name = db_api.get_backups_root()
+
+        # Currently only one backup config per DB.
+        # Remove anything present, replace it with this DB's backup config.
+        self.backups.clear()
+
+        sbi_list = db_api.get_specific_backups(
+            is_persistent_db_conn=self.is_persistent_db_conn,
+            backup_database_file_path=self.primary_db_full_path,
+            backup_base_name=self.backup_base_name,
+            cls_entity=SpecificBackupInformation
+        )
+
+        self.backups[self.backup_base_name] = sbi_list
+
+        if not self.is_persistent_db_conn:
             sbi: SpecificBackupInformation
             for sbi_name, sbi in self.backups[self.backup_base_name].items():
-                sbi.select_from_db(db_api)
+                sbi.select_from_db(db_api=db_api, resolve_backing_fi=False)
+
+    def _open_db_persistent(self, db_file_path: Union[str, Path]):
+        if not self.is_persistent_db_conn:
+            raise InvalidStateError("The db.open_db_persistent must be True.")
+        db_api = DbAppApi.open_db(db_file_path=db_file_path)
+        self._load_backup_info_from_db(db_api=db_api)
+
+    def _open_db_load_entire_db(self, db_file_path: Union[str, Path]):
+        if self.is_persistent_db_conn:
+            raise InvalidStateError("The db.open_db_persistent must be False.")
+        with DbAppApi.open_db(db_file_path=db_file_path) as db_api:
+            self._load_backup_info_from_db(db_api=db_api)
         self._rebuild_hashes()
 
     def save(
@@ -769,6 +873,7 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                 f"No backup history for '{backup_base_name}'. Creating new history database."
             )
             bid = BackupInformationDatabase(
+                is_persistent_db_conn=force_db_type != DatabaseFileType.JSON,
                 backup_base_name=backup_base_name,
                 backup_info_dir=backup_info_dir,
                 force_db_type=force_db_type,
@@ -776,7 +881,10 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
             bid.save(
                 dest_backup_info_dir=backup_info_dir,
             )
-            bid._rebuild_hashes()  # pylint: disable=protected-access
+            if force_db_type != DatabaseFileType.JSON:
+                bid._open_db_persistent(db_file_path=backup_database_file_path)
+            else:
+                bid._rebuild_hashes()  # pylint: disable=protected-access
             return bid
 
         ft = get_file_type(path=backup_database_file_path)
@@ -790,6 +898,7 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                     bid: BackupInformationDatabase = json.load(
                         fp=file, cls=backup_info_json_enc_dec.get_json_decoder_class()
                     )
+                bid.is_persistent_db_conn = False
                 bid.loaded_backup_db_file_path = backup_database_file_path
                 bid.loaded_backup_db_file_type = DatabaseFileType.JSON
                 if not bid.backup_base_name:
@@ -805,12 +914,14 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
                 ).with_traceback(ex.__traceback__) from ex
         elif ft == DetectedFileType.SQLITE:
             bid = BackupInformationDatabase(
+                is_persistent_db_conn=force_db_type != DatabaseFileType.JSON,
                 backup_base_name=backup_base_name,
                 backup_info_dir=backup_info_dir,
             )
-            bid.select_from_db(
-                db_file_path=backup_database_file_path,
-            )
+            if force_db_type != DatabaseFileType.JSON:
+                bid._open_db_persistent(db_file_path=backup_database_file_path)
+            else:
+                bid._open_db_load_entire_db(db_file_path=backup_database_file_path)
             bid.force_db_type = force_db_type
             bid.loaded_backup_db_file_path = backup_database_file_path
             bid.loaded_backup_db_file_type = DatabaseFileType.SQLITE

@@ -1,4 +1,4 @@
-# Copyright 2022 Ashley R. Thomas
+# Copyright 2022-2024 Ashley R. Thomas
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,6 +54,10 @@ from .config import (
     register_storage_def_config_override,
 )
 from .backup_constants import DatabaseFileType
+from .db_api import (
+    get_db_api_default_cache_size,
+    set_db_api_default_cache_size,
+)
 from .backup_core import (
     BACKUP_COMPRESSION_CHOICES,
     BACKUP_COMPRESSION_DEFAULT,
@@ -597,6 +601,17 @@ config/secrets backup. Keep other copies in safe places!
 """,
     )
 
+    parser_db_api_common = argparse.ArgumentParser(add_help=False)
+    parser_db_api_common.add_argument(
+        "--db-cachesize",
+        help=f"""This is the SQLite cache_size value. As a negative value, it is the number of
+kibibytes to request. If positive, it is the number of pages. The default if not
+specified is {abs(get_db_api_default_cache_size())} kibibytes (aka "PRAGMA cache_size {get_db_api_default_cache_size()}").
+""",
+        default=get_db_api_default_cache_size(),
+        type=int,
+    )
+
     #
     # Common destination file overwrite argument.
     #
@@ -620,7 +635,7 @@ config/secrets backup. Keep other copies in safe places!
         "backup",
         formatter_class=argparse.RawTextHelpFormatter,
         help="Backup files to a local file system folder or the cloud.",
-        parents=[parser_common, parser_credential_filename_optional],
+        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
     )
     group_backup_operation = parser_backup.add_mutually_exclusive_group(required=True)
     group_backup_operation.add_argument(
@@ -771,7 +786,7 @@ same since the last backup, but the digests are different.""",
 """When saving the history database, force using a particular history database type other than
 the default. The default is to use whatever was detected at the time the history database was
 loaded, or if a new database is being created, 'sqlite'. Specify 'json' to force using a textual
-JSON format. Once using a JSON format, specify 'sqlite' to force the format back to sqlite.
+JSON format. Once using a JSON format, specify 'sqlite' to force the format back to SQLite.
 The JSON format can be useful for those who have a relatively small set of files where the
 convenience of the JSON text file is both managable and worthwhile.""",
     )
@@ -789,7 +804,7 @@ convenience of the JSON text file is both managable and worthwhile.""",
     parser_restore = subparsers.add_parser(
         "restore",
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common, parser_credential_filename_optional],
+        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
         help="Restore selected files from a backup.",
         description=f"""Restore selected files from a backup.
 
@@ -859,7 +874,7 @@ To learn more about specifying a storage definitions, backups,
 and files, see '{ATBU_PROGRAM_NAME} help specifiers'
 """,
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common, parser_credential_filename_optional],
+        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
     )
     parser_verify.add_argument(
         "source_storage_specifiers",
@@ -896,7 +911,7 @@ backup location is used.
     parser_list = subparsers.add_parser(
         "list",
         help="List storage definitions, backups, and files relating to backups.",
-        parents=[parser_common, parser_credential_filename_optional],
+        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
     )
     parser_list.add_argument(
         "specifiers",
@@ -1228,7 +1243,7 @@ recommended you backup configurations before overwriting them by using
     parser_decrypt = subparsers.add_parser(
         "decrypt",
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common, parser_credential_filename_optional],
+        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
         help="Decrypt storage files directly.",
         description=f"""Decrypt storage files directly. This is generally a command used by someone with technical expertise who may have
 a need to decrypt backup storage files without needing to download them. For normal usage/users, this command can
@@ -1483,7 +1498,7 @@ in order to indicate the same of persistence information should be read from the
 
 The following saves a database using per-file information within c:\\LocA...
 
-    {ATBU_PROGRAM_NAME} update-digests --per-file --locations c:\\LocA' --db .\mydb.json
+    {ATBU_PROGRAM_NAME} update-digests --per-file --locations c:\\LocA' --db .\\mydb.json
 
 """,
     )
@@ -1817,6 +1832,12 @@ def main(argv=None):
     verbosity_level = 0
     if hasattr(args, "verbosity") and args.verbosity is not None:
         verbosity_level = args.verbosity
+
+    if hasattr(args, "db_cachesize"):
+        if args.db_cachesize != get_db_api_default_cache_size():
+            if abs(args.db_cachesize) > 2000:
+                set_db_api_default_cache_size(args.db_cachesize)
+            logging.info(f"Using SQLite cache_size={get_db_api_default_cache_size()}")
 
     # Instantiate global singleton GlobalHasherDefinitions.
     try:

@@ -1,4 +1,4 @@
-# Copyright 2022 Ashley R. Thomas
+# Copyright 2022-2024 Ashley R. Thomas
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ from typing import Literal
 
 ATBU_MAJOR_VERSION = 0
 ATBU_MINOR_VERSION = 0
-ATBU_PATCH_VERSION = 39
+ATBU_PATCH_VERSION = 40
 
 ATBU_VERSION_STRING = f"{ATBU_MAJOR_VERSION}.{ATBU_MINOR_VERSION}.{ATBU_PATCH_VERSION:02}"
 
