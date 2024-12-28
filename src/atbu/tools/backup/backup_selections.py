@@ -292,6 +292,10 @@ def get_specific_backup_selections(
             # For each selected specific backup, from newest to oldest...
             for specific_backup_sel in specific_backup_selections:
 
+                logging.info(
+                    f"Searching in '{specific_backup_sel.specific_backup_name}' for '{sp.normcase_pattern}'."
+                )
+
                 list_sel_fi = specific_backup_sel.specific_backup_info.get_bfi_matching_fnpat(
                     normcase_pattern=sp.normcase_pattern,
                 )
@@ -524,6 +528,8 @@ def get_local_file_information(
         src_dir_to_search = src_dir_no_wc
         if os.path.isfile(src_dir_no_wc) and src_dir_no_wc == src_dir_wc:
             src_dir_to_search, _ = os.path.split(src_dir_no_wc)
+        # For the user-supplied path, simplify to the "real" path.
+        src_dir_to_search = os.path.realpath(src_dir_to_search)
         # Search, removing anything already found.
         discovered = set(
             iwalk_fnmatch(

@@ -56,12 +56,16 @@ from .config import (
 from .backup_constants import DatabaseFileType
 from .db_api import (
     get_db_api_default_cache_size,
+    is_preread_db_files,
     set_db_api_default_cache_size,
+    set_preread_db_files,
 )
 from .backup_core import (
     BACKUP_COMPRESSION_CHOICES,
     BACKUP_COMPRESSION_DEFAULT,
     BACKUP_INFO_EXTENSION,
+    get_max_simultaneous_file_backups,
+    set_max_simultaneous_file_backups,
 )
 from .backup_cmdline import handle_backup
 from .restore import handle_restore, handle_decrypt
@@ -601,6 +605,17 @@ config/secrets backup. Keep other copies in safe places!
 """,
     )
 
+    parser_backup_common = argparse.ArgumentParser(add_help=False)
+    parser_backup_common.add_argument(
+        "--max-files",
+        help=f"""The maximum number of simulatenous file operations to run at once. For backups,
+this is the maximum number of files backed up at the same time. The same applies
+to restores and verifies. The default is {get_max_simultaneous_file_backups()}.
+""",
+        default=get_max_simultaneous_file_backups(),
+        type=int,
+    )
+
     parser_db_api_common = argparse.ArgumentParser(add_help=False)
     parser_db_api_common.add_argument(
         "--db-cachesize",
@@ -610,6 +625,17 @@ specified is {abs(get_db_api_default_cache_size())} kibibytes (aka "PRAGMA cache
 """,
         default=get_db_api_default_cache_size(),
         type=int,
+    )
+    parser_db_api_common.add_argument(
+        "--preread-db",
+        action=argparse.BooleanOptionalAction,
+        default=is_preread_db_files(),
+        help="""By default, when using SQLite for the backup DB, it will be read before use in order
+to maximize populating the operating system's disk cache with the contents of the DB.
+If enough memory is available, with appropriate operating system caching, this can
+have noticable benefits when storing the primary backup database on older slower media.
+On newer media, the cost is but a few seconds so the default is to perform this action.
+""",
     )
 
     #
@@ -635,7 +661,12 @@ specified is {abs(get_db_api_default_cache_size())} kibibytes (aka "PRAGMA cache
         "backup",
         formatter_class=argparse.RawTextHelpFormatter,
         help="Backup files to a local file system folder or the cloud.",
-        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
+        parents=[
+            parser_common,
+            parser_credential_filename_optional,
+            parser_backup_common,
+            parser_db_api_common
+        ],
     )
     group_backup_operation = parser_backup.add_mutually_exclusive_group(required=True)
     group_backup_operation.add_argument(
@@ -804,7 +835,12 @@ convenience of the JSON text file is both managable and worthwhile.""",
     parser_restore = subparsers.add_parser(
         "restore",
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
+        parents=[
+            parser_common,
+            parser_credential_filename_optional,
+            parser_backup_common,
+            parser_db_api_common
+        ],
         help="Restore selected files from a backup.",
         description=f"""Restore selected files from a backup.
 
@@ -874,7 +910,12 @@ To learn more about specifying a storage definitions, backups,
 and files, see '{ATBU_PROGRAM_NAME} help specifiers'
 """,
         formatter_class=argparse.RawTextHelpFormatter,
-        parents=[parser_common, parser_credential_filename_optional, parser_db_api_common],
+        parents=[
+            parser_common,
+            parser_credential_filename_optional,
+            parser_backup_common,
+            parser_db_api_common,
+        ],
     )
     parser_verify.add_argument(
         "source_storage_specifiers",
@@ -1833,11 +1874,21 @@ def main(argv=None):
     if hasattr(args, "verbosity") and args.verbosity is not None:
         verbosity_level = args.verbosity
 
+    if hasattr(args, "max_files"):
+        if args.max_files != get_max_simultaneous_file_backups():
+            if args.max_files < 1:
+                raise ValueError(f"--max-files {args.max_files} is invalid.")
+            set_max_simultaneous_file_backups(args.max_files)
+
     if hasattr(args, "db_cachesize"):
         if args.db_cachesize != get_db_api_default_cache_size():
             if abs(args.db_cachesize) > 2000:
                 set_db_api_default_cache_size(args.db_cachesize)
             logging.info(f"Using SQLite cache_size={get_db_api_default_cache_size()}")
+
+    if hasattr(args, "preread_db") and args.preread_db != is_preread_db_files():
+        set_preread_db_files(args.preread_db)
+        logging.info(f"Preread database set to '{is_preread_db_files()}'.")
 
     # Instantiate global singleton GlobalHasherDefinitions.
     try:

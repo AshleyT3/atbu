@@ -182,6 +182,14 @@ class BackupFileInformationEntity(FileInformation):
     def ciphertext_hash_during_backup(self, value):
         self._ciphertext_hash_during_backup = value
 
+    @property
+    def is_failed(self):
+        return self.exception is not None
+
+    @property
+    def is_backed_up(self):
+        return not self.is_failed and (self.is_successful or self.is_unchanged_since_last)
+
 
 class SpecificBackupInformationEntity:
     """Represents information of a specific backup session, which includes a list
@@ -317,6 +325,62 @@ def validate_bfi_backing_information(bfi: BackupFileInformationEntityT):
         )
 
 
+def is_bfi_duplicate_info(
+    deduplication_option: str,
+    bfi: BackupFileInformationEntityT,
+    digest: Union[bytes,str],
+    modified_time_posix: float,
+    size_in_bytes: int,
+    ext: str,
+) -> bool:
+    if bfi is None:
+        raise ValueError("a bfi must be specified.")
+    if isinstance(digest, bytes):
+        digest = digest.hex()
+    is_check_ext = deduplication_option == ATBU_BACKUP_DEDUPLICATION_TYPE_DIGEST_EXT
+    if bfi.primary_digest != digest:
+        raise InvalidStateError(
+            f"get_duplicate_file: The digests should not be different: "
+            f"path1={bfi.path} primary_digest={bfi.primary_digest} "
+            f"other_digest={digest}"
+        )
+    if (
+        bfi.size_in_bytes == size_in_bytes
+        and bfi.modified_time_posix == modified_time_posix
+        and (
+            not is_check_ext
+            or (len(bfi.ext) != 0 and bfi.ext == ext)
+        )
+    ):
+        # Duplicate discovered.
+        return True
+    # Duplicate not found.
+    return False
+
+
+def is_bfi_duplicate_bfi(
+    deduplication_option: str,
+    bfi: BackupFileInformationEntityT,
+    cand_dup_bfi: BackupFileInformationEntityT,
+) -> bool:
+    if bfi is None or cand_dup_bfi is None:
+        raise ValueError("a current and candidate bfi must be specified.")
+    if bfi.primary_digest != cand_dup_bfi.primary_digest:
+        # Digest sanity check failed.
+        raise InvalidStateError(
+            f"get_duplicate_file: The digests should not be different: "
+            f"path1={bfi.path} path2={cand_dup_bfi.path}"
+        )
+    return is_bfi_duplicate_info(
+        deduplication_option=deduplication_option,
+        bfi=bfi,
+        digest=cand_dup_bfi.primary_digest,
+        size_in_bytes=cand_dup_bfi.size_in_bytes,
+        modified_time_posix=cand_dup_bfi.modified_time_posix,
+        ext=cand_dup_bfi.ext,
+    )
+
+
 def find_duplicate_in_list(
     deduplication_option: str,
     bfi: BackupFileInformationEntityT,
@@ -324,23 +388,31 @@ def find_duplicate_in_list(
 ) -> BackupFileInformationEntityT:
     if not dup_list:
         return None
-    is_check_ext = deduplication_option == ATBU_BACKUP_DEDUPLICATION_TYPE_DIGEST_EXT
-    for dup_fi in dup_list:
-        if bfi.primary_digest != dup_fi.primary_digest:
-            # Digest sanity check failed.
-            raise InvalidStateError(
-                f"get_duplicate_file: The digests should not be different: "
-                f"path1={bfi.path} path2={dup_fi.path}"
-            )
-        if (
-            bfi.size_in_bytes == dup_fi.size_in_bytes
-            and bfi.modified_time_posix == dup_fi.modified_time_posix
-            and (
-                not is_check_ext
-                or (len(bfi.ext) != 0 and bfi.ext == dup_fi.ext)
-            )
+    for cand_dup_bfi in dup_list:
+        if is_bfi_duplicate_bfi(
+            deduplication_option=deduplication_option,
+            bfi=bfi,
+            cand_dup_bfi=cand_dup_bfi,
         ):
-            # Return discovered duplicate.
-            return dup_fi
-    # Duplicate not found.
+            return cand_dup_bfi
     return None
+
+
+def is_bfi_modiifed(
+    cur_bfi: BackupFileInformationEntityT,
+    most_recent_backup_bfi: BackupFileInformationEntityT,
+    check_digests: bool,
+):
+    if cur_bfi is None:
+        raise ValueError("cur_bfi must be specified.")
+    if most_recent_backup_bfi is None:
+        return True
+    if (cur_bfi.size_in_bytes != most_recent_backup_bfi.size_in_bytes
+        or cur_bfi.modified_time_posix != most_recent_backup_bfi.modified_time_posix
+    ):
+        return True
+    if not check_digests:
+        return False
+    if not cur_bfi.primary_digest or not most_recent_backup_bfi.primary_digest:
+        assert ValueError("digests must be present to be checked.")
+    return cur_bfi.primary_digest != most_recent_backup_bfi.primary_digest

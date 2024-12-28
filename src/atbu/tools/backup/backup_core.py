@@ -119,6 +119,18 @@ def _is_verbose_info_logging():
     )
 
 
+MAX_SIMULTANEOUS_FILE_BACKUPS = DEFAULT_MAX_SIMULTANEOUS_FILE_BACKUPS
+
+
+def get_max_simultaneous_file_backups() -> int:
+    return MAX_SIMULTANEOUS_FILE_BACKUPS
+
+
+def set_max_simultaneous_file_backups(max_files_at_once):
+    global MAX_SIMULTANEOUS_FILE_BACKUPS
+    MAX_SIMULTANEOUS_FILE_BACKUPS = max_files_at_once
+
+
 class StorageDefinition:
     def __init__(
         self,
@@ -1119,6 +1131,7 @@ class BackupAnomaly(Anomaly):
 
 
 def get_anomalies_report(anomalies: list[BackupAnomaly]) -> list[str]:
+    unknown_path = "<unknown or N/A>"
     report_lines = []
     max_kind = 0
     max_exception_name = 0
@@ -1129,7 +1142,12 @@ def get_anomalies_report(anomalies: list[BackupAnomaly]) -> list[str]:
             max_exception_name = max(
                 len(type(anomaly.exception).__name__), max_exception_name
             )
-        max_path = max(len(anomaly.file_info.path), max_path)
+        path_len = (
+            len(unknown_path)
+            if anomaly.file_info is None
+            else len(anomaly.file_info.path)
+        )
+        max_path = max(path_len, max_path)
     field_defs = [
         FieldDef(header="Type", max_width=min(max(len("Type"), max_kind), 20)),
         FieldDef(
@@ -1143,11 +1161,7 @@ def get_anomalies_report(anomalies: list[BackupAnomaly]) -> list[str]:
     report_lines.extend(sr.render_report_header())
     report_header_line_count = len(report_lines)
     for anomaly in anomalies:
-        path = (
-            anomaly.file_info.path
-            if anomaly.file_info is not None
-            else "<unknown or N/A>"
-        )
+        path = anomaly.file_info.path if anomaly.file_info is not None else unknown_path
         exception_name = (
             type(anomaly.exception).__name__ if anomaly.exception is not None else ""
         )
@@ -1523,10 +1537,7 @@ class CompressionPipelineStage(SubprocessPipelineStage):
             return False
         with self.shared_lock:
             abort_count = self.ext_to_poor_ratio_count.get(nc_ext)
-        if (
-            abort_count is not None
-            and abort_count >= self.compress_max_ftype_attempts
-        ):
+        if abort_count is not None and abort_count >= self.compress_max_ftype_attempts:
             logging.debug(
                 f"Skipping compression for extension, "
                 f"more than {self.compress_max_ftype_attempts} "
@@ -1749,9 +1760,8 @@ def run_operation_stage(wi: BackupPipelineWorkItem):
         wi.append_exception(ex)
     return wi
 
-class Backup:
 
-    MAX_SIMULTANEOUS_FILES = DEFAULT_MAX_SIMULTANEOUS_FILE_BACKUPS
+class Backup:
 
     def __init__(
         self,
@@ -1954,7 +1964,9 @@ class Backup:
                 # For debug purposes:
                 # logging.info(f"Copying primary {backup_info_file} to {sbid}...")
                 # copy2(src=backup_info_file, dst=sbid)
-                logging.info(f"Saving additional backup history information to '{sbid}' ...")
+                logging.info(
+                    f"Saving additional backup history information to '{sbid}' ..."
+                )
                 self._backup_history.save(
                     dest_backup_info_dir=sbid,
                     sbi_to_insert_hint=self.final_results,
@@ -2185,39 +2197,45 @@ class Backup:
     def _post_hasher_decision_making(self, wi: BackupPipelineWorkItem):
         """Handle a hashing result."""
 
-        file_info: BackupFileInformation = wi.file_info
+        try:
+            file_info: BackupFileInformation = wi.file_info
 
-        # See if date/time and size have not changed despite
-        # digest indicating changes. If yes, report as either
-        # error or informational message depending on whether
-        # or not user specified --no-detect-bitrot.
-        self._handle_sneaky_corruption_detection(file_info=file_info)
+            # See if date/time and size have not changed despite
+            # digest indicating changes. If yes, report as either
+            # error or informational message depending on whether
+            # or not user specified --no-detect-bitrot.
+            self._handle_sneaky_corruption_detection(file_info=file_info)
 
-        # If decision to backup not already made...
-        if not wi.is_qualified:
-            # ...decide whether to backup or not.
-            wi.is_qualified = self._is_file_for_backup(file_info=file_info)
+            # If decision to backup not already made...
+            if not wi.is_qualified:
+                # ...decide whether to backup or not.
+                wi.is_qualified = self._is_file_for_backup(file_info=file_info)
 
-        if wi.is_qualified:
-            wi.operation_runner = BackupFile(
-                file_info=file_info,
-                storage_def=self.storage_def,
-                object_name_hash_salt=self._object_name_hash_salt,
-                object_name_reservations=self._object_name_reservations,
-                perform_cleartext_hashing=False,
-                is_dryrun=self.is_dryrun,
-            )
+            if wi.is_qualified:
+                wi.operation_runner = BackupFile(
+                    file_info=file_info,
+                    storage_def=self.storage_def,
+                    object_name_hash_salt=self._object_name_hash_salt,
+                    object_name_reservations=self._object_name_reservations,
+                    perform_cleartext_hashing=False,
+                    is_dryrun=self.is_dryrun,
+                )
+        finally:
+            close_db_api()
 
         return wi
-    
+
     def _prepare_file_info(self) -> list[BackupFileInformation]:
-        """From self._source_files, prepare and return a list of files that will be backed up.
-        """
+        """From self._source_files, prepare and return a list of files that will be backed up."""
         logging.info(f"Preparing backup file information...")
+
+        self._backup_history.populate_backup_info_cache(
+            backup_file_list=self._source_files,
+        )
 
         files_for_backup: list[BackupFileInformation] = []
         for idx, file_info in enumerate(self._source_files):
-            if (idx % 1000 == 0):
+            if idx % 1000 == 0:
                 logging.debug(
                     f"Checking file {idx+1} of {len(self._source_files)}: {file_info.path}"
                 )
@@ -2269,13 +2287,15 @@ class Backup:
                     self.extend_final_results(file_info)
                     continue
 
-                if existing_fi:
+                if existing_fi is not None:
                     logging.info(
                         f"Modified file for backup: {file_info.path} "
                         f"cur_date={file_info.modified_date_stamp_ISO8601_local} "
                         f"old_date={existing_fi.modified_date_stamp_ISO8601_local} "
                         f"cur_size={file_info.size_in_bytes} "
-                        f"old_size={existing_fi.size_in_bytes}"
+                        f"old_size={existing_fi.size_in_bytes} "
+                        f"old_backed_up={existing_fi.is_backed_up} "
+                        f"old_failed={existing_fi.is_failed}"
                     )
                     logging.debug(
                         f"POSIX timestamps: {file_info.path} "
@@ -2283,9 +2303,7 @@ class Backup:
                         f"old_posix={file_info.accessed_time_posix}"
                     )
                 else:
-                    logging.info(
-                        f"New file for backup: {file_info.path}"
-                    )
+                    logging.info(f"New file for backup: {file_info.path}")
 
             files_for_backup.append(file_info)
 
@@ -2300,14 +2318,14 @@ class Backup:
         logging.info(f"Scheduling hashing jobs...")
         for idx, file_info in enumerate(files_for_backup):
 
-            if (idx % 1000 == 0):
+            if idx % 1000 == 0:
                 logging.debug(
                     f"Scheduling file {idx+1} of {len(files_for_backup)}: {file_info.path}"
                 )
 
             wait_futures_to_regulate(
                 fs=self._pending_backups,
-                max_allowed_pending=Backup.MAX_SIMULTANEOUS_FILES,
+                max_allowed_pending=get_max_simultaneous_file_backups(),
             )
             pending_backup_fut = self._subprocess_pipeline.submit(
                 work_item=BackupPipelineWorkItem(
@@ -2360,9 +2378,7 @@ class Backup:
             )
             return
         if self.is_dryrun:
-            logging.info(
-                f"*** Dry run, not storing backup information to backup."
-            )
+            logging.info(f"*** Dry run, not storing backup information to backup.")
             return
 
         logging.info(
@@ -2408,9 +2424,7 @@ class Backup:
                 )
             )
             return
-        done, not_done = futures.wait(
-            fs=set([f]), return_when=ALL_COMPLETED
-        )
+        done, not_done = futures.wait(fs=set([f]), return_when=ALL_COMPLETED)
         if len(done) != 1 or f not in done:
             msg = (
                 f"Expected backup info future to be completed but got "
@@ -2458,10 +2472,24 @@ class Backup:
                 self._schedule_files(files_for_backup)
                 self._wait_for_backup_completion()
             finally:
-                self.save_final_revision()
-                self._backup_history_db()
+                close_db_api()
+                if self.final_results.all_file_info is not None:
+                    self.save_final_revision()
+                    self._backup_history_db()
+                else:
+                    self.anomalies.append(
+                        BackupAnomaly(
+                            kind=ANOMALY_KIND_UNEXPECTED_STATE,
+                            message=(
+                                f"Error: File information does not exist. "
+                                f"See other messages for any error details.",
+                            ),
+                        )
+                    )
         except Exception as ex:
-            logging.error(f"Unexpected exception during backup operations: {exc_to_string(ex)}")
+            logging.error(
+                f"Unexpected exception during backup operations: {exc_to_string(ex)}"
+            )
             raise
         finally:
             self.backup_end_perfsec = time.perf_counter()
@@ -2536,9 +2564,7 @@ class Backup:
             f"{len(self.final_results) - len(self._unchanged_skipped_files)}"
         )
 
-        unexpected_count_diff = len(self._source_files) - len(
-            self.final_results
-        )
+        unexpected_count_diff = len(self._source_files) - len(self.final_results)
         if unexpected_count_diff != 0:
             logging.info(
                 f"{dryrun_str}"
@@ -2555,6 +2581,7 @@ class Backup:
         logging.info(
             f"{dryrun_str}{'Total successful backups ':.<45} {self.success_count}"
         )
+
 
 class StorageFileRetriever(ProcessThreadContextMixin):
 

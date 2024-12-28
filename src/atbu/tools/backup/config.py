@@ -843,7 +843,7 @@ configuration, you can choose to have one created for you.
         config_drive, storage_def_path_wo_drive = os.path.splitdrive(
             storage_def_dict[CONFIG_VALUE_NAME_CONTAINER]
         )
-        if storage_path_to_find_wo_drive != storage_def_path_wo_drive:
+        if os.path.normcase(storage_path_to_find_wo_drive) != os.path.normcase(storage_def_path_wo_drive):
             return None, None
         if actual_drive != config_drive:
             storage_def_dict[CONFIG_VALUE_NAME_CONTAINER] = str(storage_path_to_find)
