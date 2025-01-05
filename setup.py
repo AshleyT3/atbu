@@ -55,16 +55,15 @@ Documentation: https://atbu.readthedocs.io/en/latest/
     },
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Topic :: System :: Archiving :: Backup",
     ],
     package_dir={"": "src"},
     packages=setuptools.find_namespace_packages(where="src"),
-    python_requires=">=3.10",
+    python_requires=">=3.12",
     install_requires=[
         "atbu-common-pkg >= 0.0.12",
         "atbu-mp-pipeline-pkg >= 0.0.10",
