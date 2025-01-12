@@ -302,7 +302,7 @@ class SpecificBackupInformation(SpecificBackupInformationEntity):
         return db_api.insert_specific_backup(
             parent_backups_id=backups_root_id,
             backup_specific_name=self.specific_backup_name,
-            backup_start_time_utc=self.backup_start_time_utc,
+            backup_start_time_utc=self.backup_start_time_utc.isoformat(timespec="seconds"),
             object_name_hash_salt=self.object_name_hash_salt,
             backup_type=self.backup_type,
         )
