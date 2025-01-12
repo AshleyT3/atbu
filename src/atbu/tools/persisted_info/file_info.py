@@ -222,19 +222,54 @@ class FileInformation:
     def primary_digest_algo_name(self) -> str:
         return GlobalHasherDefinitions().get_primary_hashing_algo_name()
 
-    def _get_date_stamp_ISO8601(self, posix_timestamp: float, tz=None):
-        if posix_timestamp is None:
-            self.refresh_stat_info()
+    @staticmethod
+    def _get_date_stamp_ISO8601(posix_timestamp: float, local_time_stamp: bool = False):
         dt_value = datetime(
             1970, 1, 1, tzinfo=timezone.utc
         ) + timedelta(
             seconds=posix_timestamp
         )
+        if local_time_stamp:
+            dt_value = dt_value.astimezone()
         return FileInformation.get_datetime_stamp_ISO8601(dt=dt_value)
 
     @property
     def modified_date_stamp_ISO8601_local(self):
-        return self._get_date_stamp_ISO8601(posix_timestamp=self.modified_time_posix)
+        """Obtain a textual user-friendly ISO8601 local time stamp.
+
+        WARNING: Caller's should only use this for debugging or easy viewing of
+        time stamps in cases where the stamps are likely to be available.
+        Python can raise OSError 22 Invalid Argument if a POSIX stamp is
+        out of a certain range. For example, 130964362929 on Windows, which
+        is within the year 6000+.
+
+        Returns:
+            str: An ISO8601 local time stamp or an error message if a failure occurs.
+        """
+        try:
+            return FileInformation._get_date_stamp_ISO8601(
+                posix_timestamp=self.modified_time_posix,
+                local_time_stamp=True,
+            )
+        except Exception as ex:
+            if self.path not in FileInformation.path_stamp_failure_warning_tracker:
+                FileInformation.path_stamp_failure_warning_tracker.add(self.path)
+                logging.warning(
+                    f"modified_date_stamp_ISO8601_local: "
+                    f"Failed to get ISO8601 local time stamp. "
+                    f"mt_posix={self.modified_time_posix} "
+                    f"The file has an invalid modified time. "
+                    f"Examine/repair the file if desired. "
+                    f"path={self.path}: {exc_to_string(ex)}"
+                )
+            if ex is OSError:
+                return (
+                    f"failed-for-stamp:"
+                    f"errno={ex.winerror},"
+                    f"msg={ex.strerror},"
+                    f"mt_posix={self.modified_time_posix}"
+                )
+            return f"failed-for-stamp: ex={ex},mt_posix={self.modified_time_posix}"
 
     @property
     def modified_date_stamp_ISO8601_utc(self):
@@ -250,9 +285,7 @@ class FileInformation:
             str: An ISO8601 UTC stamp or an error message if a failure occurs.
         """
         try:
-            return self._get_date_stamp_ISO8601(
-                posix_timestamp=self.modified_time_posix, tz=timezone.utc
-            )
+            return FileInformation._get_date_stamp_ISO8601(posix_timestamp=self.modified_time_posix)
         except Exception as ex: # Expecting OSError, OverflowError, but disallowing any popagation.
             if self.path not in FileInformation.path_stamp_failure_warning_tracker:
                 FileInformation.path_stamp_failure_warning_tracker.add(self.path)
@@ -275,13 +308,14 @@ class FileInformation:
 
     @property
     def accessed_date_stamp_ISO8601_local(self):
-        return self._get_date_stamp_ISO8601(posix_timestamp=self.accessed_time_posix)
+        return FileInformation._get_date_stamp_ISO8601(
+            posix_timestamp=self.accessed_time_posix,
+            local_time_stamp=True,
+        )
 
     @property
     def accessed_date_stamp_ISO8601_utc(self):
-        return self._get_date_stamp_ISO8601(
-            posix_timestamp=self.accessed_time_posix, tz=timezone.utc
-        )
+        return FileInformation._get_date_stamp_ISO8601(posix_timestamp=self.accessed_time_posix)
 
     @staticmethod
     def get_datetime_stamp_v01(dt):
@@ -410,8 +444,9 @@ class FileInformationPersistent(FileInformation):
     def modified_date_stamp_local_cached(self) -> str:
         if "lastmodified" not in self.cached_statinfo:
             raise KeyError("lastmodified not cached yet, refresh required first.")
-        return self._get_date_stamp_ISO8601(
+        return FileInformation._get_date_stamp_ISO8601(
             posix_timestamp=float(self.cached_statinfo["lastmodified"]),
+            local_time_stamp=True,
         )
 
     @property
@@ -424,8 +459,9 @@ class FileInformationPersistent(FileInformation):
     def modified_date_stamp_local(self) -> str:
         if "lastmodified" not in self.info_current:
             raise KeyError("lastmodified not cached yet, refresh required first.")
-        return self._get_date_stamp_ISO8601(
+        return FileInformation._get_date_stamp_ISO8601(
             posix_timestamp=float(self.info_current["lastmodified"]),
+            local_time_stamp=True,
         )
 
     def get_digest_cached(self, hashing_algo_name=None) -> str:
