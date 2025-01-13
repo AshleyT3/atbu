@@ -2225,21 +2225,10 @@ class Backup:
 
         return wi
 
-    def _prepare_file_info(self) -> list[BackupFileInformation]:
-        """From self._source_files, prepare and return a list of files that will be backed up."""
-        logging.info(f"Preparing backup file information...")
-
-        self._backup_history.populate_backup_info_cache(
-            backup_file_list=self._source_files,
-        )
-
-        files_for_backup: list[BackupFileInformation] = []
+    def _refresh_source_file_stat_info(self):
+        logging.info(f"Getting latest file information...")
+        start_populate = perf_counter()
         for idx, file_info in enumerate(self._source_files):
-            if idx % 1000 == 0:
-                logging.debug(
-                    f"Checking file {idx+1} of {len(self._source_files)}: {file_info.path}"
-                )
-
             try:
                 file_info.refresh_stat_info()
             except OsStatError as ex:
@@ -2256,6 +2245,27 @@ class Backup:
                     )
                 )
                 continue
+        logging.info(
+            f"Latest file information retrieval completed in "
+            f"{perf_counter()-start_populate:.3f} seconds."
+        )
+
+    def _prepare_file_info(self) -> list[BackupFileInformation]:
+        """From self._source_files, prepare and return a list of files that will be backed up."""
+        logging.info(f"Preparing backup file information...")
+
+        self._refresh_source_file_stat_info()
+
+        self._backup_history.populate_backup_info_cache(
+            backup_file_list=self._source_files,
+        )
+
+        files_for_backup: list[BackupFileInformation] = []
+        for idx, file_info in enumerate(self._source_files):
+            if idx % 1000 == 0:
+                logging.debug(
+                    f"Checking file {idx+1} of {len(self._source_files)}: {file_info.path}"
+                )
 
             if (
                 self._backup_type == ATBU_BACKUP_TYPE_INCREMENTAL

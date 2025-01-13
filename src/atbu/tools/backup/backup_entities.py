@@ -38,6 +38,14 @@ from .exception import BackupFileInformationError, BackupFileInformationNotIniti
 from ..persisted_info.file_info import FileInformation
 
 
+def split_path_root(path) -> tuple[str, str]:
+    path_root, path_without_root = os.path.splitdrive(path)
+    if path_without_root[0] in ["\\", "/"]:
+        path_root += path_without_root[:1]
+        path_without_root = path_without_root[1:]
+    return path_root, path_without_root
+
+
 class BackupFileInformationEntity(FileInformation):
     def __init__(
         self,
@@ -50,10 +58,7 @@ class BackupFileInformationEntity(FileInformation):
         super().__init__(path=path)
         self.sb_id = sb_id
         self.bfi_id = bfi_id
-        self._path_root, self._path_without_root = os.path.splitdrive(path)
-        if self._path_without_root[0] in ["\\", "/"]:
-            self._path_root += self._path_without_root[:1]
-            self._path_without_root = self._path_without_root[1:]
+        self._path_root, self._path_without_root = split_path_root(path=path)
         if isinstance(discovery_path, Path):
             discovery_path = str(discovery_path)
         self._discovery_path = discovery_path

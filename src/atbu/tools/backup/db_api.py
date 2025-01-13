@@ -367,15 +367,15 @@ def _fn_pat_to_sql_where_expr(
 
 
 def get_path_for_cmp(path: str) -> str:
-    return os.path.normcase(path)
+    return os.path.normcase(split_path_root(path)[1])
 
 
 def get_string_digest(s) -> bytes:
     return hashlib.sha256(s.encode("utf-8")).digest()
 
 
-def get_path_cmp_digest(path) -> bytes:
-    return get_string_digest(get_path_for_cmp(path))
+def get_path_lc_digest(path: str) -> bytes:
+    return get_string_digest(split_path_root(path)[1].lower())
 
 
 def _get_path_query_oper() -> str:
@@ -390,7 +390,7 @@ def get_path_query_arg(path) -> Any:
     if is_platform_path_case_sensitive():
         path_related_arg = path
     else:
-        path_related_arg = get_path_cmp_digest(path)
+        path_related_arg = get_path_lc_digest(path=path)
     return path_related_arg
 
 
@@ -498,7 +498,7 @@ def schema_setup_v0_03(db: DbInterface):
         if idx % 25000 == 0:
             logging.debug(f"Hashing path #{idx} with id={id}")
         path = row[1]
-        path_lc_digest = get_path_cmp_digest(path)
+        path_lc_digest = get_string_digest(path.lower())
         c.execute(
             f"UPDATE path_values SET path_lc_digest = ? WHERE id = ?",
             (
@@ -517,6 +517,24 @@ def schema_setup_v0_03(db: DbInterface):
     for sql_cmd in addl_sql_cmds:
         logging.debug(sql_cmd)
         db.execute(sql_cmd)
+
+
+def schema_setup_v0_04(db: DbInterface):
+    c = db.execute("SELECT id, path, path_lc_digest FROM path_values;")
+    all_rows = c.fetchall()
+    for idx, row in enumerate(all_rows):
+        id = row[0]
+        if idx % 25000 == 0:
+            logging.debug(f"Hashing path #{idx} with id={id}")
+        path = row[1]
+        path_lc_digest = get_path_lc_digest(path=path)
+        c.execute(
+            f"UPDATE path_values SET path_lc_digest = ? WHERE id = ?",
+            (
+                path_lc_digest,
+                id,
+            ),
+        )
 
 
 @dataclass
@@ -548,7 +566,8 @@ CREATE INDEX IF NOT EXISTS bfi_sbi_path_dpath_idx ON backup_file_info(specific_b
 CREATE TRIGGER IF NOT EXISTS create_backup_file_info_trigger BEFORE INSERT ON backup_file_info WHEN NOT EXISTS (SELECT 1 FROM path_values WHERE id = NEW.path_value_id) OR NOT EXISTS (SELECT 1 FROM path_values WHERE id = NEW.discovery_path_value_id) BEGIN SELECT RAISE(ABORT, 'backup_file_info blocked: requires valid path_value_id, discovery_path_value_id, and must have at least one backup_file_digests association.'); END;
 """,
         ),
-        DbSchemaSetupStep(version=VERSION, step_work=schema_setup_v0_03),
+        DbSchemaSetupStep(version="0.03", step_work=schema_setup_v0_03),
+        DbSchemaSetupStep(version=VERSION, step_work=schema_setup_v0_04),
     ]
 
     def __init__(self):
@@ -1008,7 +1027,7 @@ class DbAppApi:
         return None, None, None
 
     def insert_path_value(self, path) -> tuple[int, str, bytes]:
-        path_lc_digest = get_path_cmp_digest(path)
+        path_lc_digest = get_path_lc_digest(path)
         c = self.db.execute(
             DbQueryStrings.pv_insert_qry1,
             (path, path_lc_digest),
@@ -1515,8 +1534,8 @@ class BackupInfoRetriever:
         bfi_list: list[BackupFileInformationEntityT],
     ) -> tuple[list[_backup_prep_info], list[BackupFileInformationEntityT]]:
 
-        self.p_to_pvi, self.pld_to_pvi_list = self._create_path_lookup_dicts()
-        self.sbid_to_sb_info = self._create_sbi_lookup_dict()
+        self._create_path_lookup_dicts()
+        self._create_sbi_lookup_dict()
 
         bpi_list, not_found_for_backup_fi = self._assoc_existing_pv_info(
             cur_fi_list=bfi_list,
@@ -1636,29 +1655,21 @@ class BackupInfoRetriever:
 
         return results
 
-    def _create_path_lookup_dicts(
-        self,
-    ) -> tuple[dict[str, _path_value_info], dict[str, list[_path_value_info]]]:
+    def _create_path_lookup_dicts(self):
         pc_start = perf_counter()
         c_pv = self.db_api.execute(DbQueryStrings.pv_select_qry3)
         l_pv = c_pv.fetchall()
-        p_to_pv = {}
-        pld_to_pv = defaultdict(list[_path_value_info])
+        self.pld_to_pvi_list = defaultdict(list[_path_value_info])
         for r_pv in l_pv:
             pvi = _path_value_info(*r_pv)
-            p_to_pv[r_pv[1]] = pvi
-            pld_to_pv[r_pv[2]].append(pvi)
+            self.pld_to_pvi_list[r_pv[2]].append(pvi)
         logging.debug(f"_create_path_lookup_dicts: path query time: {perf_counter()-pc_start:.3f}")
-        return p_to_pv, pld_to_pv
 
-    def _create_sbi_lookup_dict(
-        self,
-    ) -> list[_specific_backup_info]:
-        sbid_to_sb_info = defaultdict(list[_specific_backup_info])
+    def _create_sbi_lookup_dict(self):
+        self.sbid_to_sb_info: dict[int, _specific_backup_info] = {}
         c_sb = self.db_api.execute(DbQueryStrings.sbi_select_qry3)
         for r_sb in c_sb.fetchall():
-            sbid_to_sb_info[r_sb[0]] = _specific_backup_info(*r_sb)
-        return sbid_to_sb_info
+            self.sbid_to_sb_info[r_sb[0]] = _specific_backup_info(*r_sb)
 
     def _assoc_existing_pv_info(
         self,
@@ -1667,13 +1678,14 @@ class BackupInfoRetriever:
         found = []
         not_found = []
         for i, cur_fi in enumerate(cur_fi_list):
-            fi_path_for_cmp = get_path_for_cmp(cur_fi.path)
-            path_related_arg = get_path_query_arg(path=cur_fi.path)
-            assert isinstance(path_related_arg, bytes)  # TBD impl
 
-            pv_list_found = self.pld_to_pvi_list.get(path_related_arg)
             pv_found = None
+
+            path_lc_digest = get_path_lc_digest(path=cur_fi.path)
+            pv_list_found = self.pld_to_pvi_list.get(path_lc_digest)
+
             if pv_list_found is not None:
+                fi_path_for_cmp = get_path_for_cmp(cur_fi.path)
                 for pv in pv_list_found:
                     if get_path_for_cmp(pv.path) == fi_path_for_cmp:
                         pv_found = pv
@@ -1848,7 +1860,7 @@ class BackupInfoRetriever:
             query_arg_list.append(bpi_idx)
             query_arg_list.append(sb_info.backup_start_time_utc)
             query_arg_list.append(
-                get_path_cmp_digest(path=bfi_most_recent_backup.path)
+                get_path_lc_digest(path=bfi_most_recent_backup.path)
             )
 
         batch_result = self.db_api.batch_retrieve(
