@@ -2631,7 +2631,12 @@ class StorageFileRetriever(ProcessThreadContextMixin):
 
     @property
     def path_for_logging(self) -> str:
-        return self.file_info.path_without_discovery_path
+        try:
+            if self.file_info.discovery_path is not None:
+                return self.file_info.path_without_discovery_path
+        except BackupFileInformationError:
+            pass
+        return self.file_info.path_without_root
 
     @property
     def cleartext_digest(self) -> str:

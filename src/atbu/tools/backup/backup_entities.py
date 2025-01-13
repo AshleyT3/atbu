@@ -108,8 +108,11 @@ class BackupFileInformationEntity(FileInformation):
 
     @property
     def path_for_logging(self):
-        if self.discovery_path is not None:
-            return self.path_without_discovery_path
+        try:
+            if self.discovery_path is not None:
+                return self.path_without_discovery_path
+        except BackupFileInformationError:
+            pass
         return self.path_without_root
 
     @property
@@ -133,19 +136,32 @@ class BackupFileInformationEntity(FileInformation):
         return os.path.normcase(self.discovery_path)
 
     @property
+    def discovery_path_without_root(self):
+        return split_path_root(self._discovery_path)[1]
+
+    @property
+    def nc_discovery_path_without_root(self):
+        return os.path.normcase(self.discovery_path_without_root)
+
+    @property
     def path_without_discovery_path(self):
         if self.discovery_path is None:
             raise BackupFileInformationError(
                 f"The file information has no discovery path: {self.path}"
             )
-        if not os.path.normcase(self.path).startswith(self.nc_discovery_path):
+
+        nc_path_without_root = self.nc_path_without_root
+        nc_discovery_path_without_root = self.nc_discovery_path_without_root
+        if not nc_path_without_root.startswith(nc_discovery_path_without_root):
             raise BackupFileInformationError(
                 f"The discovery path cannot be found: "
                 f"disc_path={self.discovery_path} path={self.path}"
             )
-        if os.path.normcase(self.path) == self.nc_discovery_path:
-            return self.path
-        return self.path[len(self.discovery_path) + 1 :]
+
+        if nc_path_without_root == nc_discovery_path_without_root:
+            return self.path_without_root
+
+        return self.path_without_root[len(nc_discovery_path_without_root) + 1 :]
 
     @property
     def restore_path_override(self):
