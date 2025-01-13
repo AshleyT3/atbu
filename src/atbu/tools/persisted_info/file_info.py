@@ -233,15 +233,14 @@ class FileInformation:
             dt_value = dt_value.astimezone()
         return FileInformation.get_datetime_stamp_ISO8601(dt=dt_value)
 
-    @property
-    def modified_date_stamp_ISO8601_local(self):
-        """Obtain a textual user-friendly ISO8601 local time stamp.
+    def get_modified_date_stamp_ISO8601(self, local_time_stamp: bool):
+        """Obtain a textual user-friendly ISO8601 local or utc time stamp.
 
         WARNING: Caller's should only use this for debugging or easy viewing of
-        time stamps in cases where the stamps are likely to be available.
-        Python can raise OSError 22 Invalid Argument if a POSIX stamp is
-        out of a certain range. For example, 130964362929 on Windows, which
-        is within the year 6000+.
+        time stamps. Python can raise exceptions for certain "out of range" or
+        otherwise invalid POSIX stamps. This method will never propagate timestamp
+        creation exceptions, and will always return a string, either a timestamp
+        string or string with an error message.
 
         Returns:
             str: An ISO8601 local time stamp or an error message if a failure occurs.
@@ -249,18 +248,18 @@ class FileInformation:
         try:
             return FileInformation._get_date_stamp_ISO8601(
                 posix_timestamp=self.modified_time_posix,
-                local_time_stamp=True,
+                local_time_stamp=local_time_stamp,
             )
         except Exception as ex:
             if self.path not in FileInformation.path_stamp_failure_warning_tracker:
                 FileInformation.path_stamp_failure_warning_tracker.add(self.path)
-                logging.warning(
-                    f"modified_date_stamp_ISO8601_local: "
-                    f"Failed to get ISO8601 local time stamp. "
+                zone_str = "local" if local_time_stamp else "utc"
+                logging.debug(
+                    f"get_modified_date_stamp_ISO8601: "
+                    f"Cannot create ISO8601 {zone_str} timestamp from the file's modified time: "
                     f"mt_posix={self.modified_time_posix} "
-                    f"The file has an invalid modified time. "
-                    f"Examine/repair the file if desired. "
-                    f"path={self.path}: {exc_to_string(ex)}"
+                    f"path={self.path} "
+                    f"(Examine/repair the file if desired.)"
                 )
             if ex is OSError:
                 return (
@@ -272,39 +271,12 @@ class FileInformation:
             return f"failed-for-stamp: ex={ex},mt_posix={self.modified_time_posix}"
 
     @property
+    def modified_date_stamp_ISO8601_local(self):
+        return self.get_modified_date_stamp_ISO8601(local_time_stamp=True)
+
+    @property
     def modified_date_stamp_ISO8601_utc(self):
-        """Obtain a textual user-friendly ISO8601 UTC stamp.
-
-        WARNING: Caller's should only use this for debugging or easy viewing of
-        time stamps in cases where the stamps are likely to be available.
-        Python can raise OSError 22 Invalid Argument if a POSIX stamp is
-        out of a certain range. For example, 130964362929 on Windows, which
-        is within the year 6000+.
-
-        Returns:
-            str: An ISO8601 UTC stamp or an error message if a failure occurs.
-        """
-        try:
-            return FileInformation._get_date_stamp_ISO8601(posix_timestamp=self.modified_time_posix)
-        except Exception as ex: # Expecting OSError, OverflowError, but disallowing any popagation.
-            if self.path not in FileInformation.path_stamp_failure_warning_tracker:
-                FileInformation.path_stamp_failure_warning_tracker.add(self.path)
-                logging.warning(
-                    f"modified_date_stamp_ISO8601_utc: "
-                    f"Failed to get ISO8601 stamp. "
-                    f"mt_posix={self.modified_time_posix} "
-                    f"The file has an invalid modified time. "
-                    f"Examine/repair the file if desired. "
-                    f"path={self.path}: {exc_to_string(ex)}"
-                )
-            if ex is OSError:
-                return (
-                    f"failed-for-stamp:"
-                    f"errno={ex.winerror},"
-                    f"msg={ex.strerror},"
-                    f"mt_posix={self.modified_time_posix}"
-                )
-            return f"failed-for-stamp: ex={ex},mt_posix={self.modified_time_posix}"
+        return self.get_modified_date_stamp_ISO8601(local_time_stamp=False)
 
     @property
     def accessed_date_stamp_ISO8601_local(self):
