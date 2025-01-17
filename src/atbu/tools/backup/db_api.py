@@ -286,7 +286,7 @@ INNER JOIN backup_file_info bfi ON bfi.path_value_id = pv.id
 INNER JOIN specific_backups sb ON sb.id = bfi.specific_backup_id 
 WHERE
     pv.id IN (%(qmarks)s)
-    AND sb.id = %(qmark_extra1)s
+    AND sb.backup_start_time_utc <= (SELECT sb2.backup_start_time_utc FROM specific_backups sb2 WHERE sb2.id = %(qmark_extra1)s)
 GROUP BY pv.path
 ORDER BY MAX(sb.backup_start_time_utc) DESC;
 """
@@ -1717,11 +1717,11 @@ class BackupInfoRetriever:
             query_str = DbQueryStrings.pv_most_recent_qmarks_select_as_of_sbi
             qmark_extra1_arg = self.sb_id
 
-        bfi_ids = [bpi.pvi.id for bpi in bpi_list]
-        bfi_ids.sort()
+        pv_ids = [bpi.pvi.id for bpi in bpi_list]
+        pv_ids.sort()
         bfi_rows = self.db_api.batch_retrieve(
             query_with_qmarks_spec=query_str,
-            query_batch_parms=bfi_ids,
+            query_batch_parms=pv_ids,
             qmark_extra1_arg=qmark_extra1_arg,
         )
 
