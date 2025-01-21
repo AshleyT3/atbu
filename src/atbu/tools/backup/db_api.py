@@ -1344,12 +1344,13 @@ class DbAppApi:
 
         backup_file_info_id = c.lastrowid
 
-        for digest_type, digest in digests.items():
-            digest_values_id = self.get_digest_value_insert(
-                digest_type=digest_type,
-                digest=digest,
-            )
-            self.insert_backup_file_digest(backup_file_info_id, digest_values_id)
+        if digests is not None:
+            for digest_type, digest in digests.items():
+                digest_values_id = self.get_digest_value_insert(
+                    digest_type=digest_type,
+                    digest=digest,
+                )
+                self.insert_backup_file_digest(backup_file_info_id, digest_values_id)
 
         return backup_file_info_id
 
