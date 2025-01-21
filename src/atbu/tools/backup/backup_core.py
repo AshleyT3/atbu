@@ -1317,6 +1317,8 @@ def file_operation_future_result(
                     f"Did not expect Future.exception() to return exception. "
                     f"path={file_info.path} Error occurred: {exc_to_string(ex)}"
                 )
+                if file_info.exception is None:
+                    file_info.exception = ex
                 logging.error(msg)
                 anomalies.append(
                     BackupAnomaly(
