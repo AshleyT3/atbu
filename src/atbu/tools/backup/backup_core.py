@@ -1957,6 +1957,9 @@ class Backup:
             dest_backup_info_dir=self.primary_backup_info_dir,
             sbi_to_insert_hint=self.final_results,
         )
+        logging.info(
+            f"Primary backup history information saved to '{self.primary_backup_info_dir}'"
+        )
         if self.secondary_backup_info_dirs is not None and isinstance(
             self.secondary_backup_info_dirs, list
         ):
@@ -1970,6 +1973,9 @@ class Backup:
                 self._backup_history.save(
                     dest_backup_info_dir=sbid,
                     sbi_to_insert_hint=self.final_results,
+                )
+                logging.info(
+                    f"Additional backup history information saved to '{sbid}'"
                 )
 
     @property

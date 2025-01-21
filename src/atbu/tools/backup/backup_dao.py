@@ -848,9 +848,11 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
         )
 
         if create_numbered_backup:
-            create_numbered_backup_of_file(
+            logging.info(f"Create backup of DB...")
+            db_backup_filename = create_numbered_backup_of_file(
                 path=backup_database_file_path, not_exist_ok=True
             )
+            logging.info(f"DB backup created: {db_backup_filename}")
 
         current_file_type = get_file_type(path=backup_database_file_path)
         if current_file_type == DetectedFileType.UNKNOWN:
