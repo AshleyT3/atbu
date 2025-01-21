@@ -1586,14 +1586,16 @@ class BackupInfoRetriever:
             return bpi_list, not_found_for_backup_fi
 
         self._assoc_bpi_most_recent_path(bpi_list=bpi_list)
-        for idx in range(len(bpi_list) - 1, -1, -1):
-            bpi = bpi_list[idx]
+        bpi_list_tmp = []
+        for idx, bpi in enumerate(bpi_list):
             if (
                 not bpi.lbi_by_path.bfi_is_successful
                 and not bpi.lbi_by_path.bfi_is_unchanged_since_last
             ):
-                not_found_for_backup_fi.append(bpi_list.pop())
-                continue
+                not_found_for_backup_fi.append(bpi.cur_bfi)
+            else:
+                bpi_list_tmp.append(bpi)
+        bpi_list = bpi_list_tmp
 
         logging.debug(
             f"_retrieve_most_recent: "
@@ -1609,12 +1611,12 @@ class BackupInfoRetriever:
         )
 
         last_backup_bfi_list.sort(key=lambda b: b.bfi_id)
-        for idx in range(len(last_backup_bfi_list)):
-            if bpi_list[idx].lbi_by_path.bfi_id != last_backup_bfi_list[idx].bfi_id:
+        for idx, last_backup_bfi in enumerate(last_backup_bfi_list):
+            if bpi_list[idx].lbi_by_path.bfi_id != last_backup_bfi.bfi_id:
                 raise InvalidStateError(
                     "_retrieve_most_recent: bfi_id mismatch unexpected"
                 )
-            bpi_list[idx].lbi_by_path.bfi_most_recent_backup = last_backup_bfi_list[idx]
+            bpi_list[idx].lbi_by_path.bfi_most_recent_backup = last_backup_bfi
 
         logging.debug(
             f"_retrieve_most_recent: "
