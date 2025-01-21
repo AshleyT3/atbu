@@ -770,6 +770,7 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
             db_api.commit()
         except:
             db_api.rollback()
+            raise
         finally:
             close_db_api()
 
