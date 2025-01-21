@@ -29,6 +29,7 @@ from pathlib import Path
 from atbu.tools.backup.exception import BackupDatabaseSchemaError
 from atbu.common.util_helpers import (
     is_platform_path_case_sensitive,
+    create_numbered_backup_of_file,
 )
 
 from .backup_constants import *
@@ -574,7 +575,7 @@ CREATE TRIGGER IF NOT EXISTS create_backup_file_info_trigger BEFORE INSERT ON ba
         pass
 
     @staticmethod
-    def upgrade_db(db: DbInterface, is_first_time_init: bool) -> bool:
+    def get_update_disposition(db: DbInterface, is_first_time_init: bool) -> tuple[bool, str]:
         if is_first_time_init:
             row_count = 0
             db_root_id = None
@@ -607,7 +608,7 @@ CREATE TRIGGER IF NOT EXISTS create_backup_file_info_trigger BEFORE INSERT ON ba
                 )
 
             if cur_db_ver == DbSchema.VERSION:
-                return False
+                return False, cur_db_ver
 
             if cur_db_ver is None:
                 raise BackupFileInformationError(f"The database version cannot be None")
@@ -618,6 +619,19 @@ CREATE TRIGGER IF NOT EXISTS create_backup_file_info_trigger BEFORE INSERT ON ba
                     f"An existing initialized database was expected but not found."
                 )
             cur_db_ver = DbSchema.VERSION_DB_NOT_EXIST
+
+        return True, cur_db_ver
+
+    @staticmethod
+    def upgrade_db(db: DbInterface, is_first_time_init: bool) -> bool:
+
+        is_update_req, cur_db_ver = DbSchema.get_update_disposition(
+            db=db,
+            is_first_time_init=is_first_time_init
+        )
+
+        if not is_update_req:
+            return False
 
         is_started = False
         prev_db_ver_step = DbSchema.VERSION_DB_NOT_EXIST
@@ -1391,15 +1405,41 @@ class DbAppApi:
         read_file_to_nowhere(self.db.connection_string)
 
     has_preread_occurred: bool = False
+    has_optimize_occurred: bool = False
 
     @staticmethod
     def open_db(db_file_path: Union[str, Path]) -> "DbAppApi":
+        db_file_path = str(db_file_path)
         if not os.path.exists(db_file_path):
             raise FileNotFoundError(f"Database file not found: {db_file_path}")
         try:
-            db_api = DbAppApi.create_api(str(db_file_path))
-            if not DbSchema.upgrade_db(db=db_api.db, is_first_time_init=False):
-                db_api.db.optimize()
+            db_api = DbAppApi.create_api(db_file_path)
+
+            is_update_req, cur_db_ver = DbSchema.get_update_disposition(
+                db=db_api.db,
+                is_first_time_init=False
+            )
+
+            if not is_update_req:
+                if not DbAppApi.has_optimize_occurred:
+                    logging.info(f"Optimizing DB...")
+                    db_api.db.optimize()
+                    logging.info(f"DB optimized.")
+                    DbAppApi.has_optimize_occurred = True
+            else:
+                db_api.close()
+
+                logging.info(f"DB schema update is required: {cur_db_ver} -> {DbSchema.VERSION}")
+                logging.info(f"Create backup of DB...")
+                db_backup_filename = create_numbered_backup_of_file(
+                    path=db_file_path,
+                    not_exist_ok=False
+                )
+                logging.info(f"DB backup created: {db_backup_filename}")
+
+                db_api = DbAppApi.create_api(db_file_path)
+                DbSchema.upgrade_db(db=db_api.db, is_first_time_init=False)
+                DbAppApi.has_optimize_occurred = True
 
             if is_preread_db_files() and not DbAppApi.has_preread_occurred:
                 DbAppApi.has_preread_occurred = True
