@@ -125,22 +125,25 @@ def get_local_filesystem_backup_with_wizard(
         unique_storage_def_name=storage_def_name,
     )
     print(f"Created storage definition {storage_def_name} for {storage_location_path}")
+
     desc_cred = setup_backup_encryption_wizard(
         storage_atbu_cfg=storage_atbu_cfg,
         storage_def_name=storage_def_name,
     )
-    cred_set = StorageDefCredentialSet(
-        storage_def_name=storage_def_name,
-        storage_def_dict=storage_def,
-    )
-    cred_set.append(
-        desc_cred=desc_cred,
-        affected_config_path_parts=CRED_SECRET_KIND_ENCRYPTION.split("-"),
-    )
-    print(f"Storing...")
-    cred_set.protect()
-    cred_set.save()
-    print(f"Your key is stored.")
+    if desc_cred is not None:
+        cred_set = StorageDefCredentialSet(
+            storage_def_name=storage_def_name,
+            storage_def_dict=storage_def,
+        )
+        cred_set.append(
+            desc_cred=desc_cred,
+            affected_config_path_parts=CRED_SECRET_KIND_ENCRYPTION.split("-"),
+        )
+        print(f"Storing...")
+        cred_set.protect()
+        cred_set.save()
+        print(f"Your key is stored.")
+
     print(f"Saving {storage_atbu_cfg.path}")
     storage_atbu_cfg.save_config_file()
     print(f"{storage_atbu_cfg.path} has been saved.")
