@@ -577,9 +577,19 @@ def get_local_file_information(
                     f"source_dir_wc={disc.source_dir_wc} "
                     f"file_info.path={p.path}"
                 )
-            # Create the result list with file info
-            # indicating discovery source dir.
+            # Create the result list with file info indicating discovery source dir.
+            discovery_path = disc.source_dir
+            if p == discovery_path:
+                # User explicitly specified a file as a source.
+                # Set discovery_path to the file's directory.
+                if not os.path.isfile(discovery_path):
+                    raise InvalidStateError(
+                        f"The backup file must not be a directory: "
+                        f"file_path={p} "
+                        f"disc_path={discovery_path}"
+                    )
+                discovery_path = os.path.dirname(discovery_path)
             file_info_list.append(
-                BackupFileInformation(path=p, discovery_path=disc.source_dir)
+                BackupFileInformation(path=p, discovery_path=discovery_path)
             )
     return file_info_list
