@@ -77,8 +77,7 @@ from .constants import *
 from .exception import *
 from .global_hasher import GlobalHasherDefinitions
 from .chunk_reader import (
-    CHUNK_READER_CB_CIPHERTEXT,
-    CHUNK_READER_CB_INPUT_BYTES_MANUAL_APPEND,
+    ChunkReaderCbCode,
     open_chunk_reader,
 )
 from .credentials import CredentialByteArray
@@ -809,7 +808,6 @@ class BackupFile(ProcessThreadContextMixin):
         storage_def: StorageDefinition,
         object_name_hash_salt: bytes,
         object_name_reservations: BackupNameReservations,
-        perform_cleartext_hashing: bool,
         is_dryrun: bool,
     ):
         super().__init__()
@@ -820,7 +818,6 @@ class BackupFile(ProcessThreadContextMixin):
         self.writer_future = None
         self.object_name_hash_salt = object_name_hash_salt
         self.object_name_reservations = object_name_reservations
-        self.perform_cleartext_hashing = perform_cleartext_hashing
         self.is_dryrun = is_dryrun
 
     def get_compression_decision(
@@ -912,24 +909,20 @@ class BackupFile(ProcessThreadContextMixin):
                 enc: AesCbcPaddingEncryptor = self.storage_def.create_encryptor()
                 self.file_info.encryption_IV = enc.IV
                 hasher_ciphertext = GlobalHasherDefinitions().create_hasher()
-            hasher_cleartext = None
-            if self.perform_cleartext_hashing:
-                hasher_cleartext = GlobalHasherDefinitions().create_hasher()
-            total_bytes_read_from_file = 0
+
+            total_all_bytes = 0
+            total_ciphertext_bytes = 0
 
             def perform_hashing_callback(what, data):
-                nonlocal total_bytes_read_from_file
+                nonlocal total_all_bytes
+                nonlocal total_ciphertext_bytes
                 nonlocal hasher_ciphertext
-                nonlocal hasher_cleartext
-                if what == CHUNK_READER_CB_CIPHERTEXT:
+                if what == ChunkReaderCbCode.AllBytes:
+                    total_all_bytes += len(data)
+                elif what == ChunkReaderCbCode.CipertextBytes:
+                    total_ciphertext_bytes += len(data)
                     if hasher_ciphertext:
                         hasher_ciphertext.update_all(data)
-                elif what == CHUNK_READER_CB_INPUT_BYTES_MANUAL_APPEND:
-                    total_bytes_read_from_file += len(data)
-                    if hasher_cleartext:
-                        hasher_cleartext.update_all(data)
-                elif what == CHUNK_READER_CB_INPUT_BYTES_MANUAL_APPEND:
-                    pass  # ignore preamble data for plaintext hashing.
 
             pipe_input_file, pipe_input_fileno = self.get_compression_pipe_input_file(
                 pipe_conn=wi.pipe_conn
@@ -1034,29 +1027,22 @@ class BackupFile(ProcessThreadContextMixin):
             else:
                 logging.debug(f"Dependent worker already completed.")
             logging.info(f"BackupFile: Completed {path}")
-            logging.info(f"  Total bytes .............. {total_bytes_read_from_file}")
-            if hasher_cleartext:
-                logging.info(
-                    f"  SHA256 original file ..... "
-                    f"{hasher_cleartext.get_hexdigests()[DEFAULT_HASH_ALGORITHM]}"
-                )
+            logging.info(f"  File size bytes ............ {self.file_info.size_in_bytes}")
+            logging.info(f"  Total bytes written ........ {total_all_bytes}")
+            logging.info(f"  Ciphertext bytes written ... {total_ciphertext_bytes}")
             backing_fi_digest_indicator = ""
             if self.file_info.is_backing_fi_digest:
                 backing_fi_digest_indicator = "(assumed)"
             logging.info(
-                f"  SHA256 original file ..... "
+                f"  SHA256 original file ....... "
                 f"{self.file_info.primary_digest} {backing_fi_digest_indicator}"
             )
             if self.storage_def.is_encryption_used:
                 logging.info(
-                    f"  SHA256 encrypted file .... "
+                    f"  SHA256 encrypted file ...... "
                     f"{hasher_ciphertext.get_hexdigests()[DEFAULT_HASH_ALGORITHM]}"
                 )
             logging.info(f"---")
-            if hasher_cleartext:
-                self.file_info.primary_digest = hasher_cleartext.get_hexdigests()[
-                    DEFAULT_HASH_ALGORITHM
-                ]
             if self.storage_def.is_encryption_used:
                 self.file_info.is_backup_encrypted = True
                 self.file_info.ciphertext_hash_during_backup = (
@@ -2225,7 +2211,6 @@ class Backup:
                     storage_def=self.storage_def,
                     object_name_hash_salt=self._object_name_hash_salt,
                     object_name_reservations=self._object_name_reservations,
-                    perform_cleartext_hashing=False,
                     is_dryrun=self.is_dryrun,
                 )
         finally:
