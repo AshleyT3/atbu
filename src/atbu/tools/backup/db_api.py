@@ -1424,6 +1424,7 @@ class DbAppApi:
                 if not DbAppApi.has_optimize_occurred:
                     logging.info(f"Optimizing DB...")
                     db_api.db.optimize()
+                    db_api.db.commit()
                     logging.info(f"DB optimized.")
                     DbAppApi.has_optimize_occurred = True
             else:
