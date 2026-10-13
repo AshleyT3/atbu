@@ -123,7 +123,7 @@ FROM backup_file_info bfi
 INNER JOIN path_values pv ON bfi.path_value_id = pv.id 
 INNER JOIN path_values pv2 ON bfi.discovery_path_value_id = pv2.id 
 INNER JOIN specific_backups sb ON sb.id = bfi.specific_backup_id
-WHERE bfi.is_unchanged_since_last = 0 AND bfi.id IN (SELECT backup_file_info_id FROM bfd)
+WHERE bfi.is_successful = 1 AND bfi.is_unchanged_since_last = 0 AND bfi.id IN (SELECT backup_file_info_id FROM bfd)
 ORDER BY sb.backup_start_time_utc DESC;
 """
 

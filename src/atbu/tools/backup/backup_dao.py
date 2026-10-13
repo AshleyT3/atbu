@@ -451,17 +451,6 @@ class BackupInformationDatabase(BackupInformationDatabaseEntity):
             is_changed = False
         return is_changed, existing_fi
 
-    def is_phys_backup_dup_exist(
-        self,
-        cur_fi: BackupFileInformation,
-    ) -> bool:
-        if self.is_persistent_db_conn:
-            db_api = get_db_api(db_file_path=self.primary_db_full_path)
-            dup_list = db_api.get_phys_backup_dup_list(cur_fi=cur_fi)
-        else:
-            dup_list = self.digest_to_bfi_list.get(cur_fi.primary_digest)
-        return dup_list is not None and len(dup_list) > 0
-
     def get_potential_bitrot_or_sneaky_corruption_info(
         self,
         cur_fi: BackupFileInformation,
